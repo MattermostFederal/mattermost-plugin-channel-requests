@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest-4-cores
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install Go tools
+        run: make install-go-tools
+
+      - name: Install webapp dependencies
+        run: cd webapp && npm install
+
+      - name: Install Playwright browsers
+        run: cd webapp && npx playwright install --with-deps chromium
+
+      - name: Build release
+        run: make release
+
+      - name: Get plugin info
+        id: plugin_info
+        run: |
+          PLUGIN_ID=$(build/bin/manifest id)
+          PLUGIN_VERSION=$(build/bin/manifest version)
+          BUNDLE_NAME="${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz"
+          echo "plugin_id=${PLUGIN_ID}" >> $GITHUB_OUTPUT
+          echo "plugin_version=${PLUGIN_VERSION}" >> $GITHUB_OUTPUT
+          echo "bundle_name=${BUNDLE_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.plugin_info.outputs.plugin_id }} v${{ steps.plugin_info.outputs.plugin_version }}
+          body: |
+            ## Installation
+
+            1. Download `${{ steps.plugin_info.outputs.bundle_name }}`
+            2. Go to **System Console > Plugins > Plugin Management**
+            3. Upload the plugin bundle
+            4. Enable the plugin
+
+            ## Checksums
+
+            SHA256 checksums are available in `${{ steps.plugin_info.outputs.bundle_name }}.sha256`
+
+            ## SBOMs
+
+            Software Bill of Materials (CycloneDX format) are included in the plugin bundle under the `sbom/` directory.
+          files: |
+            dist/${{ steps.plugin_info.outputs.bundle_name }}
+            dist/${{ steps.plugin_info.outputs.bundle_name }}.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          generate_release_notes: true

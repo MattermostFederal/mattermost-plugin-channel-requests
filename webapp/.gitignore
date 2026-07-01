@@ -1,0 +1,5 @@
+.eslintcache
+junit.xml
+node_modules
+playwright/.cache
+test-results

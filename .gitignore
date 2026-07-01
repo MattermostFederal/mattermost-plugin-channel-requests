@@ -1,0 +1,46 @@
+bin/
+dist/
+coverage.txt
+webapp/src/manifest.ts
+server/manifest.go
+
+# Mac
+.DS_Store
+
+# Jetbrains
+.idea/
+
+# VS Code
+.vscode
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Go workspace (local development)
+go.work
+go.work.sum
+
+# Working notes
+design-references/notes.md
+
+# Docker development environment
+docker/postgres-data/
+docker/mattermost/
+
+# CodeQL (downloaded during build)
+build/codeql/
+build/codeql-db/
+
+# Spurious go.sum created by CodeQL in server directory
+server/go.sum
+
+# Playwright test output
+test-results/
+
+# Coverage reports
+webapp/coverage/
+webapp/coverage-ct/
+webapp/coverage-merged/
+webapp/.v8-ct-coverage/
+webapp/.v8-unit-coverage/
+webapp/.v8-merged-coverage/

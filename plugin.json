@@ -1,0 +1,54 @@
+{
+    "id": "com.mattermostfederal.channel-requests",
+    "name": "Channel Requests",
+    "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
+    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
+    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
+    "icon_path": "assets/icon.svg",
+    "min_server_version": "11.8.0",
+    "server": {
+        "executables": {
+            "linux-amd64": "server/dist/plugin-linux-amd64",
+            "linux-arm64": "server/dist/plugin-linux-arm64",
+            "darwin-amd64": "server/dist/plugin-darwin-amd64",
+            "darwin-arm64": "server/dist/plugin-darwin-arm64"
+        }
+    },
+    "webapp": {
+        "bundle_path": "webapp/dist/main.js"
+    },
+    "settings_schema": {
+        "header": "Configure where channel-creation requests are sent for approval. Requests from non-admins are posted to this channel, where any System Admin can approve or deny them.",
+        "footer": "",
+        "settings": [
+            {
+                "key": "ApprovalTeam",
+                "display_name": "Approval Team",
+                "type": "text",
+                "placeholder": "myteam",
+                "help_text": "The URL name (slug) of the team that contains the approval channel. For example, if the team URL is /myteam, enter 'myteam'."
+            },
+            {
+                "key": "ApprovalChannel",
+                "display_name": "Approval Channel",
+                "type": "text",
+                "placeholder": "channel-requests",
+                "help_text": "The URL name (slug) of the channel where channel-creation requests are posted for approval. For example, if the channel URL is /myteam/channels/channel-requests, enter 'channel-requests'."
+            },
+            {
+                "key": "ChannelNameTemplate",
+                "display_name": "Channel URL Template",
+                "type": "text",
+                "placeholder": "team-{{name}}",
+                "help_text": "Optional. Forces every approved channel URL into a standard shape. Use '{{name}}' as a placeholder for the requester's slugified channel name. For example, 'team-{{name}}' turns a request for 'Marketing' into 'team-marketing'. Leave blank to use the requested name as-is."
+            },
+            {
+                "key": "ChannelNamePattern",
+                "display_name": "Channel URL Pattern (regex)",
+                "type": "text",
+                "placeholder": "^team-[a-z0-9-]{2,}$",
+                "help_text": "Optional. A regular expression that the final channel URL must match, applied after the template. Requests that don't match are rejected with an explanation. Anchor with ^ and $ to match the whole URL. For example, '^team-[a-z0-9-]{2,}$'. Leave blank to allow any valid channel URL."
+            }
+        ]
+    }
+}

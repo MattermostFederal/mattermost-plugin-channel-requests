@@ -1,0 +1,53 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "webpack --mode=production",
+    "build:watch": "webpack --mode=production --watch",
+    "debug": "webpack --mode=none",
+    "debug:watch": "webpack --mode=development --watch",
+    "lint": "eslint --quiet --cache .",
+    "fix": "eslint --quiet --fix --cache .",
+    "check-types": "tsc",
+    "postinstall": "playwright install chromium",
+    "test": "playwright test --config=playwright.config.ts && playwright test --config=playwright-ct.config.ts",
+    "test:pw": "playwright test --config=playwright.config.ts",
+    "test:pw-ct": "playwright test --config=playwright-ct.config.ts"
+  },
+  "devDependencies": {
+    "@babel/core": "8.0.1",
+    "@babel/preset-env": "8.0.2",
+    "@babel/preset-react": "8.0.1",
+    "@babel/preset-typescript": "8.0.1",
+    "@babel/runtime": "8.0.0",
+    "@mattermost/types": "11.8.0",
+    "@playwright/experimental-ct-react": "1.61.0",
+    "@playwright/test": "1.61.0",
+    "@types/node": "26.0.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/react-redux": "7.1.34",
+    "@typescript-eslint/eslint-plugin": "8.62.0",
+    "@typescript-eslint/parser": "8.62.0",
+    "ajv": "8.20.0",
+    "babel-loader": "10.1.1",
+    "babel-plugin-polyfill-corejs3": "1.0.0",
+    "css-loader": "7.1.4",
+    "eslint": "9.39.4",
+    "eslint-plugin-import": "2.32.0",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "react-dom": "19.2.7",
+    "sass": "1.101.0",
+    "sass-loader": "17.0.0",
+    "style-loader": "4.0.0",
+    "typescript": "6.0.3",
+    "webpack": "5.107.2",
+    "webpack-cli": "7.0.3"
+  },
+  "dependencies": {
+    "core-js": "3.49.0",
+    "react": "19.2.7",
+    "react-redux": "9.3.0",
+    "redux": "5.0.1"
+  }
+}
