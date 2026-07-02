@@ -19,7 +19,7 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins / group members) can approve or deny.\n\nSet the approval team + channel first. Then configure domain prefixes so channels follow your naming convention automatically.",
+        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins) can approve or deny.\n\nPick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically. Requesters see a form with a prefix picker + tab-complete member + Channel Admin selectors.",
         "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
@@ -41,79 +41,22 @@
                 "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
             },
             {
-                "key": "ChannelNameTemplate",
-                "display_name": "Channel URL template (legacy fallback)",
-                "type": "text",
-                "placeholder": "team-{{name}}",
-                "help_text": "Only used when the prefixes editor above is empty. Use {{name}} as a placeholder for the slugified requester name."
-            },
-            {
-                "key": "ChannelNamePattern",
-                "display_name": "Channel URL pattern regex (legacy fallback)",
-                "type": "text",
-                "placeholder": "^team-[a-z0-9-]{2,}$",
-                "help_text": "Only used when the prefixes editor above is empty. Regex the final channel URL must match; anchor with ^ and $."
-            },
-            {
                 "key": "AllowTeamAdminApprovers",
                 "display_name": "Team Admins can approve requests",
                 "type": "bool",
                 "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
             },
             {
-                "key": "AllowChannelAdminApprovers",
-                "display_name": "Channel Admins of the approval channel can approve requests",
-                "type": "bool",
-                "help_text": "When enabled, Channel Admins of the approval channel can click Approve/Deny in addition to System Admins. Useful when a specific team's leads own the approval flow."
-            },
-            {
                 "key": "AutoApproveUserIDs",
                 "display_name": "Auto-approve requests from these users",
-                "type": "longtext",
-                "placeholder": "One MM user ID per line, or comma-separated.",
-                "help_text": "Requests from these users bypass approval and create the channel immediately. Useful for delegated managers. IDs are 26 characters; invalid lines are ignored."
-            },
-            {
-                "key": "NotifyRequesterOnApprove",
-                "display_name": "DM the requester on approve",
-                "type": "bool",
-                "help_text": "Defaults on."
-            },
-            {
-                "key": "NotifyRequesterOnDeny",
-                "display_name": "DM the requester on deny",
-                "type": "bool",
-                "help_text": "Defaults on."
-            },
-            {
-                "key": "PostWelcomeInCreatedChannel",
-                "display_name": "Post a welcome message in the created channel",
-                "type": "bool",
-                "help_text": "When enabled, the bot posts a short welcome in the newly-created channel citing who requested it and who approved."
+                "type": "custom",
+                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
             },
             {
                 "key": "AuditChannelID",
                 "display_name": "Audit channel ID (optional)",
                 "type": "text",
                 "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
-            },
-            {
-                "key": "MaxRequestsPerUser",
-                "display_name": "Max requests per user per window",
-                "type": "number",
-                "help_text": "Rate limit: max requests a single user can submit per window. 0 = unlimited."
-            },
-            {
-                "key": "RateLimitWindowHours",
-                "display_name": "Rate limit window (hours)",
-                "type": "number",
-                "help_text": "Rolling window for the rate limit above. Defaults to 24."
-            },
-            {
-                "key": "SkipRateLimitForAdmins",
-                "display_name": "System Admins bypass rate limits",
-                "type": "bool",
-                "help_text": "Defaults on."
             }
         ]
     }

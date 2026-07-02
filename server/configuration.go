@@ -49,34 +49,29 @@ type configuration struct {
 
 	// --- 2. Naming enforcement ---
 	// ChannelNamePrefixes is the raw multi-line prefix list. Each line
-	// is "prefix|description|optional_regex". The structured editor
+	// is "prefix|description|max_length". The structured editor
 	// component serializes to this format on save; parsed back into
-	// prefixes below.
+	// prefixes below. Prefix list is REQUIRED — there is no legacy
+	// fallback.
 	ChannelNamePrefixes string
 
-	// Legacy fallback (only used when ChannelNamePrefixes is empty).
-	ChannelNameTemplate string
-	ChannelNamePattern  string
-
 	// --- 3. Approver policy ---
-	AllowTeamAdminApprovers    bool
-	AllowChannelAdminApprovers bool
-	AutoApproveUserIDs         string // raw text, parsed below
+	AllowTeamAdminApprovers bool
 
-	// --- 4. Notification preferences ---
-	NotifyRequesterOnApprove    bool
-	NotifyRequesterOnDeny       bool
-	PostWelcomeInCreatedChannel bool
-	AuditChannelID              string
+	// AutoApproveUserIDs is the raw comma-separated USERNAMES the admin
+	// entered via the AutoApprovePicker. Parsed + resolved to user IDs
+	// in OnConfigurationChange and stored in autoApproveUserIDs.
+	//
+	// (Field kept named AutoApproveUserIDs for plugin.json setting-key
+	// stability. Value shape is usernames now — the picker resolves to
+	// IDs on the server side, since usernames are what admins recognize.)
+	AutoApproveUserIDs string
 
-	// --- 5. Rate limits ---
-	MaxRequestsPerUser     int
-	RateLimitWindowHours   int
-	SkipRateLimitForAdmins bool
+	// --- 4. Audit ---
+	AuditChannelID string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
-	compiledPattern    *regexp.Regexp
 	autoApproveUserIDs []string
 }
 
@@ -163,69 +158,69 @@ func (p *Plugin) OnConfigurationChange() error {
 	// activation — a typo in one line should not wedge the plugin.
 	configuration.prefixes = parsePrefixList(configuration.ChannelNamePrefixes, p.API.LogError)
 
-	// Parse the auto-approve user-ID list. Accepts commas or
-	// whitespace as separators so admins can type "id1 id2, id3"
-	// without thinking about formatting.
-	configuration.autoApproveUserIDs = parseUserIDList(configuration.AutoApproveUserIDs)
-
-	// Apply defaults for booleans that should default TRUE. Go's
-	// zero-value is false, and the MM plugin config loader can't
-	// distinguish "unset" from "explicitly set to false". Best we can
-	// do is: if the user never touched the setting AND the whole config
-	// looks fresh (no prior version marker), assume defaults. For now
-	// we simply flip these to true on activation regardless; admins who
-	// want them off can toggle via System Console.
-	// (This matches the pre-plugin behavior where the DM always fired.)
-	if !configuration.NotifyRequesterOnApprove && !configuration.NotifyRequesterOnDeny {
-		configuration.NotifyRequesterOnApprove = true
-		configuration.NotifyRequesterOnDeny = true
-	}
-	if !configuration.SkipRateLimitForAdmins {
-		configuration.SkipRateLimitForAdmins = true
-	}
-
-	// Compile the legacy pattern (only used when prefix list is empty).
-	// Same tolerance policy: invalid pattern is logged and ignored.
-	if pattern := strings.TrimSpace(configuration.ChannelNamePattern); pattern != "" {
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			p.API.LogError("invalid ChannelNamePattern; ignoring it", "pattern", pattern, "error", err.Error())
-		} else {
-			configuration.compiledPattern = compiled
-		}
-	}
+	// Parse the auto-approve list. The picker component serializes
+	// selected users as comma-separated USERNAMES (matching MemberPicker
+	// serialization). Resolve each to a user ID here so runtime
+	// AutoApproveContains checks are O(len(list)) string compares
+	// instead of hitting the API for every request.
+	configuration.autoApproveUserIDs = p.resolveAutoApproveList(configuration.AutoApproveUserIDs)
 
 	p.setConfiguration(configuration)
 
 	return nil
 }
 
-// parseUserIDList tokenizes a free-form list of MM user IDs separated
-// by commas OR whitespace. Returns a de-duplicated slice preserving
-// first-seen order. Filters obviously-invalid entries (too short to be
-// an MM 26-char ID) but doesn't hit the API to verify existence —
-// non-existent IDs are just ignored at auto-approve check time.
-func parseUserIDList(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
+// resolveAutoApproveList parses the auto-approve setting (comma-
+// separated usernames or IDs) and resolves everything to MM user IDs.
+// Deduplicates. Skips unresolvable entries with a warn log so the
+// admin can spot typos in the plugin log.
+//
+// Accepts BOTH usernames (what the picker produces) AND raw 26-char
+// user IDs (for backward compat with anyone who typed IDs directly).
+func (p *Plugin) resolveAutoApproveList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return nil
 	}
-	// Split on commas, semicolons, whitespace, newlines — everything
-	// non-alphanumeric that isn't part of an ID.
+	// Split on any punctuation/whitespace so admins can paste in any
+	// reasonable format ("alice, bob", "alice bob", "alice\nbob").
 	fields := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
 	})
+
 	seen := make(map[string]bool, len(fields))
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
-		f = strings.TrimSpace(f)
-		if len(f) != 26 { // MM IDs are 26-char base32-ish
+		f = strings.TrimPrefix(strings.TrimSpace(f), "@")
+		if f == "" {
 			continue
 		}
-		if seen[f] {
+
+		var userID string
+		if len(f) == 26 {
+			// Looks like an MM ID. Trust it — a wrong ID just means the
+			// user never matches at runtime; no harm at parse time.
+			userID = f
+		} else {
+			// Username -> resolve via API.
+			user, appErr := p.API.GetUserByUsername(f)
+			if appErr != nil || user == nil {
+				p.API.LogWarn("channel-requests: auto-approve entry did not resolve to a user; skipping",
+					"entry", f, "error", func() string {
+						if appErr != nil {
+							return appErr.Error()
+						}
+						return "nil user"
+					}())
+				continue
+			}
+			userID = user.Id
+		}
+		if seen[userID] {
 			continue
 		}
-		seen[f] = true
-		out = append(out, f)
+		seen[userID] = true
+		out = append(out, userID)
 	}
 	return out
 }

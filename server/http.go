@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -120,7 +121,9 @@ func (p *Plugin) handleListChannels(w http.ResponseWriter, r *http.Request) {
 
 // handleUserAutocomplete returns up to 20 users matching the query
 // string. Used by the request modal's member picker. Proxies to MM's
-// built-in autocomplete API scoped to the caller's permissions.
+// SearchUsers API. When ?team_id=... is set, filters to users who are
+// members of that team — critical for the "which people can I add to
+// a channel in this team" flow.
 func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("Mattermost-User-Id")
 	if userID == "" {
@@ -132,16 +135,17 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, []any{})
 		return
 	}
+	teamID := strings.TrimSpace(r.URL.Query().Get("team_id"))
 
-	// The plugin API doesn't expose the /api/v4/users/autocomplete
-	// endpoint directly, but SearchUsers gets us there with a
-	// reasonable filter shape.
+	// TeamId in UserSearch scopes results to members of that team.
+	// Empty TeamId means "any team the caller can see".
 	users, appErr := p.API.SearchUsers(&model.UserSearch{
 		Term:          q,
+		TeamId:        teamID,
 		AllowInactive: false,
 	})
 	if appErr != nil {
-		p.API.LogWarn("user autocomplete failed", "q", q, "error", appErr.Error())
+		p.API.LogWarn("user autocomplete failed", "q", q, "team_id", teamID, "error", appErr.Error())
 		writeJSON(w, []any{})
 		return
 	}
@@ -324,8 +328,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		DisplayName: submissionString(submission.Submission, fieldDisplayName),
 		Name:        submissionString(submission.Submission, fieldName),
 		// Prefix is present in submission only when the dialog was
-		// opened with the prefix-list feature active; empty otherwise
-		// (and safely ignored by resolveLegacyName).
+		// opened with the prefix-list feature active.
 		Prefix:      submissionString(submission.Submission, fieldPrefix),
 		Purpose:     submissionString(submission.Submission, fieldPurpose),
 		ChannelType: submissionString(submission.Submission, fieldType),
@@ -348,15 +351,16 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 
 // webappCreateRequest is the JSON payload sent by the webapp modal.
 type webappCreateRequest struct {
-	TeamID      string   `json:"team_id"`
-	DisplayName string   `json:"display_name"`
-	Name        string   `json:"name"`
+	TeamID      string `json:"team_id"`
+	DisplayName string `json:"display_name"`
+	Name        string `json:"name"`
 	// Prefix is the selected domain prefix from the modal's dropdown
 	// (e.g., "team-"). Empty when the plugin is in legacy mode.
 	Prefix      string   `json:"prefix"`
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
-	Members     []string `json:"members"` // usernames
+	Members     []string `json:"members"`       // usernames — regular members
+	AdminMembers []string `json:"admin_members"` // usernames — Channel Admins
 }
 
 func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
@@ -372,29 +376,27 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memberIDs := make([]string, 0, len(body.Members))
-	for _, username := range body.Members {
-		username = strings.TrimPrefix(strings.TrimSpace(username), "@")
-		if username == "" {
-			continue
-		}
-		user, appErr := p.API.GetUserByUsername(username)
-		if appErr != nil {
-			writeJSON(w, map[string]string{"error": fmt.Sprintf("unknown user: %s", username)})
-			return
-		}
-		memberIDs = append(memberIDs, user.Id)
+	memberIDs, err := p.resolveUsernameList(body.Members)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+	adminMemberIDs, err := p.resolveUsernameList(body.AdminMembers)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
 	}
 
 	message, err := p.submitRequest(requestInput{
-		RequesterID: userID,
-		TeamID:      body.TeamID,
-		DisplayName: body.DisplayName,
-		Name:        body.Name,
-		Prefix:      body.Prefix,
-		Purpose:     body.Purpose,
-		ChannelType: body.ChannelType,
-		MemberIDs:   memberIDs,
+		RequesterID:    userID,
+		TeamID:         body.TeamID,
+		DisplayName:    body.DisplayName,
+		Name:           body.Name,
+		Prefix:         body.Prefix,
+		Purpose:        body.Purpose,
+		ChannelType:    body.ChannelType,
+		MemberIDs:      memberIDs,
+		AdminMemberIDs: adminMemberIDs,
 	})
 	if err != nil {
 		writeJSON(w, map[string]string{"error": err.Error()})
@@ -449,19 +451,15 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			return
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
-		if config.PostWelcomeInCreatedChannel && requester != nil {
+		if requester != nil {
 			p.postWelcomeMessage(channel, requester, actingUser)
 		}
-		if config.NotifyRequesterOnApprove {
-			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
-		}
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
 		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",
 			actingUser.Username, req.DisplayName, channel.Name, requesterUsername(requester, req.RequesterID)))
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
-		if config.NotifyRequesterOnDeny {
-			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", req.DisplayName))
-		}
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", req.DisplayName))
 		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request `%s` from @%s",
 			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
 	}
@@ -493,13 +491,37 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 	return post
 }
 
+// resolveUsernameList takes a list of "@alice"/"alice"-style usernames
+// and resolves them to MM user IDs. Returns an error for the first
+// name that doesn't resolve so the requester sees a clear "unknown
+// user: X" instead of a silent partial add.
+func (p *Plugin) resolveUsernameList(usernames []string) ([]string, error) {
+	out := make([]string, 0, len(usernames))
+	for _, username := range usernames {
+		username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+		if username == "" {
+			continue
+		}
+		user, appErr := p.API.GetUserByUsername(username)
+		if appErr != nil {
+			return nil, errors.Errorf("unknown user: %s", username)
+		}
+		out = append(out, user.Id)
+	}
+	return out, nil
+}
+
 // canApprove reports whether the acting user is allowed to approve or
 // deny a channel request. Cascading policy:
 //
-//	System Admin                                           -> yes (always)
-//	Team Admin  of the approval team + opt-in flag on      -> yes
-//	Channel Admin of the approval channel + opt-in flag on -> yes
-//	everyone else                                          -> no
+//	System Admin                                       -> yes (always)
+//	Team Admin  of the approval team + opt-in flag on  -> yes
+//	everyone else                                      -> no
+//
+// Channel admins are NOT approvers by design: the channel-admin role
+// only exists on channels that already exist, whereas this plugin is
+// specifically for creating NEW channels. There's no meaningful
+// "channel admin" identity at approval time.
 func (p *Plugin) canApprove(user *model.User) bool {
 	if user == nil {
 		return false
@@ -508,17 +530,9 @@ func (p *Plugin) canApprove(user *model.User) bool {
 		return true
 	}
 	config := p.getConfiguration()
-
-	// Team-admin path.
 	if config.AllowTeamAdminApprovers && p.isTeamAdmin(user.Id, config.ApprovalTeam) {
 		return true
 	}
-
-	// Channel-admin path.
-	if config.AllowChannelAdminApprovers && p.isChannelAdmin(user.Id, config.ApprovalTeam, config.ApprovalChannel) {
-		return true
-	}
-
 	return false
 }
 
@@ -536,26 +550,6 @@ func (p *Plugin) isTeamAdmin(userID, teamSlug string) bool {
 	}
 	for _, r := range strings.Fields(member.Roles) {
 		if r == model.TeamAdminRoleId {
-			return true
-		}
-	}
-	return member.SchemeAdmin
-}
-
-// isChannelAdmin reports whether the user is a Channel Admin of the
-// channel identified by (teamSlug, channelSlug). Same dual-mode role
-// check as isTeamAdmin.
-func (p *Plugin) isChannelAdmin(userID, teamSlug, channelSlug string) bool {
-	channel, appErr := p.API.GetChannelByNameForTeamName(teamSlug, channelSlug, false)
-	if appErr != nil || channel == nil {
-		return false
-	}
-	member, appErr := p.API.GetChannelMember(channel.Id, userID)
-	if appErr != nil || member == nil {
-		return false
-	}
-	for _, r := range strings.Fields(member.Roles) {
-		if r == model.ChannelAdminRoleId {
 			return true
 		}
 	}

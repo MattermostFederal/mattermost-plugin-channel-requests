@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
@@ -14,10 +13,6 @@ import (
 const (
 	// kvRequestPrefix namespaces pending requests in the KV store.
 	kvRequestPrefix = "request_"
-
-	// kvRateLimitPrefix namespaces per-user submission timestamp lists
-	// for the rate limiter. One key per user, value is a JSON []time.Time.
-	kvRateLimitPrefix = "ratelimit_"
 
 	// dialogCallbackID identifies submissions from the channel request dialog.
 	dialogCallbackID = "channel_request"
@@ -31,9 +26,6 @@ const (
 
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
-
-	// nameTemplatePlaceholder is replaced with the slugified base name in ChannelNameTemplate.
-	nameTemplatePlaceholder = "{{name}}"
 
 	// Channel type values as plain strings, for use in dialog options, comparisons, and storage.
 	channelTypeOpen    = string(model.ChannelTypeOpen)
@@ -51,6 +43,10 @@ type channelRequest struct {
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
 	MemberIDs   []string `json:"member_ids"`
+	// AdminMemberIDs are the requester-designated Channel Admins. On
+	// approval, these users get channel_admin scheme roles in the newly
+	// created channel (in addition to being members).
+	AdminMemberIDs []string `json:"admin_member_ids"`
 }
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
@@ -63,14 +59,15 @@ type requestInput struct {
 	// feature is active, this holds ONLY THE SUFFIX (the part after the
 	// prefix); server code prepends the selected prefix. When empty
 	// prefix list, this behaves as before — the full channel name.
-	Name        string
+	Name string
 	// Prefix is the selected domain prefix (e.g., "team-", "project-").
 	// Non-empty only when the prefix-list feature is active AND the
 	// requester picked one. Ignored when the plugin is in legacy mode.
-	Prefix      string
-	Purpose     string
-	ChannelType string
-	MemberIDs   []string
+	Prefix         string
+	Purpose        string
+	ChannelType    string
+	MemberIDs      []string
+	AdminMemberIDs []string
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -86,26 +83,16 @@ func slugify(s string) string {
 	return s
 }
 
-// resolveChannelName derives the final channel URL name from the request.
-//
-// Two paths, chosen by whether the admin populated ChannelNamePrefixes:
-//
-//  1. Prefix-list mode (new): in.Prefix names one of the admin's
-//     configured prefixes; in.Name is the suffix. Server validates the
-//     prefix is in the allowed list and (if the entry has a
-//     SuffixPattern) that the suffix matches it. Final name is
-//     prefix + slugify(suffix).
-//
-//  2. Legacy mode: in.Prefix is ignored; in.Name is the whole channel
-//     name (or DisplayName if Name is blank). ChannelNameTemplate
-//     wraps it; ChannelNamePattern (if compiled) validates the whole
-//     result. Preserves the pre-prefix-list behavior for admins who
-//     haven't switched to the new setting yet.
+// resolveChannelName derives the final channel URL name from the
+// request using the admin's configured prefix list. Requires at least
+// one prefix to be defined; returns an error otherwise so the admin
+// notices the misconfiguration instead of silently permitting free-form
+// channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
-	if config.UsesPrefixList() {
-		return resolvePrefixedName(config.Prefixes(), in)
+	if !config.UsesPrefixList() {
+		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
 	}
-	return resolveLegacyName(config, in)
+	return resolvePrefixedName(config.Prefixes(), in)
 }
 
 // resolvePrefixedName handles the prefix-list flow. The suffix is
@@ -164,31 +151,6 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	return name, nil
 }
 
-// resolveLegacyName preserves the original template + regex behavior.
-// Unchanged from before the prefix-list feature; still the active path
-// for admins who haven't populated ChannelNamePrefixes.
-func resolveLegacyName(config *configuration, in requestInput) (string, error) {
-	base := in.Name
-	if strings.TrimSpace(base) == "" {
-		base = in.DisplayName
-	}
-	base = slugify(base)
-
-	name := base
-	if tmpl := strings.TrimSpace(config.ChannelNameTemplate); tmpl != "" {
-		name = slugify(strings.ReplaceAll(tmpl, nameTemplatePlaceholder, base))
-	}
-
-	if !model.IsValidChannelIdentifier(name) {
-		return "", errors.Errorf("%q is not a valid channel URL name; use 2-64 lowercase letters, numbers, or hyphens", name)
-	}
-
-	if config.compiledPattern != nil && !config.compiledPattern.MatchString(name) {
-		return "", errors.Errorf("the channel URL %q doesn't match the required naming pattern %q", name, config.ChannelNamePattern)
-	}
-
-	return name, nil
-}
 
 // submitRequest validates the input and either creates the channel immediately (if the requester is
 // a System Admin) or stores a pending request and posts it to the approval channel. It returns a
@@ -213,14 +175,15 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	}
 
 	req := &channelRequest{
-		ID:          model.NewId(),
-		RequesterID: in.RequesterID,
-		TeamID:      in.TeamID,
-		Name:        name,
-		DisplayName: strings.TrimSpace(in.DisplayName),
-		Purpose:     strings.TrimSpace(in.Purpose),
-		ChannelType: in.ChannelType,
-		MemberIDs:   in.MemberIDs,
+		ID:             model.NewId(),
+		RequesterID:    in.RequesterID,
+		TeamID:         in.TeamID,
+		Name:           name,
+		DisplayName:    strings.TrimSpace(in.DisplayName),
+		Purpose:        strings.TrimSpace(in.Purpose),
+		ChannelType:    in.ChannelType,
+		MemberIDs:      in.MemberIDs,
+		AdminMemberIDs: in.AdminMemberIDs,
 	}
 
 	requester, appErr := p.API.GetUser(in.RequesterID)
@@ -236,17 +199,8 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if config.PostWelcomeInCreatedChannel {
-			p.postWelcomeMessage(channel, requester, requester) // approver == requester in bypass path
-		}
+		p.postWelcomeMessage(channel, requester, requester)
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
-	}
-
-	// Rate-limit non-admin non-auto-approved requesters if configured.
-	if config.MaxRequestsPerUser > 0 {
-		if err := p.checkRateLimit(config, requester); err != nil {
-			return "", err
-		}
 	}
 
 	if err := p.storeRequest(req); err != nil {
@@ -259,86 +213,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		return "", err
 	}
 
-	// Note the submission time for rate limiting.
-	p.recordSubmission(requester.Id)
-
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
-}
-
-// checkRateLimit returns an error if the requester has already
-// submitted MaxRequestsPerUser requests within the rolling window.
-// Uses a simple KV counter per user: kvRateLimitPrefix + userID stores
-// a JSON-encoded list of recent submission timestamps.
-func (p *Plugin) checkRateLimit(config *configuration, requester *model.User) error {
-	if config.SkipRateLimitForAdmins && requester.IsSystemAdmin() {
-		return nil
-	}
-	windowH := config.RateLimitWindowHours
-	if windowH <= 0 {
-		windowH = 24 // default to a day if unset
-	}
-	windowStart := time.Now().Add(-time.Duration(windowH) * time.Hour)
-
-	timestamps, err := p.loadSubmissionTimes(requester.Id)
-	if err != nil {
-		p.API.LogWarn("rate limit KV read failed; permitting request", "user_id", requester.Id, "error", err.Error())
-		return nil
-	}
-
-	// Count only timestamps still inside the window.
-	count := 0
-	for _, ts := range timestamps {
-		if ts.After(windowStart) {
-			count++
-		}
-	}
-	if count >= config.MaxRequestsPerUser {
-		return errors.Errorf("rate limit hit: you can submit at most %d request(s) per %d hour(s); try again later", config.MaxRequestsPerUser, windowH)
-	}
-	return nil
-}
-
-// recordSubmission appends the current time to the requester's rate-
-// limit KV entry, keeping only timestamps from the last 30 days so the
-// list can't grow unbounded on a chatty user.
-func (p *Plugin) recordSubmission(userID string) {
-	timestamps, err := p.loadSubmissionTimes(userID)
-	if err != nil {
-		p.API.LogWarn("rate limit KV read failed on record", "user_id", userID, "error", err.Error())
-		return
-	}
-	// Keep last 30 days only.
-	cutoff := time.Now().Add(-30 * 24 * time.Hour)
-	kept := make([]time.Time, 0, len(timestamps)+1)
-	for _, ts := range timestamps {
-		if ts.After(cutoff) {
-			kept = append(kept, ts)
-		}
-	}
-	kept = append(kept, time.Now())
-
-	data, err := json.Marshal(kept)
-	if err != nil {
-		return
-	}
-	if appErr := p.API.KVSet(kvRateLimitPrefix+userID, data); appErr != nil {
-		p.API.LogWarn("rate limit KV write failed", "user_id", userID, "error", appErr.Error())
-	}
-}
-
-func (p *Plugin) loadSubmissionTimes(userID string) ([]time.Time, error) {
-	data, appErr := p.API.KVGet(kvRateLimitPrefix + userID)
-	if appErr != nil {
-		return nil, appErr
-	}
-	if data == nil {
-		return nil, nil
-	}
-	var out []time.Time
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // postWelcomeMessage posts a bot message in the newly-created channel
@@ -374,7 +249,9 @@ func (p *Plugin) logAudit(config *configuration, message string) {
 }
 
 // createChannelForRequest creates the channel described by req, adds the requester and any
-// designated members, and returns the created channel.
+// designated members, promotes anyone in AdminMemberIDs to channel_admin, and returns the
+// created channel. Add-and-promote failures on individual users are logged but don't fail
+// the overall operation — a partially-populated channel is better than nothing.
 func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, error) {
 	channel, appErr := p.API.CreateChannel(&model.Channel{
 		TeamId:      req.TeamID,
@@ -388,16 +265,32 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 		return nil, errors.Wrap(appErr, "failed to create channel")
 	}
 
-	// Always add the requester, then the designated members. Skip duplicates and don't fail the
-	// whole operation if an individual member can't be added.
+	// Union of everyone who should be a member: requester + regular + admin sets.
+	adminSet := map[string]bool{}
+	for _, uid := range req.AdminMemberIDs {
+		if uid != "" {
+			adminSet[uid] = true
+		}
+	}
+
 	added := map[string]bool{}
-	for _, userID := range append([]string{req.RequesterID}, req.MemberIDs...) {
+	for _, userID := range append(append([]string{req.RequesterID}, req.MemberIDs...), req.AdminMemberIDs...) {
 		if userID == "" || added[userID] {
 			continue
 		}
 		added[userID] = true
 		if _, appErr := p.API.AddChannelMember(channel.Id, userID); appErr != nil {
 			p.API.LogWarn("failed to add member to created channel", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+			continue
+		}
+		// Promote to channel admin if they were designated as such.
+		// "channel_user channel_admin" is the classic role string;
+		// MM handles the scheme-role mapping internally.
+		if adminSet[userID] {
+			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, "channel_user channel_admin"); appErr != nil {
+				p.API.LogWarn("failed to promote member to channel admin",
+					"channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+			}
 		}
 	}
 
@@ -455,6 +348,13 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 	}
 	if len(req.MemberIDs) > 0 {
 		fields = append(fields, &model.SlackAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+	}
+	if len(req.AdminMemberIDs) > 0 {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Channel Admins to add",
+			Value: p.mentionList(req.AdminMemberIDs),
+			Short: false,
+		})
 	}
 
 	siteURL := "/plugins/" + manifest.Id

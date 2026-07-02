@@ -5,6 +5,7 @@ import type {Store} from 'redux';
 import type {PluginRegistry} from 'types/mattermost-webapp';
 
 import {ChannelPicker, TeamPicker} from './ApprovalChannelPicker';
+import {AutoApprovePicker} from './AutoApprovePicker';
 import {installChannelCreationOverride} from './channelCreationOverride';
 import {HeaderIcon} from './HeaderIcon';
 import {PrefixEditor} from './PrefixEditor';
@@ -48,6 +49,11 @@ export default class Plugin {
             registry.registerAdminConsoleCustomSetting(
                 'ChannelNamePrefixes',
                 PrefixEditor,
+                {showTitle: true},
+            );
+            registry.registerAdminConsoleCustomSetting(
+                'AutoApproveUserIDs',
+                AutoApprovePicker,
                 {showTitle: true},
             );
         }

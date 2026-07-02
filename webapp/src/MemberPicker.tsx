@@ -29,6 +29,16 @@ type Props = {
     disabled?: boolean;
     onChange: (value: string) => void;
     placeholder?: string;
+    // teamId, when set, scopes autocomplete to members of that team.
+    // Passed as ?team_id=... to /api/v1/user_autocomplete so the
+    // dropdown only surfaces people who could actually be added to a
+    // channel in this team.
+    teamId?: string;
+    // usernamesToExclude is a set of usernames already selected in a
+    // sibling picker (e.g. the Members picker excludes anyone already
+    // in the Channel Admins picker, and vice versa) so no user shows
+    // up twice.
+    usernamesToExclude?: string[];
 };
 
 // Parse comma-separated usernames -> array of trimmed non-empty names.
@@ -52,7 +62,7 @@ function displayName(u: User): string {
     return u.username;
 }
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernamesToExclude}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -65,7 +75,9 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         setSelected(parseUsernames(value));
     }, [value]);
 
-    // Debounced autocomplete fetch.
+    // Debounced autocomplete fetch. Team-scoped via ?team_id when the
+    // parent passed teamId — the server filters to team members so we
+    // don't offer users the requester can't actually add.
     useEffect(() => {
         if (!query.trim()) {
             setCandidates([]);
@@ -74,8 +86,12 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         const q = query.trim();
         const timer = window.setTimeout(async () => {
             try {
+                const params = new URLSearchParams({q});
+                if (teamId) {
+                    params.set('team_id', teamId);
+                }
                 const response = await fetch(
-                    `/plugins/${manifest.id}/api/v1/user_autocomplete?q=${encodeURIComponent(q)}`,
+                    `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`,
                     {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}},
                 );
                 if (!response.ok) {
@@ -83,15 +99,18 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                     return;
                 }
                 const users: User[] = await response.json();
-                // Filter out anyone already selected.
-                setCandidates(users.filter((u) => !selected.includes(u.username)));
+                // Filter out anyone already selected AND anyone
+                // the parent explicitly said to exclude (e.g. a sibling
+                // picker already has them).
+                const excluded = new Set([...selected, ...(usernamesToExclude ?? [])]);
+                setCandidates(users.filter((u) => !excluded.has(u.username)));
                 setHighlightIndex(0);
             } catch {
                 setCandidates([]);
             }
         }, 200);
         return () => window.clearTimeout(timer);
-    }, [query, selected]);
+    }, [query, selected, teamId, usernamesToExclude]);
 
     // Close dropdown when clicking outside.
     useEffect(() => {
@@ -123,6 +142,8 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        // With no visible dropdown, Enter still accepts the literal
+        // typed name (useful for offline / unknown-user fallback).
         if (!showDropdown || candidates.length === 0) {
             if (e.key === 'Enter' && query.trim()) {
                 e.preventDefault();
@@ -136,7 +157,10 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             setHighlightIndex((i) => Math.max(i - 1, 0));
-        } else if (e.key === 'Enter') {
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            // Tab completes the currently highlighted candidate — same
+            // behavior as Enter. Prevents Tab from bouncing focus out
+            // of the picker mid-selection.
             e.preventDefault();
             const u = candidates[highlightIndex];
             if (u) {

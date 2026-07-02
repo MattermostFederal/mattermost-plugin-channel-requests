@@ -52,6 +52,11 @@ export const RequestChannelModal = () => {
     const [purpose, setPurpose] = useState('');
     const [channelType, setChannelType] = useState('O');
     const [membersText, setMembersText] = useState('');
+    // adminMembersText holds the second picker's selection — users the
+    // requester is proposing to be Channel Admins on the new channel.
+    // Stored as a comma-separated username string, same shape as
+    // membersText, so the payload path is symmetric.
+    const [adminMembersText, setAdminMembersText] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -98,6 +103,7 @@ export const RequestChannelModal = () => {
         setPurpose('');
         setChannelType('O');
         setMembersText('');
+        setAdminMembersText('');
         setError('');
         setSuccess('');
         setSubmitting(false);
@@ -118,10 +124,12 @@ export const RequestChannelModal = () => {
         setSubmitting(true);
         setError('');
 
-        const members = membersText.
+        const parseCsvUsernames = (raw: string): string[] => raw.
             split(',').
-            map((m) => m.trim()).
+            map((m) => m.trim().replace(/^@/, '')).
             filter((m) => m.length > 0);
+        const members = parseCsvUsernames(membersText);
+        const adminMembers = parseCsvUsernames(adminMembersText);
 
         const result = await submitChannelRequest({
             team_id: teamId,
@@ -131,6 +139,7 @@ export const RequestChannelModal = () => {
             purpose: purpose.trim(),
             channel_type: channelType,
             members,
+            admin_members: adminMembers,
         });
 
         setSubmitting(false);
@@ -254,9 +263,25 @@ export const RequestChannelModal = () => {
                             <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
                             <MemberPicker
                                 value={membersText}
-                                placeholder='Type a name to search — click or press Enter to add'
+                                teamId={teamId}
+                                usernamesToExclude={adminMembersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean)}
+                                placeholder='Type a name — Tab / Enter to add'
                                 onChange={setMembersText}
                             />
+                        </div>
+
+                        <div style={fieldStyle}>
+                            <label htmlFor='cr-admin-members'>{'Channel Admins to add (optional)'}</label>
+                            <MemberPicker
+                                value={adminMembersText}
+                                teamId={teamId}
+                                usernamesToExclude={membersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean)}
+                                placeholder='Type a name — Tab / Enter to add. Gets Channel Admin role on the new channel.'
+                                onChange={setAdminMembersText}
+                            />
+                            <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                {'These users are promoted to Channel Admin on the newly-created channel (they can pin/manage the channel). Autocomplete is scoped to the current team.'}
+                            </small>
                         </div>
 
                         {error ? (
