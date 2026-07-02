@@ -11,11 +11,14 @@ import (
 )
 
 const (
-	routeDialog   = "/api/v1/dialog"
-	routeCreate   = "/api/v1/create"
-	routeApprove  = "/api/v1/approve"
-	routeDeny     = "/api/v1/deny"
-	routePrefixes = "/api/v1/prefixes"
+	routeDialog             = "/api/v1/dialog"
+	routeCreate             = "/api/v1/create"
+	routeApprove            = "/api/v1/approve"
+	routeDeny               = "/api/v1/deny"
+	routePrefixes           = "/api/v1/prefixes"
+	routeTeams              = "/api/v1/teams"          // list teams for the approval-channel picker
+	routeChannels           = "/api/v1/channels"       // list channels in a team, ?team_id=...
+	routeUserAutocomplete   = "/api/v1/user_autocomplete" // ?q=... for the request-modal member picker
 
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
@@ -34,9 +37,140 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleAction(w, r, false)
 	case routePrefixes:
 		p.handlePrefixes(w, r)
+	case routeTeams:
+		p.handleListTeams(w, r)
+	case routeChannels:
+		p.handleListChannels(w, r)
+	case routeUserAutocomplete:
+		p.handleUserAutocomplete(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleListTeams returns the list of teams the current user can see.
+// Used by the ApprovalChannelPicker component to populate the team
+// dropdown. Any logged-in user gets the list (only sysadmins reach the
+// admin console anyway; MM enforces that at the UI level).
+func (p *Plugin) handleListTeams(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("Mattermost-User-Id")
+	if userID == "" {
+		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return
+	}
+	teams, appErr := p.API.GetTeamsForUser(userID)
+	if appErr != nil {
+		p.API.LogWarn("list-teams failed", "user_id", userID, "error", appErr.Error())
+		writeJSON(w, []any{})
+		return
+	}
+	type teamDTO struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+	}
+	out := make([]teamDTO, 0, len(teams))
+	for _, t := range teams {
+		out = append(out, teamDTO{ID: t.Id, Name: t.Name, DisplayName: t.DisplayName})
+	}
+	writeJSON(w, out)
+}
+
+// handleListChannels returns the channels in a team the current user
+// can see. Query param: team_id. Filters to public + private channels
+// (excludes DMs/GMs — a DM channel isn't a valid approval destination).
+func (p *Plugin) handleListChannels(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("Mattermost-User-Id")
+	if userID == "" {
+		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return
+	}
+	teamID := r.URL.Query().Get("team_id")
+	if teamID == "" {
+		http.Error(w, "team_id required", http.StatusBadRequest)
+		return
+	}
+	channels, appErr := p.API.GetChannelsForTeamForUser(teamID, userID, false)
+	if appErr != nil {
+		p.API.LogWarn("list-channels failed", "team_id", teamID, "user_id", userID, "error", appErr.Error())
+		writeJSON(w, []any{})
+		return
+	}
+	type channelDTO struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+		Type        string `json:"type"`
+	}
+	out := make([]channelDTO, 0, len(channels))
+	for _, c := range channels {
+		// Only public + private — DMs/GMs make no sense as an approval channel.
+		if c.Type != model.ChannelTypeOpen && c.Type != model.ChannelTypePrivate {
+			continue
+		}
+		out = append(out, channelDTO{
+			ID:          c.Id,
+			Name:        c.Name,
+			DisplayName: c.DisplayName,
+			Type:        string(c.Type),
+		})
+	}
+	writeJSON(w, out)
+}
+
+// handleUserAutocomplete returns up to 20 users matching the query
+// string. Used by the request modal's member picker. Proxies to MM's
+// built-in autocomplete API scoped to the caller's permissions.
+func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("Mattermost-User-Id")
+	if userID == "" {
+		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, []any{})
+		return
+	}
+
+	// The plugin API doesn't expose the /api/v4/users/autocomplete
+	// endpoint directly, but SearchUsers gets us there with a
+	// reasonable filter shape.
+	users, appErr := p.API.SearchUsers(&model.UserSearch{
+		Term:          q,
+		AllowInactive: false,
+	})
+	if appErr != nil {
+		p.API.LogWarn("user autocomplete failed", "q", q, "error", appErr.Error())
+		writeJSON(w, []any{})
+		return
+	}
+
+	type userDTO struct {
+		ID        string `json:"id"`
+		Username  string `json:"username"`
+		Nickname  string `json:"nickname"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+	max := 20
+	if len(users) < max {
+		max = len(users)
+	}
+	out := make([]userDTO, 0, max)
+	for i, u := range users {
+		if i >= max {
+			break
+		}
+		out = append(out, userDTO{
+			ID:        u.Id,
+			Username:  u.Username,
+			Nickname:  u.Nickname,
+			FirstName: u.FirstName,
+			LastName:  u.LastName,
+		})
+	}
+	writeJSON(w, out)
 }
 
 // handlePrefixes serves the current admin-configured prefix list so the
@@ -277,10 +411,15 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
-	// Only System Admins may approve or deny requests.
+	// Approvers: System Admins always. Team Admins of the approval team
+	// too, if the admin has opted in via AllowTeamAdminApprovers.
 	actingUser, appErr := p.API.GetUser(request.UserId)
-	if appErr != nil || !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Only a System Admin can approve or deny channel requests."})
+	if appErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
+		return
+	}
+	if !p.canApprove(actingUser) {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny channel requests. Contact a System Admin."})
 		return
 	}
 
@@ -298,6 +437,9 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
+	config := p.getConfiguration()
+	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for welcome post + audit
+
 	var outcome string
 	if approve {
 		channel, createErr := p.createChannelForRequest(req)
@@ -307,10 +449,21 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			return
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
+		if config.PostWelcomeInCreatedChannel && requester != nil {
+			p.postWelcomeMessage(channel, requester, actingUser)
+		}
+		if config.NotifyRequesterOnApprove {
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
+		}
+		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",
+			actingUser.Username, req.DisplayName, channel.Name, requesterUsername(requester, req.RequesterID)))
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", req.DisplayName))
+		if config.NotifyRequesterOnDeny {
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", req.DisplayName))
+		}
+		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request `%s` from @%s",
+			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
 	}
 
 	if appErr := p.API.KVDelete(kvRequestPrefix + req.ID); appErr != nil {
@@ -338,6 +491,84 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 	model.ParseSlackAttachment(post, attachments)
 	post.Message = status
 	return post
+}
+
+// canApprove reports whether the acting user is allowed to approve or
+// deny a channel request. Cascading policy:
+//
+//	System Admin                                           -> yes (always)
+//	Team Admin  of the approval team + opt-in flag on      -> yes
+//	Channel Admin of the approval channel + opt-in flag on -> yes
+//	everyone else                                          -> no
+func (p *Plugin) canApprove(user *model.User) bool {
+	if user == nil {
+		return false
+	}
+	if user.IsSystemAdmin() {
+		return true
+	}
+	config := p.getConfiguration()
+
+	// Team-admin path.
+	if config.AllowTeamAdminApprovers && p.isTeamAdmin(user.Id, config.ApprovalTeam) {
+		return true
+	}
+
+	// Channel-admin path.
+	if config.AllowChannelAdminApprovers && p.isChannelAdmin(user.Id, config.ApprovalTeam, config.ApprovalChannel) {
+		return true
+	}
+
+	return false
+}
+
+// isTeamAdmin reports whether the user is a Team Admin of the team
+// identified by teamSlug. Handles both classic roles-string admin and
+// scheme-based admin (permissions v2).
+func (p *Plugin) isTeamAdmin(userID, teamSlug string) bool {
+	team, appErr := p.API.GetTeamByName(teamSlug)
+	if appErr != nil || team == nil {
+		return false
+	}
+	member, appErr := p.API.GetTeamMember(team.Id, userID)
+	if appErr != nil || member == nil {
+		return false
+	}
+	for _, r := range strings.Fields(member.Roles) {
+		if r == model.TeamAdminRoleId {
+			return true
+		}
+	}
+	return member.SchemeAdmin
+}
+
+// isChannelAdmin reports whether the user is a Channel Admin of the
+// channel identified by (teamSlug, channelSlug). Same dual-mode role
+// check as isTeamAdmin.
+func (p *Plugin) isChannelAdmin(userID, teamSlug, channelSlug string) bool {
+	channel, appErr := p.API.GetChannelByNameForTeamName(teamSlug, channelSlug, false)
+	if appErr != nil || channel == nil {
+		return false
+	}
+	member, appErr := p.API.GetChannelMember(channel.Id, userID)
+	if appErr != nil || member == nil {
+		return false
+	}
+	for _, r := range strings.Fields(member.Roles) {
+		if r == model.ChannelAdminRoleId {
+			return true
+		}
+	}
+	return member.SchemeAdmin
+}
+
+// requesterUsername returns "@username" for the audit log when we have
+// the user object; falls back to the raw ID otherwise.
+func requesterUsername(user *model.User, userID string) string {
+	if user != nil {
+		return "@" + user.Username
+	}
+	return "user " + userID
 }
 
 func submissionString(submission map[string]any, key string) string {

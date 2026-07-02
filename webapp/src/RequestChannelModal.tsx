@@ -3,6 +3,7 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import {fetchPrefixes, submitChannelRequest} from './client';
 import type {ChannelPrefix} from './client';
+import {MemberPicker} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
 
@@ -251,12 +252,10 @@ export const RequestChannelModal = () => {
 
                         <div style={fieldStyle}>
                             <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
-                            <input
-                                id='cr-members'
-                                className='form-control'
+                            <MemberPicker
                                 value={membersText}
-                                placeholder='Comma-separated usernames, e.g. alice, bob'
-                                onChange={(e) => setMembersText(e.target.value)}
+                                placeholder='Type a name to search — click or press Enter to add'
+                                onChange={setMembersText}
                             />
                         </div>
 

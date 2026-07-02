@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
@@ -13,6 +14,10 @@ import (
 const (
 	// kvRequestPrefix namespaces pending requests in the KV store.
 	kvRequestPrefix = "request_"
+
+	// kvRateLimitPrefix namespaces per-user submission timestamp lists
+	// for the rate limiter. One key per user, value is a JSON []time.Time.
+	kvRateLimitPrefix = "ratelimit_"
 
 	// dialogCallbackID identifies submissions from the channel request dialog.
 	dialogCallbackID = "channel_request"
@@ -139,8 +144,17 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
 	}
 
-	if entry.SuffixPattern != nil && !entry.SuffixPattern.MatchString(suffix) {
-		return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+	// Match the whole suffix, not any substring. Admins wrote patterns
+	// like [a-z0-9-]{2,16} expecting "the suffix must be exactly this
+	// shape" — surprise-anchor them instead of requiring every admin to
+	// remember ^ and $. Preserves the display text of the raw pattern
+	// in error messages so users see what they wrote, not our anchored
+	// rewrite.
+	if entry.SuffixPattern != nil {
+		match := entry.SuffixPattern.FindStringIndex(suffix)
+		if match == nil || match[0] != 0 || match[1] != len(suffix) {
+			return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+		}
 	}
 
 	name := entry.Prefix + suffix
@@ -209,17 +223,30 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		MemberIDs:   in.MemberIDs,
 	}
 
-	// System Admins skip the approval step and create the channel directly.
 	requester, appErr := p.API.GetUser(in.RequesterID)
 	if appErr != nil {
 		return "", errors.Wrap(appErr, "failed to load requesting user")
 	}
-	if requester.IsSystemAdmin() {
+
+	// Bypass approval for:
+	//   - System Admins (always)
+	//   - Users on the admin-configured auto-approve list (delegated managers)
+	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
 		channel, err := p.createChannelForRequest(req)
 		if err != nil {
 			return "", err
 		}
+		if config.PostWelcomeInCreatedChannel {
+			p.postWelcomeMessage(channel, requester, requester) // approver == requester in bypass path
+		}
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
+	}
+
+	// Rate-limit non-admin non-auto-approved requesters if configured.
+	if config.MaxRequestsPerUser > 0 {
+		if err := p.checkRateLimit(config, requester); err != nil {
+			return "", err
+		}
 	}
 
 	if err := p.storeRequest(req); err != nil {
@@ -232,7 +259,118 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		return "", err
 	}
 
+	// Note the submission time for rate limiting.
+	p.recordSubmission(requester.Id)
+
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
+}
+
+// checkRateLimit returns an error if the requester has already
+// submitted MaxRequestsPerUser requests within the rolling window.
+// Uses a simple KV counter per user: kvRateLimitPrefix + userID stores
+// a JSON-encoded list of recent submission timestamps.
+func (p *Plugin) checkRateLimit(config *configuration, requester *model.User) error {
+	if config.SkipRateLimitForAdmins && requester.IsSystemAdmin() {
+		return nil
+	}
+	windowH := config.RateLimitWindowHours
+	if windowH <= 0 {
+		windowH = 24 // default to a day if unset
+	}
+	windowStart := time.Now().Add(-time.Duration(windowH) * time.Hour)
+
+	timestamps, err := p.loadSubmissionTimes(requester.Id)
+	if err != nil {
+		p.API.LogWarn("rate limit KV read failed; permitting request", "user_id", requester.Id, "error", err.Error())
+		return nil
+	}
+
+	// Count only timestamps still inside the window.
+	count := 0
+	for _, ts := range timestamps {
+		if ts.After(windowStart) {
+			count++
+		}
+	}
+	if count >= config.MaxRequestsPerUser {
+		return errors.Errorf("rate limit hit: you can submit at most %d request(s) per %d hour(s); try again later", config.MaxRequestsPerUser, windowH)
+	}
+	return nil
+}
+
+// recordSubmission appends the current time to the requester's rate-
+// limit KV entry, keeping only timestamps from the last 30 days so the
+// list can't grow unbounded on a chatty user.
+func (p *Plugin) recordSubmission(userID string) {
+	timestamps, err := p.loadSubmissionTimes(userID)
+	if err != nil {
+		p.API.LogWarn("rate limit KV read failed on record", "user_id", userID, "error", err.Error())
+		return
+	}
+	// Keep last 30 days only.
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	kept := make([]time.Time, 0, len(timestamps)+1)
+	for _, ts := range timestamps {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	kept = append(kept, time.Now())
+
+	data, err := json.Marshal(kept)
+	if err != nil {
+		return
+	}
+	if appErr := p.API.KVSet(kvRateLimitPrefix+userID, data); appErr != nil {
+		p.API.LogWarn("rate limit KV write failed", "user_id", userID, "error", appErr.Error())
+	}
+}
+
+func (p *Plugin) loadSubmissionTimes(userID string) ([]time.Time, error) {
+	data, appErr := p.API.KVGet(kvRateLimitPrefix + userID)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if data == nil {
+		return nil, nil
+	}
+	var out []time.Time
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// postWelcomeMessage posts a bot message in the newly-created channel
+// announcing who requested it and who approved.
+func (p *Plugin) postWelcomeMessage(channel *model.Channel, requester, approver *model.User) {
+	body := fmt.Sprintf("Welcome — this channel was requested by @%s", requester.Username)
+	if approver != nil && approver.Id != requester.Id {
+		body += fmt.Sprintf(" and approved by @%s", approver.Username)
+	}
+	body += ". Adjust the header + purpose to fit."
+	if _, appErr := p.API.CreatePost(&model.Post{
+		UserId:    p.botUserID,
+		ChannelId: channel.Id,
+		Message:   body,
+	}); appErr != nil {
+		p.API.LogWarn("failed to post welcome message", "channel_id", channel.Id, "error", appErr.Error())
+	}
+}
+
+// logAudit posts an audit-trail line to the configured audit channel.
+// No-op when AuditChannelID is empty.
+func (p *Plugin) logAudit(config *configuration, message string) {
+	if strings.TrimSpace(config.AuditChannelID) == "" {
+		return
+	}
+	if _, appErr := p.API.CreatePost(&model.Post{
+		UserId:    p.botUserID,
+		ChannelId: config.AuditChannelID,
+		Message:   message,
+	}); appErr != nil {
+		p.API.LogWarn("audit post failed", "channel_id", config.AuditChannelID, "error", appErr.Error())
+	}
 }
 
 // createChannelForRequest creates the channel described by req, adds the requester and any

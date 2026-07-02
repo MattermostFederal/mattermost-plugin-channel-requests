@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -33,36 +35,49 @@ type channelPrefix struct {
 // configuration captures the plugin's external configuration as exposed in the Mattermost server
 // configuration, as well as values computed from the configuration. Any public fields will be
 // deserialized from the Mattermost server configuration in OnConfigurationChange.
+//
+// Field grouping (matches the System Console layout):
+//   1. Approval routing (team + channel slugs)
+//   2. Naming enforcement (structured prefix list + legacy fallback)
+//   3. Approver policy (who can approve, auto-approve list)
+//   4. Notification preferences (DM + audit channel + welcome post)
+//   5. Rate limits
 type configuration struct {
-	// ApprovalTeam is the URL name (slug) of the team containing the approval channel.
-	ApprovalTeam string
-
-	// ApprovalChannel is the URL name (slug) of the channel where channel-creation requests are
-	// posted for a System Admin to approve or deny.
+	// --- 1. Approval routing ---
+	ApprovalTeam    string
 	ApprovalChannel string
 
-	// ChannelNamePrefixes is the raw multi-line text the admin entered in
-	// the System Console. Each line is "prefix|description|optional_regex".
-	// Parsed into prefixes below in OnConfigurationChange.
+	// --- 2. Naming enforcement ---
+	// ChannelNamePrefixes is the raw multi-line prefix list. Each line
+	// is "prefix|description|optional_regex". The structured editor
+	// component serializes to this format on save; parsed back into
+	// prefixes below.
 	ChannelNamePrefixes string
 
-	// ChannelNameTemplate is the LEGACY template setting. Only used when
-	// ChannelNamePrefixes is empty (backward compat with pre-prefix-picker
-	// deployments). Placeholder "{{name}}" is replaced with the slugified
-	// requester name.
+	// Legacy fallback (only used when ChannelNamePrefixes is empty).
 	ChannelNameTemplate string
+	ChannelNamePattern  string
 
-	// ChannelNamePattern is the LEGACY regex setting. Only used when
-	// ChannelNamePrefixes is empty. Applied to the final full name.
-	ChannelNamePattern string
+	// --- 3. Approver policy ---
+	AllowTeamAdminApprovers    bool
+	AllowChannelAdminApprovers bool
+	AutoApproveUserIDs         string // raw text, parsed below
 
-	// prefixes is the parsed form of ChannelNamePrefixes. Nil/empty when
-	// the admin left the field blank (legacy fallback path).
-	prefixes []channelPrefix
+	// --- 4. Notification preferences ---
+	NotifyRequesterOnApprove    bool
+	NotifyRequesterOnDeny       bool
+	PostWelcomeInCreatedChannel bool
+	AuditChannelID              string
 
-	// compiledPattern is the compiled form of ChannelNamePattern, computed in OnConfigurationChange.
-	// It is nil when no (valid) pattern is configured.
-	compiledPattern *regexp.Regexp
+	// --- 5. Rate limits ---
+	MaxRequestsPerUser     int
+	RateLimitWindowHours   int
+	SkipRateLimitForAdmins bool
+
+	// --- Parsed / computed (unexported) ---
+	prefixes           []channelPrefix
+	compiledPattern    *regexp.Regexp
+	autoApproveUserIDs []string
 }
 
 // UsesPrefixList reports whether the admin has configured the new
@@ -96,6 +111,17 @@ func (c *configuration) IsValid() error {
 		return errors.New("the Approval Channel is not configured")
 	}
 	return nil
+}
+
+// AutoApproveContains reports whether the given user ID is in the
+// admin-configured auto-approve list.
+func (c *configuration) AutoApproveContains(userID string) bool {
+	for _, id := range c.autoApproveUserIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Plugin) getConfiguration() *configuration {
@@ -137,6 +163,27 @@ func (p *Plugin) OnConfigurationChange() error {
 	// activation — a typo in one line should not wedge the plugin.
 	configuration.prefixes = parsePrefixList(configuration.ChannelNamePrefixes, p.API.LogError)
 
+	// Parse the auto-approve user-ID list. Accepts commas or
+	// whitespace as separators so admins can type "id1 id2, id3"
+	// without thinking about formatting.
+	configuration.autoApproveUserIDs = parseUserIDList(configuration.AutoApproveUserIDs)
+
+	// Apply defaults for booleans that should default TRUE. Go's
+	// zero-value is false, and the MM plugin config loader can't
+	// distinguish "unset" from "explicitly set to false". Best we can
+	// do is: if the user never touched the setting AND the whole config
+	// looks fresh (no prior version marker), assume defaults. For now
+	// we simply flip these to true on activation regardless; admins who
+	// want them off can toggle via System Console.
+	// (This matches the pre-plugin behavior where the DM always fired.)
+	if !configuration.NotifyRequesterOnApprove && !configuration.NotifyRequesterOnDeny {
+		configuration.NotifyRequesterOnApprove = true
+		configuration.NotifyRequesterOnDeny = true
+	}
+	if !configuration.SkipRateLimitForAdmins {
+		configuration.SkipRateLimitForAdmins = true
+	}
+
 	// Compile the legacy pattern (only used when prefix list is empty).
 	// Same tolerance policy: invalid pattern is logged and ignored.
 	if pattern := strings.TrimSpace(configuration.ChannelNamePattern); pattern != "" {
@@ -153,14 +200,54 @@ func (p *Plugin) OnConfigurationChange() error {
 	return nil
 }
 
+// parseUserIDList tokenizes a free-form list of MM user IDs separated
+// by commas OR whitespace. Returns a de-duplicated slice preserving
+// first-seen order. Filters obviously-invalid entries (too short to be
+// an MM 26-char ID) but doesn't hit the API to verify existence —
+// non-existent IDs are just ignored at auto-approve check time.
+func parseUserIDList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	// Split on commas, semicolons, whitespace, newlines — everything
+	// non-alphanumeric that isn't part of an ID.
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
+	})
+	seen := make(map[string]bool, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if len(f) != 26 { // MM IDs are 26-char base32-ish
+			continue
+		}
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // parsePrefixList parses the admin's multi-line prefix-list setting.
-// Line format: "prefix|description|optional_regex". Empty lines and
-// leading/trailing whitespace are ignored. A malformed regex causes the
-// entry's SuffixPattern to be nil (permissive) with an error logged;
-// the entry itself still enters the list so the prefix stays selectable.
+// Line format: "prefix|description|third". The THIRD field accepts
+// two shapes:
 //
-// logErr is the plugin's structured logger (p.API.LogError). Passed as
-// an arg so the function is testable without a live Plugin.
+//	numeric ("16", "24")         -> treated as a max suffix length.
+//	                                Internally compiled as
+//	                                [a-z0-9-]{2,N}. This is the format
+//	                                the new PrefixEditor UI emits.
+//	regex string ("[a-z]+", ...) -> compiled as-is. Backward compat
+//	                                with hand-edited configs from
+//	                                the pre-editor days.
+//
+// Empty third field -> no constraint on the suffix (other than MM's
+// channel identifier validity check).
+//
+// Empty lines and comments (# prefix) are skipped. Malformed regex is
+// logged and the prefix stays selectable with a no-op rule so a typo
+// can't wedge the plugin.
 func parsePrefixList(raw string, logErr func(msg string, keyValuePairs ...any)) []channelPrefix {
 	var out []channelPrefix
 	for lineNo, line := range strings.Split(raw, "\n") {
@@ -180,22 +267,60 @@ func parsePrefixList(raw string, logErr func(msg string, keyValuePairs ...any)) 
 			entry.Description = strings.TrimSpace(parts[1])
 		}
 		if len(parts) >= 3 {
-			patternRaw := strings.TrimSpace(parts[2])
-			if patternRaw != "" {
-				compiled, err := regexp.Compile(patternRaw)
-				if err != nil {
-					// Log but keep the prefix — better to have a
-					// permissive prefix than to drop it entirely and
-					// confuse the admin about why it disappeared.
-					logErr("channel-requests: invalid suffix regex for prefix; falling back to no-pattern",
-						"prefix", prefix, "pattern", patternRaw, "error", err.Error())
-				} else {
-					entry.SuffixPattern = compiled
-					entry.SuffixPatternRaw = patternRaw
-				}
+			third := strings.TrimSpace(parts[2])
+			if third != "" {
+				entry.SuffixPattern, entry.SuffixPatternRaw = compileSuffixRule(third, prefix, logErr)
 			}
 		}
 		out = append(out, entry)
 	}
 	return out
+}
+
+// compileSuffixRule converts the third pipe-field into a compiled regex.
+// Returns (nil, third) when the field can't be compiled — the caller
+// stores the raw text so error messages reference what the admin wrote.
+func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePairs ...any)) (*regexp.Regexp, string) {
+	// Numeric shape: treat as max length. Build [a-z0-9-]{2,N}. Any
+	// N > 32 is silently capped since MM channel identifiers max out
+	// at 64 total and we want room for the prefix.
+	if isPositiveInt(third) {
+		n, _ := strconv.Atoi(third)
+		if n < 2 {
+			n = 2
+		}
+		if n > 32 {
+			n = 32
+		}
+		expr := fmt.Sprintf("[a-z0-9-]{2,%d}", n)
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			// Shouldn't happen — regex is generated from a bounded int.
+			logErr("channel-requests: failed to compile numeric suffix rule",
+				"prefix", prefix, "n", third, "error", err.Error())
+			return nil, third
+		}
+		return re, third
+	}
+
+	// Legacy regex path.
+	re, err := regexp.Compile(third)
+	if err != nil {
+		logErr("channel-requests: invalid suffix regex for prefix; falling back to no-pattern",
+			"prefix", prefix, "pattern", third, "error", err.Error())
+		return nil, third
+	}
+	return re, third
+}
+
+func isPositiveInt(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

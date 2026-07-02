@@ -6,7 +6,7 @@
     "support_url": "__PLUGIN_REPO_URL__/issues",
     "icon_path": "assets/icon.svg",
     "version": "0.1.0",
-    "min_server_version": "11.8.0",
+    "min_server_version": "10.5.0",
     "server": {
         "executables": {
             "linux-amd64": "server/dist/plugin-linux-amd64",
@@ -19,43 +19,101 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nConfigure where channel-creation requests are sent for approval. Requests from non-admins are posted to the approval channel, where any System Admin can approve or deny them.\n\n**Naming enforcement (recommended):** define a list of allowed **domain prefixes** below (e.g. team-, project-, ops-). Requesters pick a prefix from a dropdown and supply the suffix, so channels follow the org's naming convention by construction. Falls back to the legacy template + regex settings when the prefix list is empty.",
+        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins / group members) can approve or deny.\n\nSet the approval team + channel first. Then configure domain prefixes so channels follow your naming convention automatically.",
         "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
                 "key": "ApprovalTeam",
-                "display_name": "Approval Team",
-                "type": "text",
-                "placeholder": "myteam",
-                "help_text": "The URL name (slug) of the team that contains the approval channel. For example, if the team URL is /myteam, enter 'myteam'."
+                "display_name": "Approval team",
+                "type": "custom",
+                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel."
             },
             {
                 "key": "ApprovalChannel",
-                "display_name": "Approval Channel",
-                "type": "text",
-                "placeholder": "channel-requests",
-                "help_text": "The URL name (slug) of the channel where channel-creation requests are posted for approval. For example, if the channel URL is /myteam/channels/channel-requests, enter 'channel-requests'."
+                "display_name": "Approval channel",
+                "type": "custom",
+                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval."
             },
             {
                 "key": "ChannelNamePrefixes",
-                "display_name": "Channel Domain Prefixes",
-                "type": "longtext",
-                "placeholder": "team-|Team collaboration channels|[a-z0-9-]{2,16}\nchannel-|General purpose channels|\nproject-|Project workstreams|[a-z0-9-]{3,32}\nops-|Operational + incident channels|\nhelp-|Help + support channels|\nannouncements-|Read-only announcement channels|",
-                "help_text": "One entry per line: 'prefix|description|optional_suffix_pattern'. When populated, requesters choose a prefix from a dropdown and enter only the suffix — the final channel URL is 'prefix<suffix>'. The optional suffix regex is applied to just the suffix portion (not anchored to '^' or '$'). Leave blank to fall back to the legacy 'Channel URL Template' + 'Channel URL Pattern' fields below. Example: 'team-|Team collaboration channels|[a-z0-9-]{2,16}'."
+                "display_name": "Channel domain prefixes",
+                "type": "custom",
+                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
             },
             {
                 "key": "ChannelNameTemplate",
-                "display_name": "Channel URL Template (legacy — falls back when prefixes list is empty)",
+                "display_name": "Channel URL template (legacy fallback)",
                 "type": "text",
                 "placeholder": "team-{{name}}",
-                "help_text": "Legacy setting. Only applied when 'Channel Domain Prefixes' above is empty. Forces every approved channel URL into a standard shape; use '{{name}}' as a placeholder for the requester's slugified channel name. For example, 'team-{{name}}' turns a request for 'Marketing' into 'team-marketing'."
+                "help_text": "Only used when the prefixes editor above is empty. Use {{name}} as a placeholder for the slugified requester name."
             },
             {
                 "key": "ChannelNamePattern",
-                "display_name": "Channel URL Pattern regex (legacy — falls back when prefixes list is empty)",
+                "display_name": "Channel URL pattern regex (legacy fallback)",
                 "type": "text",
                 "placeholder": "^team-[a-z0-9-]{2,}$",
-                "help_text": "Legacy setting. Only applied when 'Channel Domain Prefixes' above is empty. Regex the final channel URL must match; requests that don't match are rejected. Anchor with ^ and $. Example: '^team-[a-z0-9-]{2,}$'."
+                "help_text": "Only used when the prefixes editor above is empty. Regex the final channel URL must match; anchor with ^ and $."
+            },
+            {
+                "key": "AllowTeamAdminApprovers",
+                "display_name": "Team Admins can approve requests",
+                "type": "bool",
+                "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
+            },
+            {
+                "key": "AllowChannelAdminApprovers",
+                "display_name": "Channel Admins of the approval channel can approve requests",
+                "type": "bool",
+                "help_text": "When enabled, Channel Admins of the approval channel can click Approve/Deny in addition to System Admins. Useful when a specific team's leads own the approval flow."
+            },
+            {
+                "key": "AutoApproveUserIDs",
+                "display_name": "Auto-approve requests from these users",
+                "type": "longtext",
+                "placeholder": "One MM user ID per line, or comma-separated.",
+                "help_text": "Requests from these users bypass approval and create the channel immediately. Useful for delegated managers. IDs are 26 characters; invalid lines are ignored."
+            },
+            {
+                "key": "NotifyRequesterOnApprove",
+                "display_name": "DM the requester on approve",
+                "type": "bool",
+                "help_text": "Defaults on."
+            },
+            {
+                "key": "NotifyRequesterOnDeny",
+                "display_name": "DM the requester on deny",
+                "type": "bool",
+                "help_text": "Defaults on."
+            },
+            {
+                "key": "PostWelcomeInCreatedChannel",
+                "display_name": "Post a welcome message in the created channel",
+                "type": "bool",
+                "help_text": "When enabled, the bot posts a short welcome in the newly-created channel citing who requested it and who approved."
+            },
+            {
+                "key": "AuditChannelID",
+                "display_name": "Audit channel ID (optional)",
+                "type": "text",
+                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
+            },
+            {
+                "key": "MaxRequestsPerUser",
+                "display_name": "Max requests per user per window",
+                "type": "number",
+                "help_text": "Rate limit: max requests a single user can submit per window. 0 = unlimited."
+            },
+            {
+                "key": "RateLimitWindowHours",
+                "display_name": "Rate limit window (hours)",
+                "type": "number",
+                "help_text": "Rolling window for the rate limit above. Defaults to 24."
+            },
+            {
+                "key": "SkipRateLimitForAdmins",
+                "display_name": "System Admins bypass rate limits",
+                "type": "bool",
+                "help_text": "Defaults on."
             }
         ]
     }
