@@ -52,6 +52,7 @@ export const RequestChannelModal = () => {
     const [purpose, setPurpose] = useState('');
     const [channelType, setChannelType] = useState('O');
     const [membersText, setMembersText] = useState('');
+
     // adminMembersText holds the second picker's selection — users the
     // requester is proposing to be Channel Admins on the new channel.
     // Stored as a comma-separated username string, same shape as
@@ -259,30 +260,81 @@ export const RequestChannelModal = () => {
                             </select>
                         </div>
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
-                            <MemberPicker
-                                value={membersText}
-                                teamId={teamId}
-                                usernamesToExclude={adminMembersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean)}
-                                placeholder='Type a name — Tab / Enter to add'
-                                onChange={setMembersText}
-                            />
-                        </div>
+                        {(() => {
+                            // Build cross-picker badge maps so each
+                            // picker's dropdown shows a "Currently:
+                            // Channel Admin" or "Currently: Member"
+                            // chip next to any user already claimed by
+                            // the sibling picker. Requester sees at a
+                            // glance who is assigned where.
+                            const memberUsernames = membersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+                            const adminUsernames = adminMembersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+                            const badgesForMembersPicker: Record<string, string> = {};
+                            adminUsernames.forEach((u) => {
+                                badgesForMembersPicker[u] = 'Channel Admin';
+                            });
+                            const badgesForAdminsPicker: Record<string, string> = {};
+                            memberUsernames.forEach((u) => {
+                                badgesForAdminsPicker[u] = 'Member';
+                            });
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-admin-members'>{'Channel Admins to add (optional)'}</label>
-                            <MemberPicker
-                                value={adminMembersText}
-                                teamId={teamId}
-                                usernamesToExclude={membersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean)}
-                                placeholder='Type a name — Tab / Enter to add. Gets Channel Admin role on the new channel.'
-                                onChange={setAdminMembersText}
-                            />
-                            <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
-                                {'These users are promoted to Channel Admin on the newly-created channel (they can pin/manage the channel). Autocomplete is scoped to the current team.'}
-                            </small>
-                        </div>
+                            // When the requester picks a user in one
+                            // picker, drop them from the sibling if
+                            // they were previously there — a user can
+                            // only have one role at creation time.
+                            // The onChange handlers below implement
+                            // this move-on-select semantics.
+                            return (
+                                <>
+                                    <div style={fieldStyle}>
+                                        <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
+                                        <MemberPicker
+                                            value={membersText}
+                                            teamId={teamId}
+                                            usernameBadges={badgesForMembersPicker}
+                                            placeholder='Type a name — Tab / Enter to add'
+                                            onChange={(newMembers) => {
+                                                setMembersText(newMembers);
+
+                                                // If the user just added
+                                                // was in the admin list,
+                                                // remove them there.
+                                                const newSet = new Set(newMembers.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const stillAdmins = adminUsernames.filter((u) => !newSet.has(u));
+                                                if (stillAdmins.length !== adminUsernames.length) {
+                                                    setAdminMembersText(stillAdmins.join(', '));
+                                                }
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div style={fieldStyle}>
+                                        <label htmlFor='cr-admin-members'>{'Channel Admins to add (optional)'}</label>
+                                        <MemberPicker
+                                            value={adminMembersText}
+                                            teamId={teamId}
+                                            usernameBadges={badgesForAdminsPicker}
+                                            placeholder='Type a name — Tab / Enter to promote to Channel Admin'
+                                            onChange={(newAdmins) => {
+                                                setAdminMembersText(newAdmins);
+
+                                                // If the user just added
+                                                // was in the member list,
+                                                // remove them there.
+                                                const newSet = new Set(newAdmins.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const stillMembers = memberUsernames.filter((u) => !newSet.has(u));
+                                                if (stillMembers.length !== memberUsernames.length) {
+                                                    setMembersText(stillMembers.join(', '));
+                                                }
+                                            }}
+                                        />
+                                        <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                            {'These users are promoted to Channel Admin on the newly-created channel. Users with a "Member" badge in the dropdown are currently in the Members list above — picking them here moves them to Channel Admin.'}
+                                        </small>
+                                    </div>
+                                </>
+                            );
+                        })()}
 
                         {error ? (
                             <div

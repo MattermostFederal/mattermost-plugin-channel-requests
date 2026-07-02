@@ -45,15 +45,23 @@ type Props = {
     placeholder?: string;
 
     // teamId, when set, scopes autocomplete to members of that team.
-    // Passed as ?team_id=... to /api/v1/user_autocomplete so the
-    // dropdown only surfaces people who could actually be added to a
-    // channel in this team.
     teamId?: string;
 
-    // usernamesToExclude is a set of usernames already selected in a
-    // sibling picker (e.g. the Members picker excludes anyone already
-    // in the Channel Admins picker, and vice versa) so no user shows
-    // up twice.
+    // usernameBadges maps username -> a short label ("Channel Admin",
+    // "Member", "Auto-approved", etc.). When a candidate's username
+    // is in this map, the dropdown row renders the label as a chip
+    // next to the name. Enables "already assigned" visibility without
+    // filtering the user out — you SEE the role at a glance.
+    //
+    // Candidates with a badge are grouped into a "CURRENT ASSIGNMENTS"
+    // section at the top of the dropdown, above "AVAILABLE".
+    usernameBadges?: Record<string, string>;
+
+    // usernamesToExclude is a set of usernames to hide from the
+    // dropdown entirely (typically because they're in this picker's
+    // OWN selection — shown as pills — and would be redundant).
+    // The badged-elsewhere set should NOT go here (use usernameBadges
+    // instead so the user still sees them).
     usernamesToExclude?: string[];
 };
 
@@ -65,20 +73,75 @@ function parseUsernames(v: string): string[] {
         filter((s) => s.length > 0);
 }
 
-function displayName(u: User): string {
-    const first = u.first_name ?? '';
-    const last = u.last_name ?? '';
-    const full = `${first} ${last}`.trim();
-    if (full) {
-        return `${u.username}  —  ${full}`;
-    }
-    if (u.nickname) {
-        return `${u.username}  —  ${u.nickname}`;
-    }
-    return u.username;
+// avatarURL returns MM's built-in profile-image URL. MM serves this
+// with the caller's cookie session so no additional auth is required;
+// it gracefully falls back to a color+initial gradient for users
+// without a set profile picture.
+function avatarURL(userID: string): string {
+    return `/api/v4/users/${userID}/image?_=0`;
 }
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernamesToExclude}) => {
+// Fallback avatar: a colored circle with the user's initials. Used
+// when the profile-image endpoint errors (e.g. permissions). Color is
+// derived from a stable hash of the username so the same user always
+// gets the same color.
+function initialsFor(u: User): string {
+    const first = (u.first_name ?? '').trim();
+    const last = (u.last_name ?? '').trim();
+    if (first || last) {
+        return ((first[0] ?? '') + (last[0] ?? '')).toUpperCase();
+    }
+    return (u.username[0] ?? '?').toUpperCase();
+}
+
+function colorFor(username: string): string {
+    let h = 0;
+    for (let i = 0; i < username.length; i++) {
+        h = ((h * 31) + username.charCodeAt(i)) >>> 0;
+    }
+    const hue = h % 360;
+    return `hsl(${hue}, 55%, 45%)`;
+}
+
+// UserAvatar renders MM's profile image with an initials fallback.
+// Uses onError to swap to the initials rendering — cleaner than
+// probing the image existence separately.
+const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) => {
+    const [failed, setFailed] = useState(false);
+    if (failed) {
+        return (
+            <div
+                style={{
+                    width: size,
+                    height: size,
+                    borderRadius: '50%',
+                    background: colorFor(user.username),
+                    color: '#fff',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: Math.round(size * 0.4),
+                    fontWeight: 600,
+                    flexShrink: 0,
+                }}
+            >
+                {initialsFor(user)}
+            </div>
+        );
+    }
+    return (
+        <img
+            src={avatarURL(user.id)}
+            alt=''
+            width={size}
+            height={size}
+            style={{borderRadius: '50%', display: 'inline-block', flexShrink: 0, objectFit: 'cover'}}
+            onError={() => setFailed(true)}
+        />
+    );
+};
+
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges, usernamesToExclude}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -149,6 +212,12 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                 }
                 const users: User[] = await response.json();
                 debug('got users', {count: users.length, usernames: users.map((u) => u.username)});
+
+                // Exclude users:
+                //   - already in this picker's OWN selection (shown as pills)
+                //   - explicitly excluded by the parent (usernamesToExclude)
+                // NOT excluded: badged users. Those stay visible so
+                // the requester can see WHO is already assigned where.
                 const excluded = new Set([...selected, ...(usernamesToExclude ?? [])]);
                 const filtered = users.filter((u) => !excluded.has(u.username));
                 debug('after exclude', {kept: filtered.length});
@@ -318,30 +387,110 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                         border: '1px solid rgba(0, 0, 0, 0.12)',
                         borderRadius: 4,
                         boxShadow: '0 4px 12px rgba(0, 0, 0, 0.24)',
-                        maxHeight: 240,
+                        maxHeight: 320,
                         overflowY: 'auto',
                         zIndex: 2000,
                     }}
                 >
-                    {candidates.map((u, i) => (
-                        <div
-                            key={u.id}
-                            style={{
-                                padding: '6px 10px',
-                                cursor: 'pointer',
-                                background: i === highlightIndex ? 'rgba(28, 88, 217, 0.08)' : 'transparent',
-                                fontSize: 14,
-                            }}
-                            onMouseEnter={() => setHighlightIndex(i)}
-                            onMouseDown={(e) => {
-                                // mousedown fires before blur so we can select without the outside-click closer eating it.
-                                e.preventDefault();
-                                addUser(u.username);
-                            }}
-                        >
-                            {displayName(u)}
-                        </div>
-                    ))}
+                    {(() => {
+                        // Split candidates into two visual sections
+                        // (matching MM's mention dropdown pattern):
+                        //   1. "Current assignments" — users already
+                        //      badged by a sibling picker. Shown FIRST
+                        //      so the requester can see who's already
+                        //      assigned to what before adding more.
+                        //   2. "Available to add" — the default.
+                        //
+                        // Rendering keeps highlightIndex in-sync by
+                        // using a flat index across both sections.
+                        const badges = usernameBadges ?? {};
+                        const assigned = candidates.filter((u) => badges[u.username]);
+                        const available = candidates.filter((u) => !badges[u.username]);
+
+                        const renderRow = (u: User, flatIndex: number) => {
+                            const badge = badges[u.username];
+                            return (
+                                <div
+                                    key={u.id}
+                                    style={{
+                                        padding: '8px 12px',
+                                        cursor: 'pointer',
+                                        background: flatIndex === highlightIndex ? 'rgba(28, 88, 217, 0.10)' : 'transparent',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 10,
+                                        fontSize: 14,
+                                    }}
+                                    onMouseEnter={() => setHighlightIndex(flatIndex)}
+                                    onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        addUser(u.username);
+                                    }}
+                                >
+                                    <UserAvatar user={u}/>
+                                    <div style={{flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6}}>
+                                        <span style={{fontWeight: 600}}>{'@' + u.username}</span>
+                                        {(() => {
+                                            const full = `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim();
+                                            const secondary = full || u.nickname || '';
+                                            return secondary ? (
+                                                <span style={{opacity: 0.6, fontSize: 13}}>{secondary}</span>
+                                            ) : null;
+                                        })()}
+                                    </div>
+                                    {badge ? (
+                                        <span
+                                            style={{
+                                                fontSize: 11,
+                                                padding: '2px 8px',
+                                                borderRadius: 10,
+                                                background: 'rgba(28, 88, 217, 0.15)',
+                                                color: 'rgb(20, 66, 165)',
+                                                fontWeight: 500,
+                                                whiteSpace: 'nowrap',
+                                                flexShrink: 0,
+                                            }}
+                                        >
+                                            {badge}
+                                        </span>
+                                    ) : null}
+                                </div>
+                            );
+                        };
+
+                        const SectionHeader: React.FC<{label: string}> = ({label}) => (
+                            <div
+                                style={{
+                                    padding: '6px 12px 4px',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    letterSpacing: 0.6,
+                                    textTransform: 'uppercase',
+                                    color: 'rgba(63, 67, 80, 0.72)',
+                                    background: 'rgba(63, 67, 80, 0.04)',
+                                }}
+                            >
+                                {label}
+                            </div>
+                        );
+
+                        return (
+                            <>
+                                {assigned.length > 0 ? (
+                                    <>
+                                        <SectionHeader label='Current assignments'/>
+                                        {assigned.map((u, i) => renderRow(u, i))}
+                                    </>
+                                ) : null}
+                                {available.length > 0 ? (
+                                    <>
+                                        {assigned.length > 0 ? <SectionHeader label='Available to add'/> : null}
+                                        {available.map((u, i) => renderRow(u, assigned.length + i))}
+                                    </>
+                                ) : null}
+                            </>
+                        );
+                    })()}
                 </div>
             ) : null}
         </div>
