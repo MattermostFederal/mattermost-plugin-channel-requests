@@ -139,10 +139,16 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 
 	// TeamId in UserSearch scopes results to members of that team.
 	// Empty TeamId means "any team the caller can see".
+	// Limit MUST be non-zero — MM's UserSearch treats Limit=0 as
+	// "return no results" (not "unlimited"), which was the reason
+	// this endpoint used to silently return []. Set Limit to a
+	// slightly-larger cap than our display cap of 20 so we still
+	// have headroom after post-filtering already-selected users.
 	users, appErr := p.API.SearchUsers(&model.UserSearch{
 		Term:          q,
 		TeamId:        teamID,
 		AllowInactive: false,
+		Limit:         50,
 	})
 	if appErr != nil {
 		p.API.LogWarn("user autocomplete failed", "q", q, "team_id", teamID, "error", appErr.Error())
