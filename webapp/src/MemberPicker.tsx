@@ -1,6 +1,20 @@
+import manifest from 'manifest';
 import React, {useEffect, useRef, useState} from 'react';
 
-import manifest from 'manifest';
+// debug logs when localStorage.PLUGIN_CHANNEL_REQUESTS_DEBUG === "true"
+// so we can trace autocomplete behavior in production without a code
+// change. Enable via DevTools:
+//   localStorage.setItem('PLUGIN_CHANNEL_REQUESTS_DEBUG', 'true')
+function debug(...args: unknown[]): void {
+    try {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('PLUGIN_CHANNEL_REQUESTS_DEBUG') === 'true') {
+            // eslint-disable-next-line no-console
+            console.debug('[member-picker]', ...args);
+        }
+    } catch {
+        // localStorage blocked in some sandboxes; ignore.
+    }
+}
 
 // MemberPicker replaces the "Comma-separated usernames" text field in
 // the request modal with a real autocomplete-driven picker.
@@ -29,11 +43,13 @@ type Props = {
     disabled?: boolean;
     onChange: (value: string) => void;
     placeholder?: string;
+
     // teamId, when set, scopes autocomplete to members of that team.
     // Passed as ?team_id=... to /api/v1/user_autocomplete so the
     // dropdown only surfaces people who could actually be added to a
     // channel in this team.
     teamId?: string;
+
     // usernamesToExclude is a set of usernames already selected in a
     // sibling picker (e.g. the Members picker excludes anyone already
     // in the Channel Admins picker, and vice versa) so no user shows
@@ -68,7 +84,33 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
     const [candidates, setCandidates] = useState<User[]>([]);
     const [showDropdown, setShowDropdown] = useState(false);
     const [highlightIndex, setHighlightIndex] = useState(0);
+    const [dropdownRect, setDropdownRect] = useState<{top: number; left: number; width: number} | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Track the input container's screen position so the dropdown can
+    // render via position:fixed OUTSIDE the parent modal — the modal
+    // has overflow:auto which would otherwise clip the dropdown when
+    // this picker is near the bottom (like "Channel Admins to add").
+    useEffect(() => {
+        if (!showDropdown) {
+            return undefined;
+        }
+        const updateRect = () => {
+            const el = containerRef.current;
+            if (!el) {
+                return;
+            }
+            const r = el.getBoundingClientRect();
+            setDropdownRect({top: r.bottom + 2, left: r.left, width: r.width});
+        };
+        updateRect();
+        window.addEventListener('scroll', updateRect, true);
+        window.addEventListener('resize', updateRect);
+        return () => {
+            window.removeEventListener('scroll', updateRect, true);
+            window.removeEventListener('resize', updateRect);
+        };
+    }, [showDropdown, candidates.length]);
 
     // Re-sync when parent value changes externally.
     useEffect(() => {
@@ -76,36 +118,44 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
     }, [value]);
 
     // Debounced autocomplete fetch. Team-scoped via ?team_id when the
-    // parent passed teamId — the server filters to team members so we
-    // don't offer users the requester can't actually add.
+    // parent passed teamId. Strips leading @ from the query before
+    // sending — MM usernames don't contain @, so "@cfi" would never
+    // match a real username; users expect to be able to type @-prefixed
+    // like every other mention affordance.
     useEffect(() => {
-        if (!query.trim()) {
+        // Strip any leading @ AND trim. If nothing meaningful left,
+        // clear the dropdown.
+        const q = query.trim().replace(/^@+/, '').trim();
+        if (!q) {
             setCandidates([]);
-            return;
+            return undefined;
         }
-        const q = query.trim();
         const timer = window.setTimeout(async () => {
             try {
                 const params = new URLSearchParams({q});
                 if (teamId) {
                     params.set('team_id', teamId);
                 }
-                const response = await fetch(
-                    `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`,
-                    {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}},
-                );
+                const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
+                debug('fetching', {url, q, teamId, selectedCount: selected.length});
+                const response = await fetch(url, {
+                    credentials: 'same-origin',
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                });
                 if (!response.ok) {
+                    debug('response not ok', {status: response.status});
                     setCandidates([]);
                     return;
                 }
                 const users: User[] = await response.json();
-                // Filter out anyone already selected AND anyone
-                // the parent explicitly said to exclude (e.g. a sibling
-                // picker already has them).
+                debug('got users', {count: users.length, usernames: users.map((u) => u.username)});
                 const excluded = new Set([...selected, ...(usernamesToExclude ?? [])]);
-                setCandidates(users.filter((u) => !excluded.has(u.username)));
+                const filtered = users.filter((u) => !excluded.has(u.username));
+                debug('after exclude', {kept: filtered.length});
+                setCandidates(filtered);
                 setHighlightIndex(0);
-            } catch {
+            } catch (err) {
+                debug('fetch threw', {err: String(err)});
                 setCandidates([]);
             }
         }, 200);
@@ -251,21 +301,26 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                 />
             </div>
 
-            {showDropdown && candidates.length > 0 ? (
+            {showDropdown && candidates.length > 0 && dropdownRect ? (
                 <div
                     style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        right: 0,
-                        marginTop: 2,
+
+                        // Fixed positioning + explicit top/left/width
+                        // computed from the input container's DOMRect.
+                        // Avoids clipping by any ancestor with
+                        // overflow:auto (the modal is one such).
+                        position: 'fixed',
+                        top: dropdownRect.top,
+                        left: dropdownRect.left,
+                        width: dropdownRect.width,
                         background: 'var(--center-channel-bg, #fff)',
+                        color: 'var(--center-channel-color, #3d3c40)',
                         border: '1px solid rgba(0, 0, 0, 0.12)',
                         borderRadius: 4,
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.16)',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.24)',
                         maxHeight: 240,
                         overflowY: 'auto',
-                        zIndex: 1100,
+                        zIndex: 2000,
                     }}
                 >
                     {candidates.map((u, i) => (
