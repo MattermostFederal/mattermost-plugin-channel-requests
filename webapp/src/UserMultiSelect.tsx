@@ -79,9 +79,11 @@ type Props = {
     teamId: string;
     selected: UserProfile[];
     onChange: (users: UserProfile[]) => void;
+    inputId?: string;
+    placeholder?: string;
 };
 
-export const UserMultiSelect = ({teamId, selected, onChange}: Props) => {
+export const UserMultiSelect = ({teamId, selected, onChange, inputId = 'cr-members', placeholder = 'Search members by name or username'}: Props) => {
     const [term, setTerm] = useState('');
     const [results, setResults] = useState<UserProfile[]>([]);
     const [open, setOpen] = useState(false);
@@ -186,10 +188,10 @@ export const UserMultiSelect = ({teamId, selected, onChange}: Props) => {
                     </span>
                 ))}
                 <input
-                    id='cr-members'
+                    id={inputId}
                     style={inputStyle}
                     value={term}
-                    placeholder={selected.length ? '' : 'Search members by name or username'}
+                    placeholder={selected.length ? '' : placeholder}
                     autoComplete='off'
                     onChange={(e) => {
                         setTerm(e.target.value);

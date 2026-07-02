@@ -82,6 +82,15 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 				Optional:    true,
 				HelpText:    "These users are added to the channel once it's approved.",
 			},
+			{
+				DisplayName: "Channel admins",
+				Name:        fieldAdmins,
+				Type:        "select",
+				DataSource:  "users",
+				MultiSelect: true,
+				Optional:    true,
+				HelpText:    "These users are made channel admins once the channel is approved.",
+			},
 		},
 	}
 
@@ -119,6 +128,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		Purpose:     submissionString(submission.Submission, fieldPurpose),
 		ChannelType: submissionString(submission.Submission, fieldType),
 		MemberIDs:   splitIDs(submissionString(submission.Submission, fieldMembers)),
+		AdminIDs:    splitIDs(submissionString(submission.Submission, fieldAdmins)),
 	}
 
 	message, err := p.submitRequest(in)
@@ -142,7 +152,8 @@ type webappCreateRequest struct {
 	Name        string   `json:"name"`
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
-	Members     []string `json:"members"` // usernames
+	Members     []string `json:"members"`        // usernames
+	Admins      []string `json:"channel_admins"` // usernames
 }
 
 func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
@@ -158,18 +169,15 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memberIDs := make([]string, 0, len(body.Members))
-	for _, username := range body.Members {
-		username = strings.TrimPrefix(strings.TrimSpace(username), "@")
-		if username == "" {
-			continue
-		}
-		user, appErr := p.API.GetUserByUsername(username)
-		if appErr != nil {
-			writeJSON(w, map[string]string{"error": fmt.Sprintf("unknown user: %s", username)})
-			return
-		}
-		memberIDs = append(memberIDs, user.Id)
+	memberIDs, err := p.usernamesToIDs(body.Members)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+	adminIDs, err := p.usernamesToIDs(body.Admins)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
 	}
 
 	message, err := p.submitRequest(requestInput{
@@ -180,6 +188,7 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 		Purpose:     body.Purpose,
 		ChannelType: body.ChannelType,
 		MemberIDs:   memberIDs,
+		AdminIDs:    adminIDs,
 	})
 	if err != nil {
 		writeJSON(w, map[string]string{"error": err.Error()})
@@ -187,6 +196,24 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"message": message})
+}
+
+// usernamesToIDs resolves a list of usernames (each with an optional leading @) to user IDs,
+// returning an error naming the first username that can't be found. Blank entries are skipped.
+func (p *Plugin) usernamesToIDs(usernames []string) ([]string, error) {
+	ids := make([]string, 0, len(usernames))
+	for _, username := range usernames {
+		username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+		if username == "" {
+			continue
+		}
+		user, appErr := p.API.GetUserByUsername(username)
+		if appErr != nil {
+			return nil, fmt.Errorf("unknown user: %s", username)
+		}
+		ids = append(ids, user.Id)
+	}
+	return ids, nil
 }
 
 func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {

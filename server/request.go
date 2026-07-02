@@ -23,6 +23,7 @@ const (
 	fieldPurpose     = "purpose"
 	fieldType        = "type"
 	fieldMembers     = "members"
+	fieldAdmins      = "admins"
 
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
@@ -46,6 +47,7 @@ type channelRequest struct {
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
 	MemberIDs   []string `json:"member_ids"`
+	AdminIDs    []string `json:"admin_ids"`
 }
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
@@ -58,6 +60,7 @@ type requestInput struct {
 	Purpose     string
 	ChannelType string
 	MemberIDs   []string
+	AdminIDs    []string
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -129,6 +132,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		Purpose:     strings.TrimSpace(in.Purpose),
 		ChannelType: in.ChannelType,
 		MemberIDs:   in.MemberIDs,
+		AdminIDs:    in.AdminIDs,
 	}
 
 	// System Admins skip the approval step and create the channel directly.
@@ -158,7 +162,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 }
 
 // createChannelForRequest creates the channel described by req, adds the requester and any
-// designated members, and returns the created channel.
+// designated members and channel admins, promotes the admins, and returns the created channel.
 func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, error) {
 	channel, appErr := p.API.CreateChannel(&model.Channel{
 		TeamId:      req.TeamID,
@@ -172,20 +176,76 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 		return nil, errors.Wrap(appErr, "failed to create channel")
 	}
 
-	// Always add the requester, then the designated members. Skip duplicates and don't fail the
-	// whole operation if an individual member can't be added.
+	admins := map[string]bool{}
+	for _, id := range req.AdminIDs {
+		admins[id] = true
+	}
+
+	// Always add the requester, then the designated members and channel admins (admins are added as
+	// members too). Skip duplicates and don't fail the whole operation if an individual user can't
+	// be added or promoted.
+	adminRoles := fmt.Sprintf("%s %s", model.ChannelUserRoleId, model.ChannelAdminRoleId)
 	added := map[string]bool{}
-	for _, userID := range append([]string{req.RequesterID}, req.MemberIDs...) {
+	var addedMembers, addedAdmins []string
+	userIDs := append([]string{req.RequesterID}, req.MemberIDs...)
+	userIDs = append(userIDs, req.AdminIDs...)
+	for _, userID := range userIDs {
 		if userID == "" || added[userID] {
 			continue
 		}
 		added[userID] = true
 		if _, appErr := p.API.AddChannelMember(channel.Id, userID); appErr != nil {
 			p.API.LogWarn("failed to add member to created channel", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+			continue
+		}
+		if admins[userID] {
+			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, adminRoles); appErr != nil {
+				p.API.LogWarn("failed to promote channel admin", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+			}
+		}
+
+		// Collect the designated users (not the requester, who created the channel) so we can
+		// welcome and mention them below.
+		if userID == req.RequesterID {
+			continue
+		}
+		if admins[userID] {
+			addedAdmins = append(addedAdmins, userID)
+		} else {
+			addedMembers = append(addedMembers, userID)
 		}
 	}
 
+	p.postWelcomeMessage(channel, req.RequesterID, addedMembers, addedAdmins)
+
 	return channel, nil
+}
+
+// postWelcomeMessage posts a message from the bot in the newly created channel that mentions the
+// users who were added, so they're notified they've been added.
+func (p *Plugin) postWelcomeMessage(channel *model.Channel, requesterID string, memberIDs, adminIDs []string) {
+	if len(memberIDs) == 0 && len(adminIDs) == 0 {
+		return
+	}
+
+	requester := "an admin"
+	if user, appErr := p.API.GetUser(requesterID); appErr == nil {
+		requester = "@" + user.Username
+	}
+
+	allIDs := append(append([]string{}, memberIDs...), adminIDs...)
+	message := fmt.Sprintf("👋 %s — you've been added to this channel by %s.", p.mentionList(allIDs), requester)
+	if len(adminIDs) > 0 {
+		message += fmt.Sprintf("\nChannel admins: %s", p.mentionList(adminIDs))
+	}
+
+	if _, appErr := p.API.CreatePost(&model.Post{
+		UserId:    p.botUserID,
+		ChannelId: channel.Id,
+		Message:   message,
+	}); appErr != nil {
+		p.API.LogWarn("failed to post welcome message", "channel_id", channel.Id, "error", appErr.Error())
+	}
 }
 
 func (p *Plugin) storeRequest(req *channelRequest) error {
@@ -239,6 +299,9 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 	}
 	if len(req.MemberIDs) > 0 {
 		fields = append(fields, &model.SlackAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+	}
+	if len(req.AdminIDs) > 0 {
+		fields = append(fields, &model.SlackAttachmentField{Title: "Channel admins", Value: p.mentionList(req.AdminIDs), Short: false})
 	}
 
 	siteURL := "/plugins/" + manifest.Id

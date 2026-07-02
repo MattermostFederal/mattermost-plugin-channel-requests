@@ -3,7 +3,7 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import {submitChannelRequest} from './client';
 import type {UserProfile} from './client';
-import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
+import {closeRequestModal, getCurrentTeamId, getCurrentUser, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
 import {UserMultiSelect} from './UserMultiSelect';
 
@@ -31,16 +31,28 @@ const dialogStyle: React.CSSProperties = {
 
 const fieldStyle: React.CSSProperties = {marginBottom: 16};
 
+const addSelfStyle: React.CSSProperties = {
+    padding: 0,
+    marginTop: 6,
+    fontSize: 13,
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--link-color, #386fe5)',
+    cursor: 'pointer',
+};
+
 export const RequestChannelModal = () => {
     const dispatch = useDispatch();
     const isOpen = useSelector(isRequestModalOpen);
     const teamId = useSelector((state: GlobalState) => getCurrentTeamId(state));
+    const currentUser = useSelector((state: GlobalState) => getCurrentUser(state));
 
     const [displayName, setDisplayName] = useState('');
     const [urlName, setUrlName] = useState('');
     const [purpose, setPurpose] = useState('');
     const [channelType, setChannelType] = useState('O');
     const [members, setMembers] = useState<UserProfile[]>([]);
+    const [channelAdmins, setChannelAdmins] = useState<UserProfile[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -55,6 +67,7 @@ export const RequestChannelModal = () => {
         setPurpose('');
         setChannelType('O');
         setMembers([]);
+        setChannelAdmins([]);
         setError('');
         setSuccess('');
         setSubmitting(false);
@@ -81,6 +94,7 @@ export const RequestChannelModal = () => {
             purpose: purpose.trim(),
             channel_type: channelType,
             members: members.map((u) => u.username),
+            channel_admins: channelAdmins.map((u) => u.username),
         });
 
         setSubmitting(false);
@@ -180,6 +194,26 @@ export const RequestChannelModal = () => {
                                 selected={members}
                                 onChange={setMembers}
                             />
+                        </div>
+
+                        <div style={fieldStyle}>
+                            <label htmlFor='cr-admins'>{'Channel admins (optional)'}</label>
+                            <UserMultiSelect
+                                teamId={teamId}
+                                selected={channelAdmins}
+                                onChange={setChannelAdmins}
+                                inputId='cr-admins'
+                                placeholder='Search users to make channel admins'
+                            />
+                            {currentUser && !channelAdmins.some((u) => u.id === currentUser.id) ? (
+                                <button
+                                    type='button'
+                                    style={addSelfStyle}
+                                    onClick={() => setChannelAdmins([...channelAdmins, currentUser])}
+                                >
+                                    {'+ Add me as a channel admin'}
+                                </button>
+                            ) : null}
                         </div>
 
                         {error ? (

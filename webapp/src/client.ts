@@ -7,6 +7,7 @@ export type ChannelRequestPayload = {
     purpose: string;
     channel_type: string;
     members: string[];
+    channel_admins: string[];
 };
 
 export type ChannelRequestResult = {
