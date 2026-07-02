@@ -22,6 +22,42 @@ include build/setup.mk
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
+# ====================================================================================
+# Build-time URL discovery
+# ====================================================================================
+# PLUGIN_REPO_URL resolves to "where this code lives in GitHub right now".
+# Used to substitute __PLUGIN_REPO_URL__ / __PLUGIN_RELEASE_URL__ /
+# __PLUGIN_VERSION__ placeholders in plugin.json's homepage_url,
+# support_url, and settings_schema.header. Result: fork or repo rename
+# flows into MM's System Console rendering without a source edit.
+#
+# Cascade (most authoritative first):
+#   1. CI: $(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY) — set by GitHub Actions.
+#   2. Local: parse `git remote get-url origin`, normalize SSH->HTTPS,
+#      strip trailing `.git`. Correct for normal dev clones AND forks.
+#   3. Hardcoded fallback PLUGIN_REPO_URL_DEFAULT — catches the
+#      "source tarball, no git, no CI" build case. Update this string
+#      if the upstream repo is permanently moved.
+# ====================================================================================
+
+PLUGIN_REPO_URL_DEFAULT := https://github.com/MattermostFederal/mattermost-plugin-channel-requests
+
+ifneq ($(GITHUB_REPOSITORY),)
+PLUGIN_REPO_URL := $(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)
+else
+PLUGIN_REPO_URL := $(shell git remote get-url origin 2>/dev/null | sed -e 's|^git@github.com:|https://github.com/|' -e 's|\.git$$||')
+endif
+
+ifeq ($(strip $(PLUGIN_REPO_URL)),)
+PLUGIN_REPO_URL := $(PLUGIN_REPO_URL_DEFAULT)
+endif
+
+PLUGIN_RELEASE_URL := $(PLUGIN_REPO_URL)/releases/tag/v$(PLUGIN_VERSION)
+
+# ldflags inject the resolved repo URL into the Go binary at compile time.
+# Read at runtime as (server package).RepoURL — see server/plugin.go.
+GO_LDFLAGS := -X 'github.com/MattermostFederal/mattermost-plugin-channel-requests/server.RepoURL=$(PLUGIN_REPO_URL)'
+
 # Include custom makefile, if present
 ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
@@ -157,10 +193,10 @@ endif
 	mkdir -p server/dist;
 ifneq ($(MM_SERVICESETTINGS_ENABLEDEVELOPER),)
 	@echo Building plugin only for $(DEFAULT_GOOS)-$(DEFAULT_GOARCH) because MM_SERVICESETTINGS_ENABLEDEVELOPER is enabled
-	cd server && env CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-$(DEFAULT_GOOS)-$(DEFAULT_GOARCH);
+	cd server && env CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-$(DEFAULT_GOOS)-$(DEFAULT_GOARCH);
 else
-	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-linux-amd64;
-	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-linux-arm64;
+	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-linux-amd64;
+	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-linux-arm64;
 endif
 endif
 
@@ -188,6 +224,17 @@ bundle:
 	rm -rf dist/
 	mkdir -p dist/$(PLUGIN_ID)
 	./build/bin/manifest dist
+	# Post-process the plugin.json that manifest just staged into
+	# dist/$(PLUGIN_ID)/plugin.json to substitute the URL/version
+	# placeholders. sed delimiter `|` because URLs contain slashes.
+	@if [ -f dist/$(PLUGIN_ID)/plugin.json ]; then \
+		sed -i.bak \
+			-e 's|__PLUGIN_RELEASE_URL__|$(PLUGIN_RELEASE_URL)|g' \
+			-e 's|__PLUGIN_REPO_URL__|$(PLUGIN_REPO_URL)|g' \
+			-e 's|__PLUGIN_VERSION__|$(PLUGIN_VERSION)|g' \
+			dist/$(PLUGIN_ID)/plugin.json && \
+		rm -f dist/$(PLUGIN_ID)/plugin.json.bak; \
+	fi
 ifneq ($(wildcard $(ASSETS_DIR)/.),)
 	cp -r $(ASSETS_DIR) dist/$(PLUGIN_ID)/
 endif
@@ -457,9 +504,10 @@ install-sbom-tools:
 ## Install Grype vulnerability scanner
 .PHONY: install-grype
 install-grype:
-	@if ! command -v $(GOBIN)/grype >/dev/null 2>&1; then \
-		echo "Installing Grype..."; \
-		curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b $(GOBIN); \
+	@if [ ! -x "$(GOBIN)/grype" ]; then \
+		echo "Installing Grype via go install (cross-platform, no anchore install.sh)..."; \
+		mkdir -p $(GOBIN); \
+		GOBIN=$(GOBIN) $(GO) install github.com/anchore/grype/cmd/grype@latest; \
 	else \
 		echo "Grype already installed"; \
 	fi

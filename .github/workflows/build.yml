@@ -1,0 +1,42 @@
+# Runs `make bundle` on every PR/push to confirm the plugin still
+# packages cleanly. Catches integration breakages that pass unit
+# tests but fail at bundle-time — missing assets, broken manifest
+# schema, embed directives pointing at deleted files, etc.
+#
+# Bundle artifact is uploaded so reviewers can grab the tarball from
+# a PR run without rebuilding locally.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # `make dist` is the full chain: server (cross-compile binaries) +
+      # webapp (no-op here, no webapp) + bundle (tarball assembly). `make
+      # bundle` alone skips the server build and fails on `cp server/dist`.
+      - name: Build bundle
+        run: make dist
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: plugin-bundle
+          path: dist/*.tar.gz
+          retention-days: 14

@@ -2,9 +2,10 @@
     "id": "com.mattermostfederal.channel-requests",
     "name": "Channel Requests",
     "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
-    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
-    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
+    "homepage_url": "__PLUGIN_REPO_URL__",
+    "support_url": "__PLUGIN_REPO_URL__/issues",
     "icon_path": "assets/icon.svg",
+    "version": "0.1.0",
     "min_server_version": "11.8.0",
     "server": {
         "executables": {
@@ -18,8 +19,8 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "Configure where channel-creation requests are sent for approval. Requests from non-admins are posted to this channel, where any System Admin can approve or deny them.",
-        "footer": "",
+        "header": "## Channel Requests\n\nConfigure where channel-creation requests are sent for approval. Requests from non-admins are posted to the approval channel, where any System Admin can approve or deny them.\n\n**Naming enforcement (recommended):** define a list of allowed **domain prefixes** below (e.g. team-, project-, ops-). Requesters pick a prefix from a dropdown and supply the suffix, so channels follow the org's naming convention by construction. Falls back to the legacy template + regex settings when the prefix list is empty.",
+        "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
                 "key": "ApprovalTeam",
@@ -36,18 +37,25 @@
                 "help_text": "The URL name (slug) of the channel where channel-creation requests are posted for approval. For example, if the channel URL is /myteam/channels/channel-requests, enter 'channel-requests'."
             },
             {
+                "key": "ChannelNamePrefixes",
+                "display_name": "Channel Domain Prefixes",
+                "type": "longtext",
+                "placeholder": "team-|Team collaboration channels|[a-z0-9-]{2,16}\nchannel-|General purpose channels|\nproject-|Project workstreams|[a-z0-9-]{3,32}\nops-|Operational + incident channels|\nhelp-|Help + support channels|\nannouncements-|Read-only announcement channels|",
+                "help_text": "One entry per line: 'prefix|description|optional_suffix_pattern'. When populated, requesters choose a prefix from a dropdown and enter only the suffix — the final channel URL is 'prefix<suffix>'. The optional suffix regex is applied to just the suffix portion (not anchored to '^' or '$'). Leave blank to fall back to the legacy 'Channel URL Template' + 'Channel URL Pattern' fields below. Example: 'team-|Team collaboration channels|[a-z0-9-]{2,16}'."
+            },
+            {
                 "key": "ChannelNameTemplate",
-                "display_name": "Channel URL Template",
+                "display_name": "Channel URL Template (legacy — falls back when prefixes list is empty)",
                 "type": "text",
                 "placeholder": "team-{{name}}",
-                "help_text": "Optional. Forces every approved channel URL into a standard shape. Use '{{name}}' as a placeholder for the requester's slugified channel name. For example, 'team-{{name}}' turns a request for 'Marketing' into 'team-marketing'. Leave blank to use the requested name as-is."
+                "help_text": "Legacy setting. Only applied when 'Channel Domain Prefixes' above is empty. Forces every approved channel URL into a standard shape; use '{{name}}' as a placeholder for the requester's slugified channel name. For example, 'team-{{name}}' turns a request for 'Marketing' into 'team-marketing'."
             },
             {
                 "key": "ChannelNamePattern",
-                "display_name": "Channel URL Pattern (regex)",
+                "display_name": "Channel URL Pattern regex (legacy — falls back when prefixes list is empty)",
                 "type": "text",
                 "placeholder": "^team-[a-z0-9-]{2,}$",
-                "help_text": "Optional. A regular expression that the final channel URL must match, applied after the template. Requests that don't match are rejected with an explanation. Anchor with ^ and $ to match the whole URL. For example, '^team-[a-z0-9-]{2,}$'. Leave blank to allow any valid channel URL."
+                "help_text": "Legacy setting. Only applied when 'Channel Domain Prefixes' above is empty. Regex the final channel URL must match; requests that don't match are rejected. Anchor with ^ and $. Example: '^team-[a-z0-9-]{2,}$'."
             }
         ]
     }

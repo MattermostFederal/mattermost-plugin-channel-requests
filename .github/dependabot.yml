@@ -1,0 +1,82 @@
+# Dependabot config: scheduled dep updates across all three of our
+# dependency ecosystems (Go server, npm webapp, GitHub Actions).
+# PRs land on Monday mornings so weekly review is predictable;
+# max 5 open PRs per ecosystem to avoid swamping review capacity.
+#
+# Security updates (separate from these version updates) are enabled at
+# the repo level — those fire immediately when GHSA publishes a new
+# advisory affecting a pinned dep, regardless of this schedule.
+
+version: 2
+updates:
+  # Go module — the server binary. Includes transitive deps so the
+  # full security surface is tracked.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: "deps(go)"
+      include: scope
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # npm — the React webapp. Group by patch-vs-minor to reduce PR churn.
+  - package-ecosystem: npm
+    directory: /webapp
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: "deps(npm)"
+      include: scope
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+      # Dev dependencies (linters, test tooling, build tools) change
+      # often but rarely affect runtime — bundle them separately.
+      npm-dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions used by .github/workflows/*.yml. Keeps action SHAs
+  # current — important because we pin all actions to SHAs (security),
+  # which means we don't get automatic updates the way @v4 tag users do.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch

@@ -54,7 +54,15 @@ type requestInput struct {
 	RequesterID string
 	TeamID      string
 	DisplayName string
+	// Name is the free-form channel URL portion. When the prefix-list
+	// feature is active, this holds ONLY THE SUFFIX (the part after the
+	// prefix); server code prepends the selected prefix. When empty
+	// prefix list, this behaves as before — the full channel name.
 	Name        string
+	// Prefix is the selected domain prefix (e.g., "team-", "project-").
+	// Non-empty only when the prefix-list feature is active AND the
+	// requester picked one. Ignored when the plugin is in legacy mode.
+	Prefix      string
 	Purpose     string
 	ChannelType string
 	MemberIDs   []string
@@ -73,9 +81,79 @@ func slugify(s string) string {
 	return s
 }
 
-// resolveChannelName derives the final channel URL name from the request, applying the configured
-// slug template and validating it against the configured pattern.
+// resolveChannelName derives the final channel URL name from the request.
+//
+// Two paths, chosen by whether the admin populated ChannelNamePrefixes:
+//
+//  1. Prefix-list mode (new): in.Prefix names one of the admin's
+//     configured prefixes; in.Name is the suffix. Server validates the
+//     prefix is in the allowed list and (if the entry has a
+//     SuffixPattern) that the suffix matches it. Final name is
+//     prefix + slugify(suffix).
+//
+//  2. Legacy mode: in.Prefix is ignored; in.Name is the whole channel
+//     name (or DisplayName if Name is blank). ChannelNameTemplate
+//     wraps it; ChannelNamePattern (if compiled) validates the whole
+//     result. Preserves the pre-prefix-list behavior for admins who
+//     haven't switched to the new setting yet.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
+	if config.UsesPrefixList() {
+		return resolvePrefixedName(config.Prefixes(), in)
+	}
+	return resolveLegacyName(config, in)
+}
+
+// resolvePrefixedName handles the prefix-list flow. The suffix is
+// slugified BEFORE joining so users can type "My Team" and get
+// "team-my-team" — same forgiving normalization as the legacy path.
+func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, error) {
+	selected := strings.TrimSpace(in.Prefix)
+	if selected == "" {
+		return "", errors.New("please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown")
+	}
+	var entry *channelPrefix
+	for i := range prefixes {
+		if prefixes[i].Prefix == selected {
+			entry = &prefixes[i]
+			break
+		}
+	}
+	if entry == nil {
+		return "", errors.Errorf("prefix %q is not in the list of allowed prefixes", selected)
+	}
+
+	suffix := strings.TrimSpace(in.Name)
+	if suffix == "" {
+		// Fall back to slugifying the display name so users who leave
+		// the URL field blank still get a sensible suggestion. This
+		// matches the legacy path's forgiveness.
+		suffix = in.DisplayName
+	}
+	suffix = slugify(suffix)
+	// Requesters sometimes double-type the prefix; strip it so
+	// "team-marketing" under prefix "team-" doesn't become "team-team-marketing".
+	suffix = strings.TrimPrefix(suffix, strings.TrimSuffix(entry.Prefix, "-")+"-")
+	suffix = strings.Trim(suffix, "-")
+
+	if suffix == "" {
+		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
+	}
+
+	if entry.SuffixPattern != nil && !entry.SuffixPattern.MatchString(suffix) {
+		return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+	}
+
+	name := entry.Prefix + suffix
+	if !model.IsValidChannelIdentifier(name) {
+		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens", name)
+	}
+	return name, nil
+}
+
+// resolveLegacyName preserves the original template + regex behavior.
+// Unchanged from before the prefix-list feature; still the active path
+// for admins who haven't populated ChannelNamePrefixes.
+func resolveLegacyName(config *configuration, in requestInput) (string, error) {
 	base := in.Name
 	if strings.TrimSpace(base) == "" {
 		base = in.DisplayName

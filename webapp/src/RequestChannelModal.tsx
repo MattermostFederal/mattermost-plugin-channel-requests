@@ -1,9 +1,21 @@
-import React, {useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
-import {submitChannelRequest} from './client';
+import {fetchPrefixes, submitChannelRequest} from './client';
+import type {ChannelPrefix} from './client';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
+
+// Slugify mirrors the server-side slugify() so the live preview shows
+// the exact URL the server will produce. Keep in sync with
+// server/request.go's slugify() — same char-class + trim + lower.
+function slugifySuffix(input: string): string {
+    return input.
+        toLowerCase().
+        trim().
+        replace(/[^a-z0-9]+/g, '-').
+        replace(/^-+|-+$/g, '');
+}
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -42,6 +54,38 @@ export const RequestChannelModal = () => {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    const [prefixes, setPrefixes] = useState<ChannelPrefix[]>([]);
+    const [selectedPrefix, setSelectedPrefix] = useState('');
+
+    // Load prefixes on mount. Empty list means the admin hasn't
+    // configured the new naming feature — modal falls back to the
+    // free-form URL name field.
+    useEffect(() => {
+        if (!isOpen) {
+            return;
+        }
+        fetchPrefixes().then((list) => {
+            setPrefixes(list);
+            if (list.length > 0 && !selectedPrefix) {
+                setSelectedPrefix(list[0].prefix);
+            }
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
+
+    const usingPrefixList = prefixes.length > 0;
+
+    // Live preview of the final channel URL. In prefix mode: prefix +
+    // slugified suffix (or slugified display name when suffix is
+    // blank). In legacy mode: slugified URL name or display name.
+    const previewURL = useMemo(() => {
+        const baseInput = urlName.trim() || displayName;
+        const slug = slugifySuffix(baseInput);
+        if (usingPrefixList) {
+            return selectedPrefix + (slug || 'suffix');
+        }
+        return slug || 'channel-name';
+    }, [urlName, displayName, usingPrefixList, selectedPrefix]);
 
     if (!isOpen) {
         return null;
@@ -56,6 +100,7 @@ export const RequestChannelModal = () => {
         setError('');
         setSuccess('');
         setSubmitting(false);
+        setSelectedPrefix(prefixes[0]?.prefix ?? '');
     };
 
     const close = () => {
@@ -81,6 +126,7 @@ export const RequestChannelModal = () => {
             team_id: teamId,
             display_name: displayName.trim(),
             name: urlName.trim(),
+            prefix: usingPrefixList ? selectedPrefix : '',
             purpose: purpose.trim(),
             channel_type: channelType,
             members,
@@ -127,6 +173,28 @@ export const RequestChannelModal = () => {
                     </div>
                 ) : (
                     <div>
+                        {usingPrefixList ? (
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-prefix'>{'Domain prefix'}</label>
+                                <select
+                                    id='cr-prefix'
+                                    className='form-control'
+                                    value={selectedPrefix}
+                                    onChange={(e) => setSelectedPrefix(e.target.value)}
+                                >
+                                    {prefixes.map((p) => (
+                                        <option
+                                            key={p.prefix}
+                                            value={p.prefix}
+                                        >
+                                            {p.description ? `${p.prefix}  (${p.description})` : p.prefix}
+                                        </option>
+                                    ))}
+                                </select>
+                                <small style={{opacity: 0.6}}>{'Choose the category for this channel. The final URL is <prefix><suffix>.'}</small>
+                            </div>
+                        ) : null}
+
                         <div style={fieldStyle}>
                             <label htmlFor='cr-display-name'>{'Channel name'}</label>
                             <input
@@ -140,15 +208,20 @@ export const RequestChannelModal = () => {
                         </div>
 
                         <div style={fieldStyle}>
-                            <label htmlFor='cr-url-name'>{'URL name (optional)'}</label>
+                            <label htmlFor='cr-url-name'>
+                                {usingPrefixList ? 'URL suffix (optional)' : 'URL name (optional)'}
+                            </label>
                             <input
                                 id='cr-url-name'
                                 className='form-control'
                                 value={urlName}
                                 maxLength={64}
-                                placeholder='Leave blank to generate from the channel name'
+                                placeholder={usingPrefixList ? 'The part after the prefix — leave blank to generate from the channel name' : 'Leave blank to generate from the channel name'}
                                 onChange={(e) => setUrlName(e.target.value)}
                             />
+                            <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                {'Preview: '}<code>{previewURL}</code>
+                            </small>
                         </div>
 
                         <div style={fieldStyle}>

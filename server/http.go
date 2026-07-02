@@ -11,10 +11,15 @@ import (
 )
 
 const (
-	routeDialog  = "/api/v1/dialog"
-	routeCreate  = "/api/v1/create"
-	routeApprove = "/api/v1/approve"
-	routeDeny    = "/api/v1/deny"
+	routeDialog   = "/api/v1/dialog"
+	routeCreate   = "/api/v1/create"
+	routeApprove  = "/api/v1/approve"
+	routeDeny     = "/api/v1/deny"
+	routePrefixes = "/api/v1/prefixes"
+
+	// fieldPrefix is the dialog element name for the domain-prefix
+	// dropdown. Kept alongside the other field* constants in request.go.
+	fieldPrefix = "prefix"
 )
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
@@ -27,62 +32,130 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleAction(w, r, true)
 	case routeDeny:
 		p.handleAction(w, r, false)
+	case routePrefixes:
+		p.handlePrefixes(w, r)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
+// handlePrefixes serves the current admin-configured prefix list so the
+// webapp modal can populate its dropdown. Read-only, authenticated
+// (any logged-in user can see it — same visibility as the plugin
+// settings page shows anyway).
+func (p *Plugin) handlePrefixes(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Mattermost-User-Id") == "" {
+		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return
+	}
+	config := p.getConfiguration()
+	type prefixDTO struct {
+		Prefix       string `json:"prefix"`
+		Description  string `json:"description"`
+		SuffixRegex  string `json:"suffix_regex"`
+	}
+	out := make([]prefixDTO, 0, len(config.prefixes))
+	for _, p := range config.prefixes {
+		out = append(out, prefixDTO{
+			Prefix:      p.Prefix,
+			Description: p.Description,
+			SuffixRegex: p.SuffixPatternRaw,
+		})
+	}
+	writeJSON(w, out)
+}
+
 // openRequestDialog opens the interactive channel request dialog for the slash command entry point.
+//
+// When the admin has configured a prefix list, this injects a "Domain
+// prefix" dropdown as the first element and reframes the URL field as
+// "URL suffix" so the requester knows they're only providing the part
+// after the prefix. When no prefix list is set, the dialog matches
+// the legacy layout (Channel name / URL name / Purpose / Visibility /
+// Members).
 func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
+	config := p.getConfiguration()
+
+	// Build the elements slice conditionally so the dialog shape adapts
+	// to whichever naming-enforcement mode the admin picked.
+	var elements []model.DialogElement
+
+	// URL field HelpText + naming field labels differ between modes so
+	// requesters get accurate guidance in the dialog itself.
+	urlFieldName := "URL name"
+	urlFieldHelp := "Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name."
+
+	if config.UsesPrefixList() {
+		prefixOptions := make([]*model.PostActionOptions, 0, len(config.prefixes))
+		for _, p := range config.prefixes {
+			label := p.Prefix
+			if p.Description != "" {
+				label = fmt.Sprintf("%s  (%s)", p.Prefix, p.Description)
+			}
+			prefixOptions = append(prefixOptions, &model.PostActionOptions{Text: label, Value: p.Prefix})
+		}
+		elements = append(elements, model.DialogElement{
+			DisplayName: "Domain prefix",
+			Name:        fieldPrefix,
+			Type:        "select",
+			Options:     prefixOptions,
+			HelpText:    "Pick the category for this channel. The final URL is <prefix><suffix>.",
+		})
+		urlFieldName = "URL suffix"
+		urlFieldHelp = "The part AFTER the prefix. Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name."
+	}
+
+	elements = append(elements,
+		model.DialogElement{
+			DisplayName: "Channel name",
+			Name:        fieldDisplayName,
+			Type:        "text",
+			Placeholder: "e.g. Marketing Team",
+			MaxLength:   64,
+		},
+		model.DialogElement{
+			DisplayName: urlFieldName,
+			Name:        fieldName,
+			Type:        "text",
+			Optional:    true,
+			HelpText:    urlFieldHelp,
+			MaxLength:   64,
+		},
+		model.DialogElement{
+			DisplayName: "Purpose",
+			Name:        fieldPurpose,
+			Type:        "textarea",
+			Optional:    true,
+			MaxLength:   250,
+		},
+		model.DialogElement{
+			DisplayName: "Visibility",
+			Name:        fieldType,
+			Type:        "radio",
+			Default:     channelTypeOpen,
+			Options: []*model.PostActionOptions{
+				{Text: "Public", Value: channelTypeOpen},
+				{Text: "Private", Value: channelTypePrivate},
+			},
+		},
+		model.DialogElement{
+			DisplayName: "Members to add",
+			Name:        fieldMembers,
+			Type:        "select",
+			DataSource:  "users",
+			MultiSelect: true,
+			Optional:    true,
+			HelpText:    "These users are added to the channel once it's approved.",
+		},
+	)
+
 	dialog := model.Dialog{
 		CallbackId:       dialogCallbackID,
 		Title:            "Request a Channel",
 		IntroductionText: "This request will be sent to an admin for approval.",
 		SubmitLabel:      "Submit request",
 		State:            teamID,
-		Elements: []model.DialogElement{
-			{
-				DisplayName: "Channel name",
-				Name:        fieldDisplayName,
-				Type:        "text",
-				Placeholder: "e.g. Marketing Team",
-				MaxLength:   64,
-			},
-			{
-				DisplayName: "URL name",
-				Name:        fieldName,
-				Type:        "text",
-				Optional:    true,
-				HelpText:    "Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name.",
-				MaxLength:   64,
-			},
-			{
-				DisplayName: "Purpose",
-				Name:        fieldPurpose,
-				Type:        "textarea",
-				Optional:    true,
-				MaxLength:   250,
-			},
-			{
-				DisplayName: "Visibility",
-				Name:        fieldType,
-				Type:        "radio",
-				Default:     channelTypeOpen,
-				Options: []*model.PostActionOptions{
-					{Text: "Public", Value: channelTypeOpen},
-					{Text: "Private", Value: channelTypePrivate},
-				},
-			},
-			{
-				DisplayName: "Members to add",
-				Name:        fieldMembers,
-				Type:        "select",
-				DataSource:  "users",
-				MultiSelect: true,
-				Optional:    true,
-				HelpText:    "These users are added to the channel once it's approved.",
-			},
-		},
+		Elements:         elements,
 	}
 
 	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
@@ -116,6 +189,10 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		TeamID:      teamID,
 		DisplayName: submissionString(submission.Submission, fieldDisplayName),
 		Name:        submissionString(submission.Submission, fieldName),
+		// Prefix is present in submission only when the dialog was
+		// opened with the prefix-list feature active; empty otherwise
+		// (and safely ignored by resolveLegacyName).
+		Prefix:      submissionString(submission.Submission, fieldPrefix),
 		Purpose:     submissionString(submission.Submission, fieldPurpose),
 		ChannelType: submissionString(submission.Submission, fieldType),
 		MemberIDs:   splitIDs(submissionString(submission.Submission, fieldMembers)),
@@ -140,6 +217,9 @@ type webappCreateRequest struct {
 	TeamID      string   `json:"team_id"`
 	DisplayName string   `json:"display_name"`
 	Name        string   `json:"name"`
+	// Prefix is the selected domain prefix from the modal's dropdown
+	// (e.g., "team-"). Empty when the plugin is in legacy mode.
+	Prefix      string   `json:"prefix"`
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
 	Members     []string `json:"members"` // usernames
@@ -177,6 +257,7 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 		TeamID:      body.TeamID,
 		DisplayName: body.DisplayName,
 		Name:        body.Name,
+		Prefix:      body.Prefix,
 		Purpose:     body.Purpose,
 		ChannelType: body.ChannelType,
 		MemberIDs:   memberIDs,

@@ -1,0 +1,35 @@
+# Runs golangci-lint with the project's .golangci.yml config.
+# Lint failures gate merges — keeps the codebase consistent across
+# contributors and catches the unused-import / dead-code / fmt-arity
+# class of bugs that compile but break downstream.
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # golangci-lint v1.62.0 (last v1 release) is built with Go 1.23 and
+      # refuses to lint projects targeting Go > 1.23 — so v2 is mandatory
+      # for us. Action v9 supports v2. Config schema lives in .golangci.yml.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
+        with:
+          version: v2.12.2
+          args: --timeout=5m
