@@ -2,8 +2,10 @@ import React, {useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import {submitChannelRequest} from './client';
+import type {UserProfile} from './client';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
+import {UserMultiSelect} from './UserMultiSelect';
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -38,7 +40,7 @@ export const RequestChannelModal = () => {
     const [urlName, setUrlName] = useState('');
     const [purpose, setPurpose] = useState('');
     const [channelType, setChannelType] = useState('O');
-    const [membersText, setMembersText] = useState('');
+    const [members, setMembers] = useState<UserProfile[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -52,7 +54,7 @@ export const RequestChannelModal = () => {
         setUrlName('');
         setPurpose('');
         setChannelType('O');
-        setMembersText('');
+        setMembers([]);
         setError('');
         setSuccess('');
         setSubmitting(false);
@@ -72,18 +74,13 @@ export const RequestChannelModal = () => {
         setSubmitting(true);
         setError('');
 
-        const members = membersText.
-            split(',').
-            map((m) => m.trim()).
-            filter((m) => m.length > 0);
-
         const result = await submitChannelRequest({
             team_id: teamId,
             display_name: displayName.trim(),
             name: urlName.trim(),
             purpose: purpose.trim(),
             channel_type: channelType,
-            members,
+            members: members.map((u) => u.username),
         });
 
         setSubmitting(false);
@@ -178,12 +175,10 @@ export const RequestChannelModal = () => {
 
                         <div style={fieldStyle}>
                             <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
-                            <input
-                                id='cr-members'
-                                className='form-control'
-                                value={membersText}
-                                placeholder='Comma-separated usernames, e.g. alice, bob'
-                                onChange={(e) => setMembersText(e.target.value)}
+                            <UserMultiSelect
+                                teamId={teamId}
+                                selected={members}
+                                onChange={setMembers}
                             />
                         </div>
 
