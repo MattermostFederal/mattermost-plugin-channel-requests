@@ -38,17 +38,6 @@ func (c *configuration) Clone() *configuration {
 	return &clone
 }
 
-// IsValid reports whether the configuration has everything the plugin needs to route requests.
-func (c *configuration) IsValid() error {
-	if strings.TrimSpace(c.ApprovalTeam) == "" {
-		return errors.New("the Approval Team is not configured")
-	}
-	if strings.TrimSpace(c.ApprovalChannel) == "" {
-		return errors.New("the Approval Channel is not configured")
-	}
-	return nil
-}
-
 func (p *Plugin) getConfiguration() *configuration {
 	p.configurationLock.RLock()
 	defer p.configurationLock.RUnlock()

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -20,10 +18,6 @@ func getCommand() *model.Command {
 }
 
 func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
-	if err := p.getConfiguration().IsValid(); err != nil {
-		return ephemeralResponse(fmt.Sprintf("The Channel Request plugin is not configured: %s. Ask a System Admin to set the Approval Team and Approval Channel in the System Console.", err.Error())), nil
-	}
-
 	if err := p.openRequestDialog(args.TriggerId, args.TeamId); err != nil {
 		p.API.LogError("failed to open channel request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the channel request form. Please try again."), nil
