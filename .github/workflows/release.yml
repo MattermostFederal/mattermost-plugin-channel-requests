@@ -88,14 +88,14 @@ jobs:
           echo "plugin_version=${PLUGIN_VERSION}" >> $GITHUB_OUTPUT
           echo "bundle_name=${BUNDLE_NAME}" >> $GITHUB_OUTPUT
 
-      # Required: must reach the Security tab on every release. Enable
-      # Code Scanning on the repo (public: free; private: needs GHAS).
-      # The SARIF is ALSO embedded in the release tarball under
-      # security/codeql-go.sarif and attached as a release asset, but
-      # the Security-tab integration is the canonical surface for
-      # reviewer findings.
+      # Best-effort: Code Scanning needs a public repo or GitHub Advanced
+      # Security. This repo is private without GHAS, so the upload 403s —
+      # don't fail the release for it. The SARIF is still embedded in the
+      # release tarball under security/codeql-go.sarif and attached as a
+      # release asset, and `make security-gate` already gated the build.
       - name: Upload CodeQL SARIF to code scanning
         if: always() && hashFiles('dist/codeql-go.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v3.30.0
         with:
           sarif_file: dist/codeql-go.sarif
