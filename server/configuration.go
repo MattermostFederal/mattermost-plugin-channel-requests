@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -37,11 +38,11 @@ type channelPrefix struct {
 // deserialized from the Mattermost server configuration in OnConfigurationChange.
 //
 // Field grouping (matches the System Console layout):
-//   1. Approval routing (team + channel slugs)
-//   2. Naming enforcement (structured prefix list + legacy fallback)
-//   3. Approver policy (who can approve, auto-approve list)
-//   4. Notification preferences (DM + audit channel + welcome post)
-//   5. Rate limits
+//  1. Approval routing (team + channel slugs)
+//  2. Naming enforcement (structured prefix list + legacy fallback)
+//  3. Approver policy (who can approve, auto-approve list)
+//  4. Notification preferences (DM + audit channel + welcome post)
+//  5. Rate limits
 type configuration struct {
 	// --- 1. Approval routing ---
 	ApprovalTeam    string
@@ -111,12 +112,7 @@ func (c *configuration) IsValid() error {
 // AutoApproveContains reports whether the given user ID is in the
 // admin-configured auto-approve list.
 func (c *configuration) AutoApproveContains(userID string) bool {
-	for _, id := range c.autoApproveUserIDs {
-		if id == userID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.autoApproveUserIDs, userID)
 }
 
 func (p *Plugin) getConfiguration() *configuration {

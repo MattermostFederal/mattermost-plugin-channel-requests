@@ -152,7 +152,6 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	return name, nil
 }
 
-
 // submitRequest validates the input and either creates the channel immediately (if the requester is
 // a System Admin) or stores a pending request and posts it to the approval channel. It returns a
 // message suitable for showing to the requester.
@@ -348,9 +347,9 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 				ChannelId: channel.Id,
 				Message:   "@channel — a new channel request needs your review.",
 			}
-			model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
-			if _, appErr := p.API.CreatePost(post); appErr != nil {
-				return errors.Wrap(appErr, "failed to post approval request")
+			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+			if _, postErr := p.API.CreatePost(post); postErr != nil {
+				return errors.Wrap(postErr, "failed to post approval request")
 			}
 			return nil
 		}
@@ -362,7 +361,7 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
 // it; once one does, the others' copies resolve to an "already handled" message.
-func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) error {
+func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) error {
 	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Page: 0, PerPage: 100})
 	if appErr != nil {
 		return errors.Wrap(appErr, "failed to list System Admins")
@@ -379,7 +378,7 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) e
 			continue
 		}
 		post := &model.Post{UserId: p.botUserID, ChannelId: dm.Id}
-		model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
+		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
 		if _, appErr := p.API.CreatePost(post); appErr != nil {
 			p.API.LogWarn("failed to DM approval request to System Admin", "user_id", admin.Id, "error", appErr.Error())
 			continue
@@ -394,26 +393,26 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) e
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
-func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.SlackAttachment {
+func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.MessageAttachment {
 	visibility := "Public"
 	if req.ChannelType == channelTypePrivate {
 		visibility = "Private"
 	}
 
-	fields := []*model.SlackAttachmentField{
+	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
 		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
 	}
 	if req.Purpose != "" {
-		fields = append(fields, &model.SlackAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
+		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
 	}
 	if len(req.MemberIDs) > 0 {
-		fields = append(fields, &model.SlackAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+		fields = append(fields, &model.MessageAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
 	}
 	if len(req.AdminMemberIDs) > 0 {
-		fields = append(fields, &model.SlackAttachmentField{
+		fields = append(fields, &model.MessageAttachmentField{
 			Title: "Channel Admins to add",
 			Value: p.mentionList(req.AdminMemberIDs),
 			Short: false,
@@ -421,7 +420,7 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 	}
 
 	siteURL := "/plugins/" + manifest.Id
-	return &model.SlackAttachment{
+	return &model.MessageAttachment{
 		Title:   "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,

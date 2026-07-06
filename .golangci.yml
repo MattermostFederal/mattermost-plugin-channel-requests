@@ -38,6 +38,12 @@ linters:
     unqueryvet:
       check-sql-builders: true
   exclusions:
+    # Don't lint third-party Go files vendored inside the webapp's npm
+    # tree. CI doesn't run `npm install` for the lint job so these never
+    # appear there, but a local run after `npm install` would otherwise
+    # flag them.
+    paths:
+      - webapp/node_modules
     rules:
       - path: server/configuration.go
         linters:
@@ -45,6 +51,12 @@ linters:
       - path: _test\.go
         linters:
           - bodyclose
+      # build/ is vendored tooling from mattermost-plugin-starter-template
+      # (pluginctl deploy client, manifest generator). Its gosec findings
+      # (SSRF/log-injection in a local CLI) are not ours to fix.
+      - path: build/
+        linters:
+          - gosec
 
 formatters:
   enable:
@@ -59,4 +71,4 @@ formatters:
           replacement: any
     goimports:
       local-prefixes:
-        - github.com/MattermostFederal/mattermost-plugin-template
+        - github.com/MattermostFederal/mattermost-plugin-channel-requests

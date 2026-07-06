@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -12,14 +13,14 @@ import (
 )
 
 const (
-	routeDialog             = "/api/v1/dialog"
-	routeCreate             = "/api/v1/create"
-	routeApprove            = "/api/v1/approve"
-	routeDeny               = "/api/v1/deny"
-	routePrefixes           = "/api/v1/prefixes"
-	routeTeams              = "/api/v1/teams"          // list teams for the approval-channel picker
-	routeChannels           = "/api/v1/channels"       // list channels in a team, ?team_id=...
-	routeUserAutocomplete   = "/api/v1/user_autocomplete" // ?q=... for the request-modal member picker
+	routeDialog           = "/api/v1/dialog"
+	routeCreate           = "/api/v1/create"
+	routeApprove          = "/api/v1/approve"
+	routeDeny             = "/api/v1/deny"
+	routePrefixes         = "/api/v1/prefixes"
+	routeTeams            = "/api/v1/teams"             // list teams for the approval-channel picker
+	routeChannels         = "/api/v1/channels"          // list channels in a team, ?team_id=...
+	routeUserAutocomplete = "/api/v1/user_autocomplete" // ?q=... for the request-modal member picker
 
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
@@ -163,10 +164,7 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 		FirstName string `json:"first_name"`
 		LastName  string `json:"last_name"`
 	}
-	max := 20
-	if len(users) < max {
-		max = len(users)
-	}
+	max := min(len(users), 20)
 	out := make([]userDTO, 0, max)
 	for i, u := range users {
 		if i >= max {
@@ -194,9 +192,9 @@ func (p *Plugin) handlePrefixes(w http.ResponseWriter, r *http.Request) {
 	}
 	config := p.getConfiguration()
 	type prefixDTO struct {
-		Prefix       string `json:"prefix"`
-		Description  string `json:"description"`
-		SuffixRegex  string `json:"suffix_regex"`
+		Prefix      string `json:"prefix"`
+		Description string `json:"description"`
+		SuffixRegex string `json:"suffix_regex"`
 	}
 	out := make([]prefixDTO, 0, len(config.prefixes))
 	for _, p := range config.prefixes {
@@ -344,9 +342,9 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		Name:        submissionString(submission.Submission, fieldName),
 		// Prefix is present in submission only when the dialog was
 		// opened with the prefix-list feature active.
-		Prefix:      submissionString(submission.Submission, fieldPrefix),
-		Purpose:     submissionString(submission.Submission, fieldPurpose),
-		ChannelType: submissionString(submission.Submission, fieldType),
+		Prefix:         submissionString(submission.Submission, fieldPrefix),
+		Purpose:        submissionString(submission.Submission, fieldPurpose),
+		ChannelType:    submissionString(submission.Submission, fieldType),
 		MemberIDs:      splitIDs(submissionString(submission.Submission, fieldMembers)),
 		AdminMemberIDs: splitIDs(submissionString(submission.Submission, fieldAdmins)),
 	}
@@ -372,9 +370,9 @@ type webappCreateRequest struct {
 	Name        string `json:"name"`
 	// Prefix is the selected domain prefix from the modal's dropdown
 	// (e.g., "team-"). Empty when the plugin is in legacy mode.
-	Prefix      string   `json:"prefix"`
-	Purpose     string   `json:"purpose"`
-	ChannelType string   `json:"channel_type"`
+	Prefix       string   `json:"prefix"`
+	Purpose      string   `json:"purpose"`
+	ChannelType  string   `json:"channel_type"`
 	Members      []string `json:"members"`       // usernames — regular members
 	AdminMembers []string `json:"admin_members"` // usernames — Channel Admins
 }
@@ -502,7 +500,7 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 		attachment.Footer = status
 	}
 	post.DelProp("attachments")
-	model.ParseSlackAttachment(post, attachments)
+	model.ParseMessageAttachment(post, attachments)
 	post.Message = status
 	return post
 }
@@ -564,10 +562,8 @@ func (p *Plugin) isTeamAdmin(userID, teamSlug string) bool {
 	if appErr != nil || member == nil {
 		return false
 	}
-	for _, r := range strings.Fields(member.Roles) {
-		if r == model.TeamAdminRoleId {
-			return true
-		}
+	if slices.Contains(strings.Fields(member.Roles), model.TeamAdminRoleId) {
+		return true
 	}
 	return member.SchemeAdmin
 }
