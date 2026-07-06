@@ -18,7 +18,7 @@ This guide covers three roles:
 
 ## Requesting a channel
 
-There are three ways to open the request form. All open the same modal.
+There are two ways to open the request form. Both open the same modal.
 
 ### 1. From the "+" in the sidebar
 
@@ -35,13 +35,6 @@ Click the **Request Channel** icon in the channel header toolbar.
 
 <!-- Screenshot: the channel header with the Request Channel button highlighted -->
 ![Request Channel header button](images/request-header-button.png)
-
-### 3. From the slash command
-
-Type `/channel-request` in any message box and press Enter.
-
-<!-- Screenshot: typing /channel-request in the message box -->
-![Slash command](images/request-slash-command.png)
 
 ### Filling out the request
 
