@@ -1,6 +1,5 @@
-import React, {useEffect, useState} from 'react';
-
 import manifest from 'manifest';
+import React, {useEffect, useState} from 'react';
 
 // ApprovalChannelPicker: TWO coordinated custom admin-console settings
 // that replace the plain text slug fields for ApprovalTeam +
@@ -58,6 +57,7 @@ function readSiblingSetting(props: Props, key: string): string {
         if (!pluginCfg) {
             return undefined;
         }
+
         // Config keys are case-insensitively matched by MM; try both.
         const v = pluginCfg[key] ?? pluginCfg[key.toLowerCase()];
         return typeof v === 'string' ? v : undefined;

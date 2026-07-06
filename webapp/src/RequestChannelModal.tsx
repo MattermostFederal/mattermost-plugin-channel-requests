@@ -1,3 +1,4 @@
+import manifest from 'manifest';
 import React, {useEffect, useMemo, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
@@ -163,7 +164,16 @@ export const RequestChannelModal = () => {
                 onClick={(e) => e.stopPropagation()}
             >
                 <h3 style={{marginTop: 0}}>{'Request a Channel'}</h3>
-                <p style={{opacity: 0.72}}>{'Your request will be sent to an admin for approval.'}</p>
+                <p style={{opacity: 0.72}}>
+                    {'Your request will be sent to an admin for approval. '}
+                    <a
+                        href={`/plugins/${manifest.id}/public/help/help.html`}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                    >
+                        {'Need help?'}
+                    </a>
+                </p>
 
                 {success ? (
                     <div>

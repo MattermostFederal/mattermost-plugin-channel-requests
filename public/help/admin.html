@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Setup — Channel Requests</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Channel Requests</h2>
+            <span class="version">Plugin Documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Documentation</span>
+            <a href="help.html">Overview &amp; Requesting</a>
+            <a href="approvals.html">Approving Requests</a>
+            <a href="admin.html" class="active">Admin Setup</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <a href="help.html">Docs</a>
+            <span class="separator">/</span>
+            Admin Setup
+        </div>
+
+        <h1>Admin setup</h1>
+        <p class="tagline">Configure the plugin in System Console → Plugins → Channel Requests.</p>
+
+        <!-- Screenshot: the Channel Requests settings page in System Console -->
+        <!-- <img src="images/admin-settings.png" alt="Plugin settings"> -->
+
+        <h2>Settings</h2>
+        <table class="field-table">
+            <thead>
+                <tr><th>Setting</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>Approval team</code></td><td>The team whose channel receives requests. <strong>Required.</strong></td></tr>
+                <tr><td><code>Approval channel</code></td><td>The channel where Approve/Deny cards are posted. <strong>Required.</strong></td></tr>
+                <tr><td><code>Channel domain prefixes</code></td><td>The prefix list requesters pick from (see below). Leave empty for free-form URLs.</td></tr>
+                <tr><td><code>Team Admins can approve requests</code></td><td>When on, Team Admins of the approval team can approve/deny, not just System Admins.</td></tr>
+                <tr><td><code>Auto-approve requests from these users</code></td><td>Requests from these users skip approval.</td></tr>
+                <tr><td><code>Audit channel ID</code></td><td>Optional. Posts an audit line for every approve/deny.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="alert alert-warning">
+            <div class="alert-title">Approval team and channel are required</div>
+            <p>
+                Until both are set, requests can't be routed. Set them before rolling the plugin
+                out to members.
+            </p>
+        </div>
+
+        <h2>Domain prefixes</h2>
+        <p>
+            Each prefix has a <strong>name</strong>, a <strong>description</strong>, and a
+            <strong>max length</strong> for the suffix (2–32 characters). Use
+            <strong>Load preset</strong> to populate the table with a starter pack
+            (SRE / Ops, Product org, Support / Success, or General org), then edit as needed.
+        </p>
+        <div class="alert alert-info">
+            <div class="alert-title">Loading a preset is an upsert</div>
+            <p>
+                Loading a preset updates prefixes you already have (description + max length) and
+                appends any that are missing — so re-loading a preset brings the matching rows in
+                line with it rather than skipping them.
+            </p>
+        </div>
+        <!-- Screenshot: prefix editor table with Load preset dropdown open -->
+        <!-- <img src="images/admin-prefixes.png" alt="Prefix editor"> -->
+
+        <p>
+            The <strong>Live preview</strong> at the bottom of the editor shows exactly what URL a
+            request will produce for a given prefix and typed name.
+        </p>
+        <!-- Screenshot: prefix editor live preview -->
+        <!-- <img src="images/admin-prefix-preview.png" alt="Prefix live preview"> -->
+    </main>
+</div>
+</body>
+</html>

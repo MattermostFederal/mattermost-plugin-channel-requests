@@ -291,6 +291,15 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 			Optional:    true,
 			HelpText:    "These users are added to the channel once it's approved.",
 		},
+		model.DialogElement{
+			DisplayName: "Channel admins",
+			Name:        fieldAdmins,
+			Type:        "select",
+			DataSource:  "users",
+			MultiSelect: true,
+			Optional:    true,
+			HelpText:    "These users are made channel admins once the channel is approved.",
+		},
 	)
 
 	dialog := model.Dialog{
@@ -338,7 +347,8 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		Prefix:      submissionString(submission.Submission, fieldPrefix),
 		Purpose:     submissionString(submission.Submission, fieldPurpose),
 		ChannelType: submissionString(submission.Submission, fieldType),
-		MemberIDs:   splitIDs(submissionString(submission.Submission, fieldMembers)),
+		MemberIDs:      splitIDs(submissionString(submission.Submission, fieldMembers)),
+		AdminMemberIDs: splitIDs(submissionString(submission.Submission, fieldAdmins)),
 	}
 
 	message, err := p.submitRequest(in)
@@ -365,7 +375,7 @@ type webappCreateRequest struct {
 	Prefix      string   `json:"prefix"`
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
-	Members     []string `json:"members"`       // usernames — regular members
+	Members      []string `json:"members"`       // usernames — regular members
 	AdminMembers []string `json:"admin_members"` // usernames — Channel Admins
 }
 
@@ -458,7 +468,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
 		if requester != nil {
-			p.postWelcomeMessage(channel, requester, actingUser)
+			p.postWelcomeMessage(channel, req, requester, actingUser)
 		}
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
 		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",

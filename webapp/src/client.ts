@@ -4,12 +4,14 @@ export type ChannelRequestPayload = {
     team_id: string;
     display_name: string;
     name: string;
+
     // prefix is the selected domain prefix (e.g., "team-") when the
     // admin has configured a prefix list.
     prefix?: string;
     purpose: string;
     channel_type: string;
     members: string[];
+
     // admin_members are usernames the requester is proposing to have
     // Channel Admin role on the newly-created channel. Server promotes
     // them via UpdateChannelMemberRoles at creation time.

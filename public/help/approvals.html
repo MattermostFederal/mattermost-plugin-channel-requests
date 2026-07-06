@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Approving Requests — Channel Requests</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Channel Requests</h2>
+            <span class="version">Plugin Documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Documentation</span>
+            <a href="help.html">Overview &amp; Requesting</a>
+            <a href="approvals.html" class="active">Approving Requests</a>
+            <a href="admin.html">Admin Setup</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <a href="help.html">Docs</a>
+            <span class="separator">/</span>
+            Approving Requests
+        </div>
+
+        <h1>Approving requests</h1>
+        <p class="tagline">Approve or deny channel requests from the approval channel.</p>
+
+        <h2>Who can approve</h2>
+        <p>
+            <strong>System Admins</strong> can always approve. If the admin enabled
+            <em>Team Admins can approve requests</em>, Team Admins of the approval team can too.
+        </p>
+
+        <h2>Acting on a request</h2>
+        <p>
+            Each request is posted in the configured <strong>approval channel</strong> with
+            <strong>Approve</strong> and <strong>Deny</strong> buttons.
+        </p>
+        <!-- Screenshot: approval request card with Approve/Deny buttons -->
+        <!-- <img src="images/approval-card.png" alt="Approval request card"> -->
+
+        <table class="field-table">
+            <thead>
+                <tr><th>Action</th><th>What happens</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>Approve</code></td><td>Creates the channel, adds the requested members, promotes the channel admins, and posts a welcome message that @-mentions everyone added.</td></tr>
+                <tr><td><code>Deny</code></td><td>Closes the request. The requester is notified by direct message.</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Screenshot: welcome message in the new channel mentioning added users -->
+        <!-- <img src="images/welcome-message.png" alt="Welcome message"> -->
+
+        <div class="alert alert-info">
+            <div class="alert-title">Auto-approved requests</div>
+            <p>
+                Requests from <strong>System Admins</strong> and from users on the
+                <strong>auto-approve list</strong> skip this step — the channel is created
+                immediately, with no Approve/Deny card.
+            </p>
+        </div>
+
+        <div class="alert alert-tip">
+            <div class="alert-title">Audit trail</div>
+            <p>
+                If an <strong>audit channel</strong> is configured, every approve and deny posts
+                an audit line there so there's a durable record of who acted on what.
+            </p>
+        </div>
+    </main>
+</div>
+</body>
+</html>

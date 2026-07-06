@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -15,15 +13,26 @@ func getCommand() *model.Command {
 		AutoComplete:     true,
 		AutoCompleteDesc: "Request the creation of a new channel for admin approval",
 		AutoCompleteHint: "",
+		AutocompleteData: getAutocompleteData(),
 		DisplayName:      "Channel Request",
 	}
 }
 
-func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
-	if err := p.getConfiguration().IsValid(); err != nil {
-		return ephemeralResponse(fmt.Sprintf("The Channel Request plugin is not configured: %s. Ask a System Admin to set the Approval Team and Approval Channel in the System Console.", err.Error())), nil
-	}
+// getAutocompleteData drives the inline `/` suggestion UI. The command
+// takes no arguments — it just opens the request form — so this is a
+// single leaf with no subcommands. Registering it (rather than relying on
+// AutoComplete alone) is what makes `/channel-request` surface in the
+// autocomplete suggestion list as a user types, matching the other
+// federal plugins.
+func getAutocompleteData() *model.AutocompleteData {
+	return model.NewAutocompleteData(
+		commandTrigger,
+		"",
+		"Request the creation of a new channel for admin approval",
+	)
+}
 
+func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
 	if err := p.openRequestDialog(args.TriggerId, args.TeamId); err != nil {
 		p.API.LogError("failed to open channel request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the channel request form. Please try again."), nil

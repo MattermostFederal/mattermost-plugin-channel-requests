@@ -23,6 +23,7 @@ const (
 	fieldPurpose     = "purpose"
 	fieldType        = "type"
 	fieldMembers     = "members"
+	fieldAdmins      = "admins"
 
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
@@ -157,9 +158,6 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 // message suitable for showing to the requester.
 func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	config := p.getConfiguration()
-	if err := config.IsValid(); err != nil {
-		return "", errors.Wrap(err, "plugin is not configured")
-	}
 
 	if strings.TrimSpace(in.DisplayName) == "" {
 		return "", errors.New("a channel name is required")
@@ -199,7 +197,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		p.postWelcomeMessage(channel, requester, requester)
+		p.postWelcomeMessage(channel, req, requester, requester)
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
@@ -216,14 +214,26 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
 
-// postWelcomeMessage posts a bot message in the newly-created channel
-// announcing who requested it and who approved.
-func (p *Plugin) postWelcomeMessage(channel *model.Channel, requester, approver *model.User) {
+// postWelcomeMessage posts a bot message in the newly-created channel announcing who requested it
+// and who approved, then @-mentions the added members and channel admins so everyone who was
+// added is notified they're in the channel.
+func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest, requester, approver *model.User) {
 	body := fmt.Sprintf("Welcome — this channel was requested by @%s", requester.Username)
 	if approver != nil && approver.Id != requester.Id {
 		body += fmt.Sprintf(" and approved by @%s", approver.Username)
 	}
 	body += ". Adjust the header + purpose to fit."
+
+	// Mention the added users so they get notified. The requester is the
+	// creator and already here, so only call out the designated members
+	// and admins. mentionList returns "" for an empty list.
+	if members := p.mentionList(req.MemberIDs); members != "" {
+		body += "\nAdded: " + members
+	}
+	if admins := p.mentionList(req.AdminMemberIDs); admins != "" {
+		body += "\nChannel admins: " + admins
+	}
+
 	if _, appErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
 		ChannelId: channel.Id,
@@ -323,15 +333,68 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, error) {
 	return &req, nil
 }
 
-// postApprovalRequest posts a message with Approve/Deny buttons to the configured approval channel.
+// postApprovalRequest posts a message with Approve/Deny buttons for an admin to act on. It prefers
+// the configured approval channel, but when that isn't configured (or can't be found) it falls back
+// to DMing every System Admin so requests are never silently dropped.
 func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) error {
 	config := p.getConfiguration()
+	attachment := p.approvalAttachment(req, requester)
 
-	channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
-	if appErr != nil {
-		return errors.Wrap(appErr, "failed to find the configured approval channel")
+	if strings.TrimSpace(config.ApprovalTeam) != "" && strings.TrimSpace(config.ApprovalChannel) != "" {
+		channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
+		if appErr == nil {
+			post := &model.Post{
+				UserId:    p.botUserID,
+				ChannelId: channel.Id,
+				Message:   "@channel — a new channel request needs your review.",
+			}
+			model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
+			if _, appErr := p.API.CreatePost(post); appErr != nil {
+				return errors.Wrap(appErr, "failed to post approval request")
+			}
+			return nil
+		}
+		p.API.LogWarn("configured approval channel not found; falling back to System Admins", "team", config.ApprovalTeam, "channel", config.ApprovalChannel, "error", appErr.Error())
 	}
 
+	return p.postApprovalToSystemAdmins(attachment)
+}
+
+// postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
+// it; once one does, the others' copies resolve to an "already handled" message.
+func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) error {
+	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Page: 0, PerPage: 100})
+	if appErr != nil {
+		return errors.Wrap(appErr, "failed to list System Admins")
+	}
+
+	posted := 0
+	for _, admin := range admins {
+		if admin.Id == p.botUserID {
+			continue
+		}
+		dm, appErr := p.API.GetDirectChannel(admin.Id, p.botUserID)
+		if appErr != nil {
+			p.API.LogWarn("failed to open DM with System Admin", "user_id", admin.Id, "error", appErr.Error())
+			continue
+		}
+		post := &model.Post{UserId: p.botUserID, ChannelId: dm.Id}
+		model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
+		if _, appErr := p.API.CreatePost(post); appErr != nil {
+			p.API.LogWarn("failed to DM approval request to System Admin", "user_id", admin.Id, "error", appErr.Error())
+			continue
+		}
+		posted++
+	}
+
+	if posted == 0 {
+		return errors.New("no System Admins are available to receive the approval request")
+	}
+	return nil
+}
+
+// approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
+func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.SlackAttachment {
 	visibility := "Public"
 	if req.ChannelType == channelTypePrivate {
 		visibility = "Private"
@@ -358,24 +421,12 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 	}
 
 	siteURL := "/plugins/" + manifest.Id
-	attachment := &model.SlackAttachment{
+	return &model.SlackAttachment{
 		Title:   "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: channel.Id,
-	}
-	model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
-
-	if _, appErr := p.API.CreatePost(post); appErr != nil {
-		return errors.Wrap(appErr, "failed to post approval request")
-	}
-
-	return nil
 }
 
 func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction {

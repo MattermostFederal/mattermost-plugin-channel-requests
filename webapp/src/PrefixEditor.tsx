@@ -29,14 +29,15 @@ type PrefixRow = {
     maxLength: number;
 };
 
-const DEFAULT_MAX_LENGTH = 16;
+const DEFAULT_MAX_LENGTH = 24;
 const MIN_MAX_LENGTH = 2;
 const MAX_MAX_LENGTH = 32;
 
 // Preset packs — populate the table with sensible starter values.
-// Clicking one APPENDS its rows to the current list (skipping any
-// prefix already present) so re-picking is idempotent.
-const PRESET_PACKS: {name: string; description: string; rows: PrefixRow[]}[] = [
+// Clicking one UPSERTS its rows: prefixes already in the table are
+// updated to the preset's description + max length, and any missing
+// prefixes are appended. Re-picking is idempotent.
+const PRESET_PACKS: Array<{name: string; description: string; rows: PrefixRow[]}> = [
     {
         name: 'SRE / Ops',
         description: 'Operational + incident-response channels',
@@ -51,7 +52,7 @@ const PRESET_PACKS: {name: string; description: string; rows: PrefixRow[]}[] = [
         name: 'Product org',
         description: 'Team, project, launch, design channels',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 16},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
             {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
             {prefix: 'launch-', description: 'Launch coordination', maxLength: 24},
             {prefix: 'design-', description: 'Design reviews', maxLength: 24},
@@ -68,11 +69,13 @@ const PRESET_PACKS: {name: string; description: string; rows: PrefixRow[]}[] = [
     },
     {
         name: 'General org',
-        description: 'Broad-purpose starter (team + channel + announcements)',
+        description: 'Broad-purpose starter (team + channel + project + announcements + general)',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 16},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
             {prefix: 'channel-', description: 'General purpose channels', maxLength: 24},
+            {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
             {prefix: 'announcements-', description: 'Read-only announcements', maxLength: 24},
+            {prefix: 'general-', description: 'General-purpose channels', maxLength: 24},
         ],
     },
 ];
@@ -102,7 +105,7 @@ function parseRows(raw: string): PrefixRow[] {
 
         let maxLength = DEFAULT_MAX_LENGTH;
         if (raw3 !== '') {
-            if (/^\d+$/.test(raw3)) {
+            if ((/^\d+$/).test(raw3)) {
                 maxLength = clampLength(parseInt(raw3, 10));
             } else {
                 // Legacy regex — try to extract the upper bound from
@@ -208,9 +211,20 @@ export const PrefixEditor: React.FC<Props> = ({id, value, disabled, onChange, se
         if (!pack) {
             return;
         }
+
+        // Upsert: bring any prefix the table already has in line with the
+        // preset (description + max length), then append the ones it's
+        // missing. Previously existing rows were skipped, so a stale length
+        // (e.g. an old 16) would survive a re-pick — this makes loading a
+        // preset actually apply that preset's values to matching prefixes.
+        const byPrefix = new Map(pack.rows.map((r) => [r.prefix.toLowerCase(), r]));
+        const updated = rows.map((r) => {
+            const preset = byPrefix.get(r.prefix.toLowerCase());
+            return preset ? {...r, description: preset.description, maxLength: preset.maxLength} : r;
+        });
         const existing = new Set(rows.map((r) => r.prefix.toLowerCase()));
         const additions = pack.rows.filter((r) => !existing.has(r.prefix.toLowerCase()));
-        commit([...rows, ...additions]);
+        commit([...updated, ...additions]);
         setPresetChoice('');
     };
 

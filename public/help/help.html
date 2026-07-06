@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channel Requests Documentation</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Channel Requests</h2>
+            <span class="version">Plugin Documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Documentation</span>
+            <a href="help.html" class="active">Overview &amp; Requesting</a>
+            <a href="approvals.html">Approving Requests</a>
+            <a href="admin.html">Admin Setup</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <a href="help.html">Docs</a>
+            <span class="separator">/</span>
+            Overview
+        </div>
+
+        <h1>Channel Requests</h1>
+        <p class="tagline">Request a channel, get it approved, get everyone added — automatically.</p>
+
+        <h2>What it does</h2>
+        <p>
+            The Channel Requests plugin lets members <strong>request</strong> a new channel
+            instead of creating one directly. Each request goes to an approver, who approves
+            or denies it. On approval the channel is created, the requested members and channel
+            admins are added, and everyone added gets an @-mention welcome message.
+        </p>
+
+        <h2>Opening the request form</h2>
+        <p>There are three ways to open the form. They all open the same window.</p>
+
+        <h3>1. From the "+" in the sidebar</h3>
+        <p>
+            Click the <strong>+</strong> next to a category (or the main <strong>+</strong> in
+            the sidebar header) and choose <strong>Request new channel</strong>. For members
+            who can't create channels directly, the native "Create new channel" action is
+            automatically relabeled to this.
+        </p>
+        <!-- Screenshot: sidebar "+" menu with "Request new channel" highlighted -->
+        <!-- <img src="images/request-plus-menu.png" alt="Request new channel from the + menu"> -->
+
+        <h3>2. From the channel header</h3>
+        <p>Click the <strong>Request Channel</strong> icon in the channel header toolbar.</p>
+        <!-- Screenshot: channel header Request Channel button -->
+        <!-- <img src="images/request-header-button.png" alt="Request Channel header button"> -->
+
+        <h3>3. From the slash command</h3>
+        <p>Type <code>/channel-request</code> in any message box and press Enter.</p>
+        <!-- Screenshot: typing /channel-request -->
+        <!-- <img src="images/request-slash-command.png" alt="Slash command"> -->
+
+        <h2>Filling out the request</h2>
+        <!-- Screenshot: the full Request a Channel modal -->
+        <!-- <img src="images/request-modal.png" alt="Request a Channel modal"> -->
+
+        <table class="field-table">
+            <thead>
+                <tr><th>Field</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>Domain prefix</code></td><td>Appears only if your admin configured prefixes. Pick the category — the final URL is <code>&lt;prefix&gt;&lt;suffix&gt;</code>.</td></tr>
+                <tr><td><code>Channel name</code></td><td>The display name people see (e.g. <em>Marketing Team</em>).</td></tr>
+                <tr><td><code>URL name / suffix</code></td><td>Optional. The URL part after the prefix. Leave blank to auto-generate from the channel name. A live <strong>Preview</strong> shows the final URL.</td></tr>
+                <tr><td><code>Purpose</code></td><td>Optional short description of the channel.</td></tr>
+                <tr><td><code>Visibility</code></td><td><strong>Public</strong> (anyone can join) or <strong>Private</strong> (invite only).</td></tr>
+                <tr><td><code>Members to add</code></td><td>Search and add users who become regular members on approval.</td></tr>
+                <tr><td><code>Channel Admins to add</code></td><td>Search and add users who become channel admins on approval.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Members vs Channel Admins</div>
+            <p>
+                A user can be in only one of the two lists. If you add someone to Channel Admins
+                who's already a Member (or vice versa), they <strong>move</strong> to the new list
+                automatically. A badge in the dropdown shows where a user is currently assigned.
+            </p>
+        </div>
+        <!-- Screenshot: the two pickers showing a "Channel Admin" / "Member" badge -->
+        <!-- <img src="images/request-pickers.png" alt="Member and admin pickers"> -->
+
+        <p>
+            Click <strong>Submit request</strong>. You'll see a confirmation and get a direct
+            message when an approver responds.
+        </p>
+
+        <div class="alert alert-tip">
+            <div class="alert-title">After approval</div>
+            <p>
+                The channel is created, members and channel admins are added, admins are promoted,
+                and a welcome message @-mentions everyone who was added so they know they're in.
+            </p>
+        </div>
+    </main>
+</div>
+</body>
+</html>
