@@ -25,6 +25,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # server/manifest.go is generated from plugin.json and gitignored.
+      # The server code references `manifest`, so generate it before linting
+      # or golangci-lint's typecheck fails with "undefined: manifest".
+      - name: Generate manifest
+        run: go run ./build/manifest apply
+
       # golangci-lint v1.62.0 (last v1 release) is built with Go 1.23 and
       # refuses to lint projects targeting Go > 1.23 — so v2 is mandatory
       # for us. Action v9 supports v2. Config schema lives in .golangci.yml.

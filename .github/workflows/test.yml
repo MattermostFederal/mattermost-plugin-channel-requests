@@ -29,5 +29,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # server/manifest.go is generated from plugin.json and gitignored.
+      # The server code references `manifest`, so generate it before the
+      # build or `go test` fails with "undefined: manifest".
+      - name: Generate manifest
+        run: go run ./build/manifest apply
+
       - name: Run unit tests
         run: go test -race -count=1 ./...

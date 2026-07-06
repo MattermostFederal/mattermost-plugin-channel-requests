@@ -70,8 +70,13 @@ jobs:
       # enabled on this repo, the step fails and the workflow goes red
       # — by design. Enable Code Scanning in repo settings (public:
       # free; private: needs GHAS).
+      # Best-effort: Code Scanning needs a public repo or GitHub Advanced
+      # Security. On a private repo without GHAS this upload 403s — don't
+      # fail the job for it. The hard CVE gate is the Grype scan above
+      # (fail-build: true on HIGH); this step only feeds the Security tab.
       - name: Upload Grype SARIF to code scanning
         if: always() && steps.grype-scan.outputs.sarif != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v3.30.0
         with:
           sarif_file: ${{ steps.grype-scan.outputs.sarif }}
@@ -97,6 +102,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # Generate the gitignored server/manifest.go before the traced build
+      # so CodeQL compiles and analyzes the full server package.
+      - name: Generate manifest
+        run: go run ./build/manifest apply
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v3.30.0
@@ -132,10 +142,12 @@ jobs:
           cp codeql-results/*.sarif dist/codeql-go.sarif
           make security-gate
 
-      # Required: must reach the Security tab. No continue-on-error.
-      # If this fails, enable Code Scanning per the workflow header.
+      # Best-effort: needs a public repo or GitHub Advanced Security. On a
+      # private repo without GHAS this 403s — don't fail the job. The hard
+      # gate is `make security-gate` above; this only feeds the Security tab.
       - name: Upload CodeQL SARIF to code scanning
         if: always()
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v3.30.0
         with:
           sarif_file: codeql-results
