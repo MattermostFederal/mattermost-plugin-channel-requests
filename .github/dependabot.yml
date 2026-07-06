@@ -23,8 +23,12 @@ updates:
       - dependencies
       - go
     commit-message:
+      # No `include: scope` — the prefix already carries the ecosystem
+      # scope "(go)". Adding include:scope appends the dependency-type
+      # scope too, producing "deps(go)(deps):" — a double-scope that
+      # isn't valid Conventional Commit syntax, so release-please can't
+      # parse it and drops the bump from the changelog.
       prefix: "deps(go)"
-      include: scope
     groups:
       go-minor-patch:
         update-types:
@@ -44,8 +48,11 @@ updates:
       - dependencies
       - npm
     commit-message:
+      # No `include: scope` — see the go entry above. "deps(npm)" already
+      # scopes the ecosystem; include:scope would make "deps(npm)(deps-dev):"
+      # which release-please skips (that's why the eslint 10 bump never
+      # landed in the v0.2.0 changelog).
       prefix: "deps(npm)"
-      include: scope
     groups:
       npm-minor-patch:
         update-types:
