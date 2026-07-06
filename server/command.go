@@ -13,8 +13,23 @@ func getCommand() *model.Command {
 		AutoComplete:     true,
 		AutoCompleteDesc: "Request the creation of a new channel for admin approval",
 		AutoCompleteHint: "",
+		AutocompleteData: getAutocompleteData(),
 		DisplayName:      "Channel Request",
 	}
+}
+
+// getAutocompleteData drives the inline `/` suggestion UI. The command
+// takes no arguments — it just opens the request form — so this is a
+// single leaf with no subcommands. Registering it (rather than relying on
+// AutoComplete alone) is what makes `/channel-request` surface in the
+// autocomplete suggestion list as a user types, matching the other
+// federal plugins.
+func getAutocompleteData() *model.AutocompleteData {
+	return model.NewAutocompleteData(
+		commandTrigger,
+		"",
+		"Request the creation of a new channel for admin approval",
+	)
 }
 
 func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {

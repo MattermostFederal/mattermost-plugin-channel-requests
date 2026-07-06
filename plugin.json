@@ -2,10 +2,11 @@
     "id": "com.mattermostfederal.channel-requests",
     "name": "Channel Requests",
     "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
-    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
-    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
+    "homepage_url": "__PLUGIN_REPO_URL__",
+    "support_url": "__PLUGIN_REPO_URL__/issues",
     "icon_path": "assets/icon.svg",
-    "min_server_version": "11.8.0",
+    "version": "0.1.0",
+    "min_server_version": "10.5.0",
     "server": {
         "executables": {
             "linux-amd64": "server/dist/plugin-linux-amd64",
@@ -18,36 +19,44 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "Configure where channel-creation requests are sent for approval. Requests from non-admins are posted to this channel, where any System Admin can approve or deny them.",
-        "footer": "",
+        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins) can approve or deny.\n\nPick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically. Requesters see a form with a prefix picker + tab-complete member + Channel Admin selectors.",
+        "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
                 "key": "ApprovalTeam",
-                "display_name": "Approval Team",
-                "type": "text",
-                "placeholder": "myteam",
-                "help_text": "The URL name (slug) of the team that contains the approval channel. For example, if the team URL is /myteam, enter 'myteam'."
+                "display_name": "Approval team",
+                "type": "custom",
+                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel."
             },
             {
                 "key": "ApprovalChannel",
-                "display_name": "Approval Channel",
-                "type": "text",
-                "placeholder": "channel-requests",
-                "help_text": "The URL name (slug) of the channel where channel-creation requests are posted for approval. For example, if the channel URL is /myteam/channels/channel-requests, enter 'channel-requests'."
+                "display_name": "Approval channel",
+                "type": "custom",
+                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval."
             },
             {
-                "key": "ChannelNameTemplate",
-                "display_name": "Channel URL Template",
-                "type": "text",
-                "placeholder": "team-{{name}}",
-                "help_text": "Optional. Forces every approved channel URL into a standard shape. Use '{{name}}' as a placeholder for the requester's slugified channel name. For example, 'team-{{name}}' turns a request for 'Marketing' into 'team-marketing'. Leave blank to use the requested name as-is."
+                "key": "ChannelNamePrefixes",
+                "display_name": "Channel domain prefixes",
+                "type": "custom",
+                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
             },
             {
-                "key": "ChannelNamePattern",
-                "display_name": "Channel URL Pattern (regex)",
+                "key": "AllowTeamAdminApprovers",
+                "display_name": "Team Admins can approve requests",
+                "type": "bool",
+                "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
+            },
+            {
+                "key": "AutoApproveUserIDs",
+                "display_name": "Auto-approve requests from these users",
+                "type": "custom",
+                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
+            },
+            {
+                "key": "AuditChannelID",
+                "display_name": "Audit channel ID (optional)",
                 "type": "text",
-                "placeholder": "^team-[a-z0-9-]{2,}$",
-                "help_text": "Optional. A regular expression that the final channel URL must match, applied after the template. Requests that don't match are rejected with an explanation. Anchor with ^ and $ to match the whole URL. For example, '^team-[a-z0-9-]{2,}$'. Leave blank to allow any valid channel URL."
+                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
             }
         ]
     }

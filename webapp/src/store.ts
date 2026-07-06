@@ -1,8 +1,6 @@
 import manifest from 'manifest';
 import type {Action} from 'redux';
 
-import type {UserProfile} from './client';
-
 export const OPEN_REQUEST_MODAL = `${manifest.id}_open_request_modal`;
 export const CLOSE_REQUEST_MODAL = `${manifest.id}_close_request_modal`;
 
@@ -20,10 +18,6 @@ export type GlobalState = {
         teams: {
             currentTeamId: string;
         };
-        users: {
-            currentUserId: string;
-            profiles: Record<string, UserProfile>;
-        };
     };
     [pluginKey: string]: unknown;
 };
@@ -34,11 +28,6 @@ export const isRequestModalOpen = (state: GlobalState): boolean => {
 };
 
 export const getCurrentTeamId = (state: GlobalState): string => state.entities?.teams?.currentTeamId ?? '';
-
-export const getCurrentUser = (state: GlobalState): UserProfile | undefined => {
-    const users = state.entities?.users;
-    return users?.profiles?.[users?.currentUserId];
-};
 
 const initialState: PluginState = {modalOpen: false};
 

@@ -28,9 +28,6 @@ const (
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
 
-	// nameTemplatePlaceholder is replaced with the slugified base name in ChannelNameTemplate.
-	nameTemplatePlaceholder = "{{name}}"
-
 	// Channel type values as plain strings, for use in dialog options, comparisons, and storage.
 	channelTypeOpen    = string(model.ChannelTypeOpen)
 	channelTypePrivate = string(model.ChannelTypePrivate)
@@ -47,7 +44,10 @@ type channelRequest struct {
 	Purpose     string   `json:"purpose"`
 	ChannelType string   `json:"channel_type"`
 	MemberIDs   []string `json:"member_ids"`
-	AdminIDs    []string `json:"admin_ids"`
+	// AdminMemberIDs are the requester-designated Channel Admins. On
+	// approval, these users get channel_admin scheme roles in the newly
+	// created channel (in addition to being members).
+	AdminMemberIDs []string `json:"admin_member_ids"`
 }
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
@@ -56,11 +56,19 @@ type requestInput struct {
 	RequesterID string
 	TeamID      string
 	DisplayName string
-	Name        string
-	Purpose     string
-	ChannelType string
-	MemberIDs   []string
-	AdminIDs    []string
+	// Name is the free-form channel URL portion. When the prefix-list
+	// feature is active, this holds ONLY THE SUFFIX (the part after the
+	// prefix); server code prepends the selected prefix. When empty
+	// prefix list, this behaves as before — the full channel name.
+	Name string
+	// Prefix is the selected domain prefix (e.g., "team-", "project-").
+	// Non-empty only when the prefix-list feature is active AND the
+	// requester picked one. Ignored when the plugin is in legacy mode.
+	Prefix         string
+	Purpose        string
+	ChannelType    string
+	MemberIDs      []string
+	AdminMemberIDs []string
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -76,28 +84,71 @@ func slugify(s string) string {
 	return s
 }
 
-// resolveChannelName derives the final channel URL name from the request, applying the configured
-// slug template and validating it against the configured pattern.
+// resolveChannelName derives the final channel URL name from the
+// request using the admin's configured prefix list. Requires at least
+// one prefix to be defined; returns an error otherwise so the admin
+// notices the misconfiguration instead of silently permitting free-form
+// channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
-	base := in.Name
-	if strings.TrimSpace(base) == "" {
-		base = in.DisplayName
+	if !config.UsesPrefixList() {
+		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
 	}
-	base = slugify(base)
+	return resolvePrefixedName(config.Prefixes(), in)
+}
 
-	name := base
-	if tmpl := strings.TrimSpace(config.ChannelNameTemplate); tmpl != "" {
-		name = slugify(strings.ReplaceAll(tmpl, nameTemplatePlaceholder, base))
+// resolvePrefixedName handles the prefix-list flow. The suffix is
+// slugified BEFORE joining so users can type "My Team" and get
+// "team-my-team" — same forgiving normalization as the legacy path.
+func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, error) {
+	selected := strings.TrimSpace(in.Prefix)
+	if selected == "" {
+		return "", errors.New("please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown")
+	}
+	var entry *channelPrefix
+	for i := range prefixes {
+		if prefixes[i].Prefix == selected {
+			entry = &prefixes[i]
+			break
+		}
+	}
+	if entry == nil {
+		return "", errors.Errorf("prefix %q is not in the list of allowed prefixes", selected)
 	}
 
+	suffix := strings.TrimSpace(in.Name)
+	if suffix == "" {
+		// Fall back to slugifying the display name so users who leave
+		// the URL field blank still get a sensible suggestion. This
+		// matches the legacy path's forgiveness.
+		suffix = in.DisplayName
+	}
+	suffix = slugify(suffix)
+	// Requesters sometimes double-type the prefix; strip it so
+	// "team-marketing" under prefix "team-" doesn't become "team-team-marketing".
+	suffix = strings.TrimPrefix(suffix, strings.TrimSuffix(entry.Prefix, "-")+"-")
+	suffix = strings.Trim(suffix, "-")
+
+	if suffix == "" {
+		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
+	}
+
+	// Match the whole suffix, not any substring. Admins wrote patterns
+	// like [a-z0-9-]{2,16} expecting "the suffix must be exactly this
+	// shape" — surprise-anchor them instead of requiring every admin to
+	// remember ^ and $. Preserves the display text of the raw pattern
+	// in error messages so users see what they wrote, not our anchored
+	// rewrite.
+	if entry.SuffixPattern != nil {
+		match := entry.SuffixPattern.FindStringIndex(suffix)
+		if match == nil || match[0] != 0 || match[1] != len(suffix) {
+			return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+		}
+	}
+
+	name := entry.Prefix + suffix
 	if !model.IsValidChannelIdentifier(name) {
-		return "", errors.Errorf("%q is not a valid channel URL name; use 2-64 lowercase letters, numbers, or hyphens", name)
+		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens", name)
 	}
-
-	if config.compiledPattern != nil && !config.compiledPattern.MatchString(name) {
-		return "", errors.Errorf("the channel URL %q doesn't match the required naming pattern %q", name, config.ChannelNamePattern)
-	}
-
 	return name, nil
 }
 
@@ -121,27 +172,31 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	}
 
 	req := &channelRequest{
-		ID:          model.NewId(),
-		RequesterID: in.RequesterID,
-		TeamID:      in.TeamID,
-		Name:        name,
-		DisplayName: strings.TrimSpace(in.DisplayName),
-		Purpose:     strings.TrimSpace(in.Purpose),
-		ChannelType: in.ChannelType,
-		MemberIDs:   in.MemberIDs,
-		AdminIDs:    in.AdminIDs,
+		ID:             model.NewId(),
+		RequesterID:    in.RequesterID,
+		TeamID:         in.TeamID,
+		Name:           name,
+		DisplayName:    strings.TrimSpace(in.DisplayName),
+		Purpose:        strings.TrimSpace(in.Purpose),
+		ChannelType:    in.ChannelType,
+		MemberIDs:      in.MemberIDs,
+		AdminMemberIDs: in.AdminMemberIDs,
 	}
 
-	// System Admins skip the approval step and create the channel directly.
 	requester, appErr := p.API.GetUser(in.RequesterID)
 	if appErr != nil {
 		return "", errors.Wrap(appErr, "failed to load requesting user")
 	}
-	if requester.IsSystemAdmin() {
+
+	// Bypass approval for:
+	//   - System Admins (always)
+	//   - Users on the admin-configured auto-approve list (delegated managers)
+	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
 		channel, err := p.createChannelForRequest(req)
 		if err != nil {
 			return "", err
 		}
+		p.postWelcomeMessage(channel, req, requester, requester)
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
@@ -158,8 +213,54 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
 
+// postWelcomeMessage posts a bot message in the newly-created channel announcing who requested it
+// and who approved, then @-mentions the added members and channel admins so everyone who was
+// added is notified they're in the channel.
+func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest, requester, approver *model.User) {
+	body := fmt.Sprintf("Welcome — this channel was requested by @%s", requester.Username)
+	if approver != nil && approver.Id != requester.Id {
+		body += fmt.Sprintf(" and approved by @%s", approver.Username)
+	}
+	body += ". Adjust the header + purpose to fit."
+
+	// Mention the added users so they get notified. The requester is the
+	// creator and already here, so only call out the designated members
+	// and admins. mentionList returns "" for an empty list.
+	if members := p.mentionList(req.MemberIDs); members != "" {
+		body += "\nAdded: " + members
+	}
+	if admins := p.mentionList(req.AdminMemberIDs); admins != "" {
+		body += "\nChannel admins: " + admins
+	}
+
+	if _, appErr := p.API.CreatePost(&model.Post{
+		UserId:    p.botUserID,
+		ChannelId: channel.Id,
+		Message:   body,
+	}); appErr != nil {
+		p.API.LogWarn("failed to post welcome message", "channel_id", channel.Id, "error", appErr.Error())
+	}
+}
+
+// logAudit posts an audit-trail line to the configured audit channel.
+// No-op when AuditChannelID is empty.
+func (p *Plugin) logAudit(config *configuration, message string) {
+	if strings.TrimSpace(config.AuditChannelID) == "" {
+		return
+	}
+	if _, appErr := p.API.CreatePost(&model.Post{
+		UserId:    p.botUserID,
+		ChannelId: config.AuditChannelID,
+		Message:   message,
+	}); appErr != nil {
+		p.API.LogWarn("audit post failed", "channel_id", config.AuditChannelID, "error", appErr.Error())
+	}
+}
+
 // createChannelForRequest creates the channel described by req, adds the requester and any
-// designated members and channel admins, promotes the admins, and returns the created channel.
+// designated members, promotes anyone in AdminMemberIDs to channel_admin, and returns the
+// created channel. Add-and-promote failures on individual users are logged but don't fail
+// the overall operation — a partially-populated channel is better than nothing.
 func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, error) {
 	channel, appErr := p.API.CreateChannel(&model.Channel{
 		TeamId:      req.TeamID,
@@ -173,20 +274,16 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 		return nil, errors.Wrap(appErr, "failed to create channel")
 	}
 
-	admins := map[string]bool{}
-	for _, id := range req.AdminIDs {
-		admins[id] = true
+	// Union of everyone who should be a member: requester + regular + admin sets.
+	adminSet := map[string]bool{}
+	for _, uid := range req.AdminMemberIDs {
+		if uid != "" {
+			adminSet[uid] = true
+		}
 	}
 
-	// Always add the requester, then the designated members and channel admins (admins are added as
-	// members too). Skip duplicates and don't fail the whole operation if an individual user can't
-	// be added or promoted.
-	adminRoles := fmt.Sprintf("%s %s", model.ChannelUserRoleId, model.ChannelAdminRoleId)
 	added := map[string]bool{}
-	var addedAll, addedAdmins []string
-	userIDs := append([]string{req.RequesterID}, req.MemberIDs...)
-	userIDs = append(userIDs, req.AdminIDs...)
-	for _, userID := range userIDs {
+	for _, userID := range append(append([]string{req.RequesterID}, req.MemberIDs...), req.AdminMemberIDs...) {
 		if userID == "" || added[userID] {
 			continue
 		}
@@ -195,43 +292,18 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 			p.API.LogWarn("failed to add member to created channel", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
 			continue
 		}
-		if admins[userID] {
-			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, adminRoles); appErr != nil {
-				p.API.LogWarn("failed to promote channel admin", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+		// Promote to channel admin if they were designated as such.
+		// "channel_user channel_admin" is the classic role string;
+		// MM handles the scheme-role mapping internally.
+		if adminSet[userID] {
+			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, "channel_user channel_admin"); appErr != nil {
+				p.API.LogWarn("failed to promote member to channel admin",
+					"channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
 			}
 		}
-
-		// Collect every user actually added so they can all be mentioned in the welcome message.
-		addedAll = append(addedAll, userID)
-		if admins[userID] {
-			addedAdmins = append(addedAdmins, userID)
-		}
 	}
-
-	p.postWelcomeMessage(channel, addedAll, addedAdmins)
 
 	return channel, nil
-}
-
-// postWelcomeMessage posts a message from the bot in the newly created channel that mentions every
-// user who was added, so they're all notified they've been added.
-func (p *Plugin) postWelcomeMessage(channel *model.Channel, addedIDs, adminIDs []string) {
-	if len(addedIDs) == 0 {
-		return
-	}
-
-	message := fmt.Sprintf("👋 %s — welcome! You've been added to this channel.", p.mentionList(addedIDs))
-	if len(adminIDs) > 0 {
-		message += fmt.Sprintf("\nChannel admins: %s", p.mentionList(adminIDs))
-	}
-
-	if _, appErr := p.API.CreatePost(&model.Post{
-		UserId:    p.botUserID,
-		ChannelId: channel.Id,
-		Message:   message,
-	}); appErr != nil {
-		p.API.LogWarn("failed to post welcome message", "channel_id", channel.Id, "error", appErr.Error())
-	}
 }
 
 func (p *Plugin) storeRequest(req *channelRequest) error {
@@ -275,9 +347,9 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 				ChannelId: channel.Id,
 				Message:   "@channel — a new channel request needs your review.",
 			}
-			model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
-			if _, appErr := p.API.CreatePost(post); appErr != nil {
-				return errors.Wrap(appErr, "failed to post approval request")
+			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+			if _, postErr := p.API.CreatePost(post); postErr != nil {
+				return errors.Wrap(postErr, "failed to post approval request")
 			}
 			return nil
 		}
@@ -289,7 +361,7 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
 // it; once one does, the others' copies resolve to an "already handled" message.
-func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) error {
+func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) error {
 	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Page: 0, PerPage: 100})
 	if appErr != nil {
 		return errors.Wrap(appErr, "failed to list System Admins")
@@ -306,7 +378,7 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) e
 			continue
 		}
 		post := &model.Post{UserId: p.botUserID, ChannelId: dm.Id}
-		model.ParseSlackAttachment(post, []*model.SlackAttachment{attachment})
+		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
 		if _, appErr := p.API.CreatePost(post); appErr != nil {
 			p.API.LogWarn("failed to DM approval request to System Admin", "user_id", admin.Id, "error", appErr.Error())
 			continue
@@ -321,30 +393,34 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.SlackAttachment) e
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
-func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.SlackAttachment {
+func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.MessageAttachment {
 	visibility := "Public"
 	if req.ChannelType == channelTypePrivate {
 		visibility = "Private"
 	}
 
-	fields := []*model.SlackAttachmentField{
+	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
 		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
 	}
 	if req.Purpose != "" {
-		fields = append(fields, &model.SlackAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
+		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
 	}
 	if len(req.MemberIDs) > 0 {
-		fields = append(fields, &model.SlackAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+		fields = append(fields, &model.MessageAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
 	}
-	if len(req.AdminIDs) > 0 {
-		fields = append(fields, &model.SlackAttachmentField{Title: "Channel admins", Value: p.mentionList(req.AdminIDs), Short: false})
+	if len(req.AdminMemberIDs) > 0 {
+		fields = append(fields, &model.MessageAttachmentField{
+			Title: "Channel Admins to add",
+			Value: p.mentionList(req.AdminMemberIDs),
+			Short: false,
+		})
 	}
 
 	siteURL := "/plugins/" + manifest.Id
-	return &model.SlackAttachment{
+	return &model.MessageAttachment{
 		Title:   "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,

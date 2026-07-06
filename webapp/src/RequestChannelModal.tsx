@@ -1,11 +1,23 @@
-import React, {useState} from 'react';
+import manifest from 'manifest';
+import React, {useEffect, useMemo, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
-import {submitChannelRequest} from './client';
-import type {UserProfile} from './client';
-import {closeRequestModal, getCurrentTeamId, getCurrentUser, isRequestModalOpen} from './store';
+import {fetchPrefixes, submitChannelRequest} from './client';
+import type {ChannelPrefix} from './client';
+import {MemberPicker} from './MemberPicker';
+import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
-import {UserMultiSelect} from './UserMultiSelect';
+
+// Slugify mirrors the server-side slugify() so the live preview shows
+// the exact URL the server will produce. Keep in sync with
+// server/request.go's slugify() — same char-class + trim + lower.
+function slugifySuffix(input: string): string {
+    return input.
+        toLowerCase().
+        trim().
+        replace(/[^a-z0-9]+/g, '-').
+        replace(/^-+|-+$/g, '');
+}
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -31,31 +43,57 @@ const dialogStyle: React.CSSProperties = {
 
 const fieldStyle: React.CSSProperties = {marginBottom: 16};
 
-const addSelfStyle: React.CSSProperties = {
-    padding: 0,
-    marginTop: 6,
-    fontSize: 13,
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--link-color, #386fe5)',
-    cursor: 'pointer',
-};
-
 export const RequestChannelModal = () => {
     const dispatch = useDispatch();
     const isOpen = useSelector(isRequestModalOpen);
     const teamId = useSelector((state: GlobalState) => getCurrentTeamId(state));
-    const currentUser = useSelector((state: GlobalState) => getCurrentUser(state));
 
     const [displayName, setDisplayName] = useState('');
     const [urlName, setUrlName] = useState('');
     const [purpose, setPurpose] = useState('');
     const [channelType, setChannelType] = useState('O');
-    const [members, setMembers] = useState<UserProfile[]>([]);
-    const [channelAdmins, setChannelAdmins] = useState<UserProfile[]>([]);
+    const [membersText, setMembersText] = useState('');
+
+    // adminMembersText holds the second picker's selection — users the
+    // requester is proposing to be Channel Admins on the new channel.
+    // Stored as a comma-separated username string, same shape as
+    // membersText, so the payload path is symmetric.
+    const [adminMembersText, setAdminMembersText] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    const [prefixes, setPrefixes] = useState<ChannelPrefix[]>([]);
+    const [selectedPrefix, setSelectedPrefix] = useState('');
+
+    // Load prefixes on mount. Empty list means the admin hasn't
+    // configured the new naming feature — modal falls back to the
+    // free-form URL name field.
+    useEffect(() => {
+        if (!isOpen) {
+            return;
+        }
+        fetchPrefixes().then((list) => {
+            setPrefixes(list);
+            if (list.length > 0 && !selectedPrefix) {
+                setSelectedPrefix(list[0].prefix);
+            }
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
+
+    const usingPrefixList = prefixes.length > 0;
+
+    // Live preview of the final channel URL. In prefix mode: prefix +
+    // slugified suffix (or slugified display name when suffix is
+    // blank). In legacy mode: slugified URL name or display name.
+    const previewURL = useMemo(() => {
+        const baseInput = urlName.trim() || displayName;
+        const slug = slugifySuffix(baseInput);
+        if (usingPrefixList) {
+            return selectedPrefix + (slug || 'suffix');
+        }
+        return slug || 'channel-name';
+    }, [urlName, displayName, usingPrefixList, selectedPrefix]);
 
     if (!isOpen) {
         return null;
@@ -66,11 +104,12 @@ export const RequestChannelModal = () => {
         setUrlName('');
         setPurpose('');
         setChannelType('O');
-        setMembers([]);
-        setChannelAdmins([]);
+        setMembersText('');
+        setAdminMembersText('');
         setError('');
         setSuccess('');
         setSubmitting(false);
+        setSelectedPrefix(prefixes[0]?.prefix ?? '');
     };
 
     const close = () => {
@@ -87,14 +126,22 @@ export const RequestChannelModal = () => {
         setSubmitting(true);
         setError('');
 
+        const parseCsvUsernames = (raw: string): string[] => raw.
+            split(',').
+            map((m) => m.trim().replace(/^@/, '')).
+            filter((m) => m.length > 0);
+        const members = parseCsvUsernames(membersText);
+        const adminMembers = parseCsvUsernames(adminMembersText);
+
         const result = await submitChannelRequest({
             team_id: teamId,
             display_name: displayName.trim(),
             name: urlName.trim(),
+            prefix: usingPrefixList ? selectedPrefix : '',
             purpose: purpose.trim(),
             channel_type: channelType,
-            members: members.map((u) => u.username),
-            channel_admins: channelAdmins.map((u) => u.username),
+            members,
+            admin_members: adminMembers,
         });
 
         setSubmitting(false);
@@ -117,7 +164,16 @@ export const RequestChannelModal = () => {
                 onClick={(e) => e.stopPropagation()}
             >
                 <h3 style={{marginTop: 0}}>{'Request a Channel'}</h3>
-                <p style={{opacity: 0.72}}>{'Your request will be sent to an admin for approval.'}</p>
+                <p style={{opacity: 0.72}}>
+                    {'Your request will be sent to an admin for approval. '}
+                    <a
+                        href={`/plugins/${manifest.id}/public/help/help.html`}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                    >
+                        {'Need help?'}
+                    </a>
+                </p>
 
                 {success ? (
                     <div>
@@ -138,6 +194,28 @@ export const RequestChannelModal = () => {
                     </div>
                 ) : (
                     <div>
+                        {usingPrefixList ? (
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-prefix'>{'Domain prefix'}</label>
+                                <select
+                                    id='cr-prefix'
+                                    className='form-control'
+                                    value={selectedPrefix}
+                                    onChange={(e) => setSelectedPrefix(e.target.value)}
+                                >
+                                    {prefixes.map((p) => (
+                                        <option
+                                            key={p.prefix}
+                                            value={p.prefix}
+                                        >
+                                            {p.description ? `${p.prefix}  (${p.description})` : p.prefix}
+                                        </option>
+                                    ))}
+                                </select>
+                                <small style={{opacity: 0.6}}>{'Choose the category for this channel. The final URL is <prefix><suffix>.'}</small>
+                            </div>
+                        ) : null}
+
                         <div style={fieldStyle}>
                             <label htmlFor='cr-display-name'>{'Channel name'}</label>
                             <input
@@ -151,15 +229,20 @@ export const RequestChannelModal = () => {
                         </div>
 
                         <div style={fieldStyle}>
-                            <label htmlFor='cr-url-name'>{'URL name (optional)'}</label>
+                            <label htmlFor='cr-url-name'>
+                                {usingPrefixList ? 'URL suffix (optional)' : 'URL name (optional)'}
+                            </label>
                             <input
                                 id='cr-url-name'
                                 className='form-control'
                                 value={urlName}
                                 maxLength={64}
-                                placeholder='Leave blank to generate from the channel name'
+                                placeholder={usingPrefixList ? 'The part after the prefix — leave blank to generate from the channel name' : 'Leave blank to generate from the channel name'}
                                 onChange={(e) => setUrlName(e.target.value)}
                             />
+                            <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                {'Preview: '}<code>{previewURL}</code>
+                            </small>
                         </div>
 
                         <div style={fieldStyle}>
@@ -187,34 +270,81 @@ export const RequestChannelModal = () => {
                             </select>
                         </div>
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
-                            <UserMultiSelect
-                                teamId={teamId}
-                                selected={members}
-                                onChange={setMembers}
-                            />
-                        </div>
+                        {(() => {
+                            // Build cross-picker badge maps so each
+                            // picker's dropdown shows a "Currently:
+                            // Channel Admin" or "Currently: Member"
+                            // chip next to any user already claimed by
+                            // the sibling picker. Requester sees at a
+                            // glance who is assigned where.
+                            const memberUsernames = membersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+                            const adminUsernames = adminMembersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+                            const badgesForMembersPicker: Record<string, string> = {};
+                            adminUsernames.forEach((u) => {
+                                badgesForMembersPicker[u] = 'Channel Admin';
+                            });
+                            const badgesForAdminsPicker: Record<string, string> = {};
+                            memberUsernames.forEach((u) => {
+                                badgesForAdminsPicker[u] = 'Member';
+                            });
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-admins'>{'Channel admins (optional)'}</label>
-                            <UserMultiSelect
-                                teamId={teamId}
-                                selected={channelAdmins}
-                                onChange={setChannelAdmins}
-                                inputId='cr-admins'
-                                placeholder='Search users to make channel admins'
-                            />
-                            {currentUser && !channelAdmins.some((u) => u.id === currentUser.id) ? (
-                                <button
-                                    type='button'
-                                    style={addSelfStyle}
-                                    onClick={() => setChannelAdmins([...channelAdmins, currentUser])}
-                                >
-                                    {'+ Add me as a channel admin'}
-                                </button>
-                            ) : null}
-                        </div>
+                            // When the requester picks a user in one
+                            // picker, drop them from the sibling if
+                            // they were previously there — a user can
+                            // only have one role at creation time.
+                            // The onChange handlers below implement
+                            // this move-on-select semantics.
+                            return (
+                                <>
+                                    <div style={fieldStyle}>
+                                        <label htmlFor='cr-members'>{'Members to add (optional)'}</label>
+                                        <MemberPicker
+                                            value={membersText}
+                                            teamId={teamId}
+                                            usernameBadges={badgesForMembersPicker}
+                                            placeholder='Type a name — Tab / Enter to add'
+                                            onChange={(newMembers) => {
+                                                setMembersText(newMembers);
+
+                                                // If the user just added
+                                                // was in the admin list,
+                                                // remove them there.
+                                                const newSet = new Set(newMembers.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const stillAdmins = adminUsernames.filter((u) => !newSet.has(u));
+                                                if (stillAdmins.length !== adminUsernames.length) {
+                                                    setAdminMembersText(stillAdmins.join(', '));
+                                                }
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div style={fieldStyle}>
+                                        <label htmlFor='cr-admin-members'>{'Channel Admins to add (optional)'}</label>
+                                        <MemberPicker
+                                            value={adminMembersText}
+                                            teamId={teamId}
+                                            usernameBadges={badgesForAdminsPicker}
+                                            placeholder='Type a name — Tab / Enter to promote to Channel Admin'
+                                            onChange={(newAdmins) => {
+                                                setAdminMembersText(newAdmins);
+
+                                                // If the user just added
+                                                // was in the member list,
+                                                // remove them there.
+                                                const newSet = new Set(newAdmins.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const stillMembers = memberUsernames.filter((u) => !newSet.has(u));
+                                                if (stillMembers.length !== memberUsernames.length) {
+                                                    setMembersText(stillMembers.join(', '));
+                                                }
+                                            }}
+                                        />
+                                        <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                            {'These users are promoted to Channel Admin on the newly-created channel. Users with a "Member" badge in the dropdown are currently in the Members list above — picking them here moves them to Channel Admin.'}
+                                        </small>
+                                    </div>
+                                </>
+                            );
+                        })()}
 
                         {error ? (
                             <div

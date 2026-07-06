@@ -4,10 +4,18 @@ export type ChannelRequestPayload = {
     team_id: string;
     display_name: string;
     name: string;
+
+    // prefix is the selected domain prefix (e.g., "team-") when the
+    // admin has configured a prefix list.
+    prefix?: string;
     purpose: string;
     channel_type: string;
     members: string[];
-    channel_admins: string[];
+
+    // admin_members are usernames the requester is proposing to have
+    // Channel Admin role on the newly-created channel. Server promotes
+    // them via UpdateChannelMemberRoles at creation time.
+    admin_members: string[];
 };
 
 export type ChannelRequestResult = {
@@ -15,15 +23,30 @@ export type ChannelRequestResult = {
     error?: string;
 };
 
-// UserProfile is the minimal shape of a Mattermost user this plugin needs to display and submit
-// a member selection. It mirrors the fields returned by the users autocomplete endpoint.
-export type UserProfile = {
-    id: string;
-    username: string;
-    nickname?: string;
-    first_name?: string;
-    last_name?: string;
+export type ChannelPrefix = {
+    prefix: string;
+    description: string;
+    suffix_regex: string;
 };
+
+// fetchPrefixes returns the admin-configured domain prefix list. Empty
+// array = legacy mode (no dropdown, free-form URL entry).
+export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
+    try {
+        const response = await fetch(`/plugins/${manifest.id}/api/v1/prefixes`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        });
+        if (!response.ok) {
+            return [];
+        }
+        const body = await response.json();
+        return Array.isArray(body) ? body : [];
+    } catch {
+        return [];
+    }
+}
 
 // getCSRFToken reads the CSRF token Mattermost sets as a cookie, required for authenticated
 // state-changing requests to plugin endpoints.
@@ -56,31 +79,4 @@ export async function submitChannelRequest(payload: ChannelRequestPayload): Prom
     }
 
     return body;
-}
-
-// searchUsers queries Mattermost's built-in user autocomplete for members that exist in the
-// current instance. It scopes results to the given team when one is available and returns an empty
-// list on any error so the dropdown degrades gracefully rather than surfacing a hard failure.
-export async function searchUsers(teamId: string, term: string): Promise<UserProfile[]> {
-    const params = new URLSearchParams({name: term, limit: '25'});
-    if (teamId) {
-        params.set('in_team', teamId);
-    }
-
-    const response = await fetch(`/api/v4/users/autocomplete?${params.toString()}`, {
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: {'X-Requested-With': 'XMLHttpRequest'},
-    });
-
-    if (!response.ok) {
-        return [];
-    }
-
-    try {
-        const body = await response.json();
-        return Array.isArray(body?.users) ? (body.users as UserProfile[]) : [];
-    } catch {
-        return [];
-    }
 }
