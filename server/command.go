@@ -33,6 +33,13 @@ func getAutocompleteData() *model.AutocompleteData {
 }
 
 func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	// Requests require at least one configured prefix; without one the
+	// dialog could only ever fail on submit. Tell the user instead of
+	// opening a doomed form.
+	if !p.getConfiguration().UsesPrefixList() {
+		return ephemeralResponse("Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests."), nil
+	}
+
 	if err := p.openRequestDialog(args.TriggerId, args.TeamId); err != nil {
 		p.API.LogError("failed to open channel request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the channel request form. Please try again."), nil

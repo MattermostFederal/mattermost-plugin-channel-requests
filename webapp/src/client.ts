@@ -29,23 +29,22 @@ export type ChannelPrefix = {
     suffix_regex: string;
 };
 
-// fetchPrefixes returns the admin-configured domain prefix list. Empty
-// array = legacy mode (no dropdown, free-form URL entry).
+// fetchPrefixes returns the admin-configured domain prefix list. An empty
+// array means the admin hasn't configured any prefixes ("not configured").
+// A load FAILURE (network error / non-OK status) THROWS so callers can
+// distinguish a transient outage from a genuinely empty config — otherwise
+// a 500 would masquerade as "not configured" and block valid requests.
 export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
-    try {
-        const response = await fetch(`/plugins/${manifest.id}/api/v1/prefixes`, {
-            method: 'GET',
-            credentials: 'same-origin',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-        });
-        if (!response.ok) {
-            return [];
-        }
-        const body = await response.json();
-        return Array.isArray(body) ? body : [];
-    } catch {
-        return [];
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/prefixes`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to load prefixes (${response.status})`);
     }
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
 }
 
 // getCSRFToken reads the CSRF token Mattermost sets as a cookie, required for authenticated

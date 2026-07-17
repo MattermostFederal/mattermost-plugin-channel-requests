@@ -53,6 +53,23 @@ updates:
       # which release-please skips (that's why the eslint 10 bump never
       # landed in the v0.2.0 changelog).
       prefix: "deps(npm)"
+    # Hold webapp-toolchain majors that broke the build and aren't yet
+    # supported by the surrounding ecosystem. Revisit these together when
+    # the ecosystem catches up (fix-forward toolchain migration):
+    #   - typescript 7 (native "tsgo"): removes tsconfig options we use and
+    #     isn't supported by @typescript-eslint.
+    #   - eslint 10: no eslint-plugin-react release supports it.
+    #   - @babel/* 8 + babel-loader 10: ESM-only @babel/core breaks
+    #     babel-loader's require().
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@babel/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "babel-loader"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types:

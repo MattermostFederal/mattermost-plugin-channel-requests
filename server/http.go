@@ -50,20 +50,34 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 	}
 }
 
+// requireUserID returns the authenticated caller's ID from the
+// Mattermost-User-Id header, which the Mattermost server populates from
+// the session — a client cannot forge it. Every handler that acts on
+// behalf of a user MUST derive identity this way rather than trusting an
+// ID in the request body. When the header is absent it writes a 401 and
+// returns ("", false); callers should return immediately on !ok.
+func requireUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID := r.Header.Get("Mattermost-User-Id")
+	if userID == "" {
+		http.Error(w, "not authorized", http.StatusUnauthorized)
+		return "", false
+	}
+	return userID, true
+}
+
 // handleListTeams returns the list of teams the current user can see.
 // Used by the ApprovalChannelPicker component to populate the team
 // dropdown. Any logged-in user gets the list (only sysadmins reach the
 // admin console anyway; MM enforces that at the UI level).
 func (p *Plugin) handleListTeams(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("Mattermost-User-Id")
-	if userID == "" {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return
 	}
 	teams, appErr := p.API.GetTeamsForUser(userID)
 	if appErr != nil {
 		p.API.LogWarn("list-teams failed", "user_id", userID, "error", appErr.Error())
-		writeJSON(w, []any{})
+		http.Error(w, "failed to list teams", http.StatusInternalServerError)
 		return
 	}
 	type teamDTO struct {
@@ -82,9 +96,8 @@ func (p *Plugin) handleListTeams(w http.ResponseWriter, r *http.Request) {
 // can see. Query param: team_id. Filters to public + private channels
 // (excludes DMs/GMs — a DM channel isn't a valid approval destination).
 func (p *Plugin) handleListChannels(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("Mattermost-User-Id")
-	if userID == "" {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return
 	}
 	teamID := r.URL.Query().Get("team_id")
@@ -95,7 +108,7 @@ func (p *Plugin) handleListChannels(w http.ResponseWriter, r *http.Request) {
 	channels, appErr := p.API.GetChannelsForTeamForUser(teamID, userID, false)
 	if appErr != nil {
 		p.API.LogWarn("list-channels failed", "team_id", teamID, "user_id", userID, "error", appErr.Error())
-		writeJSON(w, []any{})
+		http.Error(w, "failed to list channels", http.StatusInternalServerError)
 		return
 	}
 	type channelDTO struct {
@@ -126,9 +139,8 @@ func (p *Plugin) handleListChannels(w http.ResponseWriter, r *http.Request) {
 // members of that team — critical for the "which people can I add to
 // a channel in this team" flow.
 func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("Mattermost-User-Id")
-	if userID == "" {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -138,11 +150,28 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 	}
 	teamID := strings.TrimSpace(r.URL.Query().Get("team_id"))
 
-	// TeamId in UserSearch scopes results to members of that team.
-	// Empty TeamId means "any team the caller can see".
+	// Scope enumeration to a team the caller actually belongs to. The
+	// plugin SearchUsers API runs with admin visibility and no viewer
+	// restriction, so forwarding an arbitrary team_id would let any
+	// logged-in user harvest the usernames/real-names of teams they
+	// aren't in. Requiring caller membership limits results to rosters
+	// the caller can already see, which is exactly the set they'd add to
+	// a channel in that team.
+	if teamID == "" {
+		writeJSON(w, []any{})
+		return
+	}
+	// GetTeamMember returns soft-deleted rows too, so a former member (who
+	// left the team) would still pass a bare error check. Require an active
+	// membership before scoping the search to this team.
+	member, appErr := p.API.GetTeamMember(teamID, userID)
+	if appErr != nil || member == nil || member.DeleteAt != 0 {
+		writeJSON(w, []any{})
+		return
+	}
+
 	// Limit MUST be non-zero — MM's UserSearch treats Limit=0 as
-	// "return no results" (not "unlimited"), which was the reason
-	// this endpoint used to silently return []. Set Limit to a
+	// "return no results" (not "unlimited"). Set Limit to a
 	// slightly-larger cap than our display cap of 20 so we still
 	// have headroom after post-filtering already-selected users.
 	users, appErr := p.API.SearchUsers(&model.UserSearch{
@@ -153,7 +182,7 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 	})
 	if appErr != nil {
 		p.API.LogWarn("user autocomplete failed", "q", q, "team_id", teamID, "error", appErr.Error())
-		writeJSON(w, []any{})
+		http.Error(w, "search failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -164,12 +193,11 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 		FirstName string `json:"first_name"`
 		LastName  string `json:"last_name"`
 	}
-	max := min(len(users), 20)
-	out := make([]userDTO, 0, max)
-	for i, u := range users {
-		if i >= max {
-			break
-		}
+	if len(users) > 20 {
+		users = users[:20]
+	}
+	out := make([]userDTO, 0, len(users))
+	for _, u := range users {
 		out = append(out, userDTO{
 			ID:        u.Id,
 			Username:  u.Username,
@@ -186,8 +214,7 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 // (any logged-in user can see it — same visibility as the plugin
 // settings page shows anyway).
 func (p *Plugin) handlePrefixes(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Mattermost-User-Id") == "" {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	if _, ok := requireUserID(w, r); !ok {
 		return
 	}
 	config := p.getConfiguration()
@@ -207,70 +234,53 @@ func (p *Plugin) handlePrefixes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// openRequestDialog opens the interactive channel request dialog for the slash command entry point.
-//
-// When the admin has configured a prefix list, this injects a "Domain
-// prefix" dropdown as the first element and reframes the URL field as
-// "URL suffix" so the requester knows they're only providing the part
-// after the prefix. When no prefix list is set, the dialog matches
-// the legacy layout (Channel name / URL name / Purpose / Visibility /
-// Members).
+// openRequestDialog opens the interactive channel request dialog for the
+// slash command entry point. Callers must ensure a prefix list is
+// configured (ExecuteCommand guards this) — the dialog always presents a
+// "Domain prefix" dropdown and frames the URL field as a "URL suffix".
 func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 	config := p.getConfiguration()
 
-	// Build the elements slice conditionally so the dialog shape adapts
-	// to whichever naming-enforcement mode the admin picked.
-	var elements []model.DialogElement
-
-	// URL field HelpText + naming field labels differ between modes so
-	// requesters get accurate guidance in the dialog itself.
-	urlFieldName := "URL name"
-	urlFieldHelp := "Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name."
-
-	if config.UsesPrefixList() {
-		prefixOptions := make([]*model.PostActionOptions, 0, len(config.prefixes))
-		for _, p := range config.prefixes {
-			label := p.Prefix
-			if p.Description != "" {
-				label = fmt.Sprintf("%s  (%s)", p.Prefix, p.Description)
-			}
-			prefixOptions = append(prefixOptions, &model.PostActionOptions{Text: label, Value: p.Prefix})
+	prefixOptions := make([]*model.PostActionOptions, 0, len(config.prefixes))
+	for _, pf := range config.prefixes {
+		label := pf.Prefix
+		if pf.Description != "" {
+			label = fmt.Sprintf("%s  (%s)", pf.Prefix, pf.Description)
 		}
-		elements = append(elements, model.DialogElement{
+		prefixOptions = append(prefixOptions, &model.PostActionOptions{Text: label, Value: pf.Prefix})
+	}
+
+	elements := []model.DialogElement{
+		{
 			DisplayName: "Domain prefix",
 			Name:        fieldPrefix,
 			Type:        "select",
 			Options:     prefixOptions,
 			HelpText:    "Pick the category for this channel. The final URL is <prefix><suffix>.",
-		})
-		urlFieldName = "URL suffix"
-		urlFieldHelp = "The part AFTER the prefix. Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name."
-	}
-
-	elements = append(elements,
-		model.DialogElement{
+		},
+		{
 			DisplayName: "Channel name",
 			Name:        fieldDisplayName,
 			Type:        "text",
 			Placeholder: "e.g. Marketing Team",
 			MaxLength:   64,
 		},
-		model.DialogElement{
-			DisplayName: urlFieldName,
+		{
+			DisplayName: "URL suffix",
 			Name:        fieldName,
 			Type:        "text",
 			Optional:    true,
-			HelpText:    urlFieldHelp,
+			HelpText:    "The part AFTER the prefix. Lowercase letters, numbers, and hyphens. Leave blank to generate from the channel name.",
 			MaxLength:   64,
 		},
-		model.DialogElement{
+		{
 			DisplayName: "Purpose",
 			Name:        fieldPurpose,
 			Type:        "textarea",
 			Optional:    true,
 			MaxLength:   250,
 		},
-		model.DialogElement{
+		{
 			DisplayName: "Visibility",
 			Name:        fieldType,
 			Type:        "radio",
@@ -280,7 +290,7 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 				{Text: "Private", Value: channelTypePrivate},
 			},
 		},
-		model.DialogElement{
+		{
 			DisplayName: "Members to add",
 			Name:        fieldMembers,
 			Type:        "select",
@@ -289,7 +299,7 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 			Optional:    true,
 			HelpText:    "These users are added to the channel once it's approved.",
 		},
-		model.DialogElement{
+		{
 			DisplayName: "Channel admins",
 			Name:        fieldAdmins,
 			Type:        "select",
@@ -298,7 +308,7 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 			Optional:    true,
 			HelpText:    "These users are made channel admins once the channel is approved.",
 		},
-	)
+	}
 
 	dialog := model.Dialog{
 		CallbackId:       dialogCallbackID,
@@ -320,6 +330,14 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 }
 
 func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
+	// Identity comes from the authenticated header, NOT submission.UserId
+	// in the body — trusting the body would let anyone impersonate a
+	// System Admin (or auto-approve user) and bypass approval.
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
 	var submission model.SubmitDialogRequest
 	if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -336,7 +354,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := requestInput{
-		RequesterID: submission.UserId,
+		RequesterID: userID,
 		TeamID:      teamID,
 		DisplayName: submissionString(submission.Submission, fieldDisplayName),
 		Name:        submissionString(submission.Submission, fieldName),
@@ -356,7 +374,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Acknowledge success with an ephemeral message in the channel the dialog was opened from.
-	p.API.SendEphemeralPost(submission.UserId, &model.Post{
+	p.API.SendEphemeralPost(userID, &model.Post{
 		ChannelId: submission.ChannelId,
 		Message:   message,
 	})
@@ -369,7 +387,8 @@ type webappCreateRequest struct {
 	DisplayName string `json:"display_name"`
 	Name        string `json:"name"`
 	// Prefix is the selected domain prefix from the modal's dropdown
-	// (e.g., "team-"). Empty when the plugin is in legacy mode.
+	// (e.g., "team-"). Required — the server rejects requests without a
+	// configured prefix.
 	Prefix       string   `json:"prefix"`
 	Purpose      string   `json:"purpose"`
 	ChannelType  string   `json:"channel_type"`
@@ -378,9 +397,8 @@ type webappCreateRequest struct {
 }
 
 func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
-	userID := r.Header.Get("Mattermost-User-Id")
-	if userID == "" {
-		http.Error(w, "not authorized", http.StatusUnauthorized)
+	userID, ok := requireUserID(w, r)
+	if !ok {
 		return
 	}
 
@@ -421,6 +439,14 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {
+	// Identity comes from the authenticated header, NOT request.UserId in
+	// the body — trusting the body would let anyone who can read a pending
+	// request_id forge a System Admin user_id and approve/deny requests.
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
 	var request model.PostActionIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -429,7 +455,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 
 	// Approvers: System Admins always. Team Admins of the approval team
 	// too, if the admin has opted in via AllowTeamAdminApprovers.
-	actingUser, appErr := p.API.GetUser(request.UserId)
+	actingUser, appErr := p.API.GetUser(userID)
 	if appErr != nil {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
 		return
@@ -440,13 +466,34 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 	}
 
 	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, err := p.loadRequest(requestID)
+	req, rawReq, err := p.loadRequest(requestID)
 	if err != nil {
 		p.API.LogError("failed to load channel request", "error", err.Error())
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
 		return
 	}
 	if req == nil {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
+		})
+		return
+	}
+
+	// Atomically claim the request before acting on it. Two admins
+	// clicking Approve (or one Approve + one Deny) at nearly the same
+	// time both load a non-nil req; without an atomic claim both would
+	// proceed, creating duplicate channels or approving-and-denying the
+	// same request. Compare against the exact bytes we read so the claim
+	// is robust regardless of how the request struct is marshaled.
+	// Whoever wins owns the outcome; the loser is told it was already
+	// handled.
+	claimed, claimErr := p.API.KVCompareAndDelete(kvRequestPrefix+req.ID, rawReq)
+	if claimErr != nil {
+		p.API.LogError("failed to claim channel request", "error", claimErr.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
+		return
+	}
+	if !claimed {
 		writeJSON(w, model.PostActionIntegrationResponse{
 			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
 		})
@@ -461,7 +508,17 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		channel, createErr := p.createChannelForRequest(req)
 		if createErr != nil {
 			p.API.LogError("failed to create channel on approval", "error", createErr.Error())
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel: %s", createErr.Error())})
+			// The claim already removed the request from the KV store.
+			// Restore it so a transient creation failure doesn't silently
+			// drop the pending request. If the restore ALSO fails the
+			// request is genuinely lost, so tell the approver to have the
+			// requester resubmit rather than implying a retry will work.
+			if restoreErr := p.storeRequest(req); restoreErr != nil {
+				p.API.LogError("failed to restore request after create failure", "error", restoreErr.Error())
+				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
+				return
+			}
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
 			return
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
@@ -478,10 +535,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
 	}
 
-	if appErr := p.API.KVDelete(kvRequestPrefix + req.ID); appErr != nil {
-		p.API.LogWarn("failed to delete handled request", "error", appErr.Error())
-	}
-
+	// The KV key was already removed by the atomic claim above.
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
@@ -510,6 +564,11 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 // name that doesn't resolve so the requester sees a clear "unknown
 // user: X" instead of a silent partial add.
 func (p *Plugin) resolveUsernameList(usernames []string) ([]string, error) {
+	// Bound the list before the per-username lookups so a crafted request
+	// can't fan out into thousands of synchronous GetUserByUsername calls.
+	if len(usernames) > maxMembersPerList {
+		return nil, errors.Errorf("too many users: at most %d per list", maxMembersPerList)
+	}
 	out := make([]string, 0, len(usernames))
 	for _, username := range usernames {
 		username = strings.TrimPrefix(strings.TrimSpace(username), "@")

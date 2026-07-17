@@ -39,7 +39,7 @@ type channelPrefix struct {
 //
 // Field grouping (matches the System Console layout):
 //  1. Approval routing (team + channel slugs)
-//  2. Naming enforcement (structured prefix list + legacy fallback)
+//  2. Naming enforcement (structured prefix list — required)
 //  3. Approver policy (who can approve, auto-approve list)
 //  4. Notification preferences (DM + audit channel + welcome post)
 //  5. Rate limits
@@ -76,9 +76,10 @@ type configuration struct {
 	autoApproveUserIDs []string
 }
 
-// UsesPrefixList reports whether the admin has configured the new
-// prefix-list flow. When true, request handling switches to the
-// dropdown-based UX; when false, the legacy template + regex apply.
+// UsesPrefixList reports whether the admin has configured at least one
+// channel prefix. A prefix is REQUIRED to submit a request: when false,
+// the slash command and modal show a "not configured" message and
+// resolveChannelName returns an error.
 func (c *configuration) UsesPrefixList() bool {
 	return len(c.prefixes) > 0
 }
@@ -89,24 +90,6 @@ func (c *configuration) Prefixes() []channelPrefix {
 	out := make([]channelPrefix, len(c.prefixes))
 	copy(out, c.prefixes)
 	return out
-}
-
-// Clone shallow copies the configuration. Because the configuration contains only value types, a
-// shallow copy is sufficient.
-func (c *configuration) Clone() *configuration {
-	clone := *c
-	return &clone
-}
-
-// IsValid reports whether the configuration has everything the plugin needs to route requests.
-func (c *configuration) IsValid() error {
-	if strings.TrimSpace(c.ApprovalTeam) == "" {
-		return errors.New("the Approval Team is not configured")
-	}
-	if strings.TrimSpace(c.ApprovalChannel) == "" {
-		return errors.New("the Approval Channel is not configured")
-	}
-	return nil
 }
 
 // AutoApproveContains reports whether the given user ID is in the
@@ -283,7 +266,11 @@ func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePai
 		if n > 32 {
 			n = 32
 		}
-		expr := fmt.Sprintf("[a-z0-9-]{2,%d}", n)
+		// Anchor the pattern so it matches the whole suffix. This lets
+		// callers use MatchString directly and avoids leftmost-first
+		// surprises (e.g. an alternation like "dev|development" wrongly
+		// matching only the "dev" prefix of "development").
+		expr := fmt.Sprintf("^(?:[a-z0-9-]{2,%d})$", n)
 		re, err := regexp.Compile(expr)
 		if err != nil {
 			// Shouldn't happen — regex is generated from a bounded int.
@@ -294,8 +281,11 @@ func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePai
 		return re, third
 	}
 
-	// Legacy regex path.
-	re, err := regexp.Compile(third)
+	// Legacy regex path. Anchor the admin-supplied pattern so it must
+	// match the entire suffix — admins write patterns like [a-z0-9-]{2,16}
+	// expecting "the suffix must be exactly this shape". Wrapping in a
+	// non-capturing group keeps top-level alternations intact.
+	re, err := regexp.Compile("^(?:" + third + ")$")
 	if err != nil {
 		logErr("channel-requests: invalid suffix regex for prefix; falling back to no-pattern",
 			"prefix", prefix, "pattern", third, "error", err.Error())

@@ -1,20 +1,11 @@
 import manifest from 'manifest';
 import React, {useEffect, useRef, useState} from 'react';
 
-// debug logs when localStorage.PLUGIN_CHANNEL_REQUESTS_DEBUG === "true"
-// so we can trace autocomplete behavior in production without a code
-// change. Enable via DevTools:
-//   localStorage.setItem('PLUGIN_CHANNEL_REQUESTS_DEBUG', 'true')
-function debug(...args: unknown[]): void {
-    try {
-        if (typeof localStorage !== 'undefined' && localStorage.getItem('PLUGIN_CHANNEL_REQUESTS_DEBUG') === 'true') {
-            // eslint-disable-next-line no-console
-            console.debug('[member-picker]', ...args);
-        }
-    } catch {
-        // localStorage blocked in some sandboxes; ignore.
-    }
-}
+import {makeDebug} from './debug';
+
+// Traces autocomplete behavior when localStorage
+// PLUGIN_CHANNEL_REQUESTS_DEBUG === "true". See ./debug.
+const debug = makeDebug('member-picker');
 
 // MemberPicker replaces the "Comma-separated usernames" text field in
 // the request modal with a real autocomplete-driven picker.
@@ -56,17 +47,10 @@ type Props = {
     // Candidates with a badge are grouped into a "CURRENT ASSIGNMENTS"
     // section at the top of the dropdown, above "AVAILABLE".
     usernameBadges?: Record<string, string>;
-
-    // usernamesToExclude is a set of usernames to hide from the
-    // dropdown entirely (typically because they're in this picker's
-    // OWN selection — shown as pills — and would be redundant).
-    // The badged-elsewhere set should NOT go here (use usernameBadges
-    // instead so the user still sees them).
-    usernamesToExclude?: string[];
 };
 
 // Parse comma-separated usernames -> array of trimmed non-empty names.
-function parseUsernames(v: string): string[] {
+export function parseUsernames(v: string): string[] {
     return v.
         split(',').
         map((s) => s.trim().replace(/^@/, '')).
@@ -141,7 +125,7 @@ const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) =>
     );
 };
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges, usernamesToExclude}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -193,6 +177,11 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             setCandidates([]);
             return undefined;
         }
+
+        // Ignore a superseded in-flight fetch: when the query changes we
+        // clear the timer, but a request already awaiting the network must
+        // not apply its (stale) results over the newer query's.
+        let cancelled = false;
         const timer = window.setTimeout(async () => {
             try {
                 const params = new URLSearchParams({q});
@@ -205,31 +194,41 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                     credentials: 'same-origin',
                     headers: {'X-Requested-With': 'XMLHttpRequest'},
                 });
+                if (cancelled) {
+                    return;
+                }
                 if (!response.ok) {
                     debug('response not ok', {status: response.status});
                     setCandidates([]);
                     return;
                 }
                 const users: User[] = await response.json();
+                if (cancelled) {
+                    return;
+                }
                 debug('got users', {count: users.length, usernames: users.map((u) => u.username)});
 
-                // Exclude users:
-                //   - already in this picker's OWN selection (shown as pills)
-                //   - explicitly excluded by the parent (usernamesToExclude)
-                // NOT excluded: badged users. Those stay visible so
-                // the requester can see WHO is already assigned where.
-                const excluded = new Set([...selected, ...(usernamesToExclude ?? [])]);
+                // Exclude users already in this picker's OWN selection
+                // (shown as pills). NOT excluded: badged users — those
+                // stay visible so the requester can see WHO is already
+                // assigned where.
+                const excluded = new Set(selected);
                 const filtered = users.filter((u) => !excluded.has(u.username));
                 debug('after exclude', {kept: filtered.length});
                 setCandidates(filtered);
                 setHighlightIndex(0);
             } catch (err) {
-                debug('fetch threw', {err: String(err)});
-                setCandidates([]);
+                if (!cancelled) {
+                    debug('fetch threw', {err: String(err)});
+                    setCandidates([]);
+                }
             }
         }, 200);
-        return () => window.clearTimeout(timer);
-    }, [query, selected, teamId, usernamesToExclude]);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [query, selected, teamId]);
 
     // Close dropdown when clicking outside.
     useEffect(() => {
@@ -260,10 +259,22 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         commit(selected.filter((u) => u !== username));
     };
 
+    // Badged (assigned-elsewhere) candidates render in a section ABOVE the
+    // available ones. highlightIndex is a flat index across that displayed
+    // order, so keyboard selection MUST index this same ordered list — not
+    // the raw `candidates` array — or Enter/Tab would add the wrong user
+    // whenever a badged candidate sorts ahead of an unbadged one. These
+    // three are the single source of truth for that order; the dropdown
+    // renders `assigned` then `available` to match.
+    const badges = usernameBadges ?? {};
+    const assigned = candidates.filter((u) => badges[u.username]);
+    const available = candidates.filter((u) => !badges[u.username]);
+    const orderedCandidates = [...assigned, ...available];
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         // With no visible dropdown, Enter still accepts the literal
         // typed name (useful for offline / unknown-user fallback).
-        if (!showDropdown || candidates.length === 0) {
+        if (!showDropdown || orderedCandidates.length === 0) {
             if (e.key === 'Enter' && query.trim()) {
                 e.preventDefault();
                 addUser(query.trim().replace(/^@/, ''));
@@ -272,7 +283,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         }
         if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setHighlightIndex((i) => Math.min(i + 1, candidates.length - 1));
+            setHighlightIndex((i) => Math.min(i + 1, orderedCandidates.length - 1));
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             setHighlightIndex((i) => Math.max(i - 1, 0));
@@ -281,7 +292,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             // behavior as Enter. Prevents Tab from bouncing focus out
             // of the picker mid-selection.
             e.preventDefault();
-            const u = candidates[highlightIndex];
+            const u = orderedCandidates[highlightIndex];
             if (u) {
                 addUser(u.username);
             }
@@ -393,20 +404,12 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                     }}
                 >
                     {(() => {
-                        // Split candidates into two visual sections
-                        // (matching MM's mention dropdown pattern):
-                        //   1. "Current assignments" — users already
-                        //      badged by a sibling picker. Shown FIRST
-                        //      so the requester can see who's already
-                        //      assigned to what before adding more.
-                        //   2. "Available to add" — the default.
-                        //
-                        // Rendering keeps highlightIndex in-sync by
-                        // using a flat index across both sections.
-                        const badges = usernameBadges ?? {};
-                        const assigned = candidates.filter((u) => badges[u.username]);
-                        const available = candidates.filter((u) => !badges[u.username]);
-
+                        // Render the two visual sections (matching MM's
+                        // mention dropdown pattern): "Current assignments"
+                        // (badged, shown FIRST) then "Available to add".
+                        // assigned/available/orderedCandidates are computed
+                        // once above; flat indices here match that order so
+                        // highlightIndex stays in sync with keyboard nav.
                         const renderRow = (u: User, flatIndex: number) => {
                             const badge = badges[u.username];
                             return (
