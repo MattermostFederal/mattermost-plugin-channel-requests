@@ -1,10 +1,10 @@
 import manifest from 'manifest';
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import {fetchPrefixes, submitChannelRequest} from './client';
 import type {ChannelPrefix} from './client';
-import {MemberPicker} from './MemberPicker';
+import {MemberPicker, parseUsernames} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
 
@@ -63,37 +63,58 @@ export const RequestChannelModal = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [prefixes, setPrefixes] = useState<ChannelPrefix[]>([]);
+    const [prefixesLoaded, setPrefixesLoaded] = useState(false);
+    const [prefixError, setPrefixError] = useState(false);
     const [selectedPrefix, setSelectedPrefix] = useState('');
 
-    // Load prefixes on mount. Empty list means the admin hasn't
-    // configured the new naming feature — modal falls back to the
-    // free-form URL name field.
+    // Generation counter so only the latest fetch updates state. Rapid
+    // Retry clicks, or close-then-reopen while a fetch is in flight, would
+    // otherwise let a stale success/error overwrite the current one.
+    const loadGenRef = useRef(0);
+
+    // Load the admin-configured prefixes. An empty list means "not
+    // configured"; a fetch failure sets prefixError so the modal shows a
+    // retry instead of the misleading "not configured" notice (a transient
+    // 500 must not look like an unconfigured plugin).
+    const loadPrefixes = () => {
+        const gen = ++loadGenRef.current;
+        setPrefixError(false);
+        setPrefixesLoaded(false);
+        fetchPrefixes().then((list) => {
+            if (gen !== loadGenRef.current) {
+                return;
+            }
+            setPrefixes(list);
+            setPrefixesLoaded(true);
+            if (list.length > 0) {
+                setSelectedPrefix((cur) => cur || list[0].prefix);
+            }
+        }).catch(() => {
+            if (gen !== loadGenRef.current) {
+                return;
+            }
+            setPrefixError(true);
+            setPrefixesLoaded(true);
+        });
+    };
+
     useEffect(() => {
         if (!isOpen) {
             return;
         }
-        fetchPrefixes().then((list) => {
-            setPrefixes(list);
-            if (list.length > 0 && !selectedPrefix) {
-                setSelectedPrefix(list[0].prefix);
-            }
-        });
+        loadPrefixes();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
     const usingPrefixList = prefixes.length > 0;
 
-    // Live preview of the final channel URL. In prefix mode: prefix +
-    // slugified suffix (or slugified display name when suffix is
-    // blank). In legacy mode: slugified URL name or display name.
+    // Live preview of the final channel URL: prefix + slugified suffix
+    // (or slugified display name when the suffix field is blank).
     const previewURL = useMemo(() => {
         const baseInput = urlName.trim() || displayName;
         const slug = slugifySuffix(baseInput);
-        if (usingPrefixList) {
-            return selectedPrefix + (slug || 'suffix');
-        }
-        return slug || 'channel-name';
-    }, [urlName, displayName, usingPrefixList, selectedPrefix]);
+        return selectedPrefix + (slug || 'suffix');
+    }, [urlName, displayName, selectedPrefix]);
 
     if (!isOpen) {
         return null;
@@ -110,6 +131,12 @@ export const RequestChannelModal = () => {
         setSuccess('');
         setSubmitting(false);
         setSelectedPrefix(prefixes[0]?.prefix ?? '');
+
+        // Invalidate any in-flight fetch and force a fresh load next open so
+        // a stale loaded/error state doesn't flash before the new fetch.
+        loadGenRef.current++;
+        setPrefixesLoaded(false);
+        setPrefixError(false);
     };
 
     const close = () => {
@@ -126,32 +153,34 @@ export const RequestChannelModal = () => {
         setSubmitting(true);
         setError('');
 
-        const parseCsvUsernames = (raw: string): string[] => raw.
-            split(',').
-            map((m) => m.trim().replace(/^@/, '')).
-            filter((m) => m.length > 0);
-        const members = parseCsvUsernames(membersText);
-        const adminMembers = parseCsvUsernames(adminMembersText);
+        const members = parseUsernames(membersText);
+        const adminMembers = parseUsernames(adminMembersText);
 
-        const result = await submitChannelRequest({
-            team_id: teamId,
-            display_name: displayName.trim(),
-            name: urlName.trim(),
-            prefix: usingPrefixList ? selectedPrefix : '',
-            purpose: purpose.trim(),
-            channel_type: channelType,
-            members,
-            admin_members: adminMembers,
-        });
+        try {
+            const result = await submitChannelRequest({
+                team_id: teamId,
+                display_name: displayName.trim(),
+                name: urlName.trim(),
+                prefix: selectedPrefix,
+                purpose: purpose.trim(),
+                channel_type: channelType,
+                members,
+                admin_members: adminMembers,
+            });
 
-        setSubmitting(false);
+            if (result.error) {
+                setError(result.error);
+                return;
+            }
 
-        if (result.error) {
-            setError(result.error);
-            return;
+            setSuccess(result.message || 'Your channel request has been submitted.');
+        } catch {
+            // Network failure or unexpected throw — surface it instead of
+            // leaving the button stuck on "Submitting…".
+            setError('Could not reach the server. Please check your connection and try again.');
+        } finally {
+            setSubmitting(false);
         }
-
-        setSuccess(result.message || 'Your channel request has been submitted.');
     };
 
     return (
@@ -175,26 +204,79 @@ export const RequestChannelModal = () => {
                     </a>
                 </p>
 
-                {success ? (
-                    <div>
-                        <div
-                            className='alert alert-success'
-                            style={{marginBottom: 16}}
-                        >
-                            {success}
-                        </div>
-                        <div style={{textAlign: 'right'}}>
-                            <button
-                                className='btn btn-primary'
-                                onClick={close}
-                            >
-                                {'Close'}
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <div>
-                        {usingPrefixList ? (
+                {(() => {
+                    if (success) {
+                        return (
+                            <div>
+                                <div
+                                    className='alert alert-success'
+                                    style={{marginBottom: 16}}
+                                >
+                                    {success}
+                                </div>
+                                <div style={{textAlign: 'right'}}>
+                                    <button
+                                        className='btn btn-primary'
+                                        onClick={close}
+                                    >
+                                        {'Close'}
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    }
+                    if (!prefixesLoaded) {
+                        return <div style={{opacity: 0.7}}>{'Loading…'}</div>;
+                    }
+                    if (prefixError) {
+                        return (
+                            <div>
+                                <div
+                                    className='alert alert-danger'
+                                    style={{marginBottom: 16}}
+                                >
+                                    {'Could not load channel request settings. Please try again.'}
+                                </div>
+                                <div style={{textAlign: 'right'}}>
+                                    <button
+                                        className='btn btn-tertiary'
+                                        style={{marginRight: 8}}
+                                        onClick={close}
+                                    >
+                                        {'Close'}
+                                    </button>
+                                    <button
+                                        className='btn btn-primary'
+                                        onClick={loadPrefixes}
+                                    >
+                                        {'Retry'}
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    }
+                    if (!usingPrefixList) {
+                        return (
+                            <div>
+                                <div
+                                    className='alert alert-warning'
+                                    style={{marginBottom: 16}}
+                                >
+                                    {'Channel requests aren’t configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests.'}
+                                </div>
+                                <div style={{textAlign: 'right'}}>
+                                    <button
+                                        className='btn btn-primary'
+                                        onClick={close}
+                                    >
+                                        {'Close'}
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    }
+                    return (
+                        <div>
                             <div style={fieldStyle}>
                                 <label htmlFor='cr-prefix'>{'Domain prefix'}</label>
                                 <select
@@ -210,75 +292,72 @@ export const RequestChannelModal = () => {
                                         >
                                             {p.description ? `${p.prefix}  (${p.description})` : p.prefix}
                                         </option>
-                                    ))}
+                                ))}
                                 </select>
                                 <small style={{opacity: 0.6}}>{'Choose the category for this channel. The final URL is <prefix><suffix>.'}</small>
                             </div>
-                        ) : null}
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-display-name'>{'Channel name'}</label>
-                            <input
-                                id='cr-display-name'
-                                className='form-control'
-                                value={displayName}
-                                maxLength={64}
-                                placeholder='e.g. Marketing Team'
-                                onChange={(e) => setDisplayName(e.target.value)}
-                            />
-                        </div>
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-display-name'>{'Channel name'}</label>
+                                <input
+                                    id='cr-display-name'
+                                    className='form-control'
+                                    value={displayName}
+                                    maxLength={64}
+                                    placeholder='e.g. Marketing Team'
+                                    onChange={(e) => setDisplayName(e.target.value)}
+                                />
+                            </div>
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-url-name'>
-                                {usingPrefixList ? 'URL suffix (optional)' : 'URL name (optional)'}
-                            </label>
-                            <input
-                                id='cr-url-name'
-                                className='form-control'
-                                value={urlName}
-                                maxLength={64}
-                                placeholder={usingPrefixList ? 'The part after the prefix — leave blank to generate from the channel name' : 'Leave blank to generate from the channel name'}
-                                onChange={(e) => setUrlName(e.target.value)}
-                            />
-                            <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
-                                {'Preview: '}<code>{previewURL}</code>
-                            </small>
-                        </div>
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-url-name'>{'URL suffix (optional)'}</label>
+                                <input
+                                    id='cr-url-name'
+                                    className='form-control'
+                                    value={urlName}
+                                    maxLength={64}
+                                    placeholder='The part after the prefix — leave blank to generate from the channel name'
+                                    onChange={(e) => setUrlName(e.target.value)}
+                                />
+                                <small style={{opacity: 0.6, display: 'block', marginTop: 4}}>
+                                    {'Preview: '}<code>{previewURL}</code>
+                                </small>
+                            </div>
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-purpose'>{'Purpose (optional)'}</label>
-                            <textarea
-                                id='cr-purpose'
-                                className='form-control'
-                                value={purpose}
-                                maxLength={250}
-                                rows={2}
-                                onChange={(e) => setPurpose(e.target.value)}
-                            />
-                        </div>
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-purpose'>{'Purpose (optional)'}</label>
+                                <textarea
+                                    id='cr-purpose'
+                                    className='form-control'
+                                    value={purpose}
+                                    maxLength={250}
+                                    rows={2}
+                                    onChange={(e) => setPurpose(e.target.value)}
+                                />
+                            </div>
 
-                        <div style={fieldStyle}>
-                            <label htmlFor='cr-type'>{'Visibility'}</label>
-                            <select
-                                id='cr-type'
-                                className='form-control'
-                                value={channelType}
-                                onChange={(e) => setChannelType(e.target.value)}
-                            >
-                                <option value='O'>{'Public'}</option>
-                                <option value='P'>{'Private'}</option>
-                            </select>
-                        </div>
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-type'>{'Visibility'}</label>
+                                <select
+                                    id='cr-type'
+                                    className='form-control'
+                                    value={channelType}
+                                    onChange={(e) => setChannelType(e.target.value)}
+                                >
+                                    <option value='O'>{'Public'}</option>
+                                    <option value='P'>{'Private'}</option>
+                                </select>
+                            </div>
 
-                        {(() => {
+                            {(() => {
                             // Build cross-picker badge maps so each
                             // picker's dropdown shows a "Currently:
                             // Channel Admin" or "Currently: Member"
                             // chip next to any user already claimed by
                             // the sibling picker. Requester sees at a
                             // glance who is assigned where.
-                            const memberUsernames = membersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
-                            const adminUsernames = adminMembersText.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+                            const memberUsernames = parseUsernames(membersText);
+                            const adminUsernames = parseUsernames(adminMembersText);
                             const badgesForMembersPicker: Record<string, string> = {};
                             adminUsernames.forEach((u) => {
                                 badgesForMembersPicker[u] = 'Channel Admin';
@@ -309,7 +388,7 @@ export const RequestChannelModal = () => {
                                                 // If the user just added
                                                 // was in the admin list,
                                                 // remove them there.
-                                                const newSet = new Set(newMembers.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const newSet = new Set(parseUsernames(newMembers));
                                                 const stillAdmins = adminUsernames.filter((u) => !newSet.has(u));
                                                 if (stillAdmins.length !== adminUsernames.length) {
                                                     setAdminMembersText(stillAdmins.join(', '));
@@ -331,7 +410,7 @@ export const RequestChannelModal = () => {
                                                 // If the user just added
                                                 // was in the member list,
                                                 // remove them there.
-                                                const newSet = new Set(newAdmins.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean));
+                                                const newSet = new Set(parseUsernames(newAdmins));
                                                 const stillMembers = memberUsernames.filter((u) => !newSet.has(u));
                                                 if (stillMembers.length !== memberUsernames.length) {
                                                     setMembersText(stillMembers.join(', '));
@@ -346,34 +425,35 @@ export const RequestChannelModal = () => {
                             );
                         })()}
 
-                        {error ? (
-                            <div
-                                className='alert alert-danger'
-                                style={{marginBottom: 16}}
-                            >
-                                {error}
-                            </div>
+                            {error ? (
+                                <div
+                                    className='alert alert-danger'
+                                    style={{marginBottom: 16}}
+                                >
+                                    {error}
+                                </div>
                         ) : null}
 
-                        <div style={{textAlign: 'right'}}>
-                            <button
-                                className='btn btn-tertiary'
-                                style={{marginRight: 8}}
-                                onClick={close}
-                                disabled={submitting}
-                            >
-                                {'Cancel'}
-                            </button>
-                            <button
-                                className='btn btn-primary'
-                                onClick={submit}
-                                disabled={submitting}
-                            >
-                                {submitting ? 'Submitting…' : 'Submit request'}
-                            </button>
+                            <div style={{textAlign: 'right'}}>
+                                <button
+                                    className='btn btn-tertiary'
+                                    style={{marginRight: 8}}
+                                    onClick={close}
+                                    disabled={submitting}
+                                >
+                                    {'Cancel'}
+                                </button>
+                                <button
+                                    className='btn btn-primary'
+                                    onClick={submit}
+                                    disabled={submitting}
+                                >
+                                    {submitting ? 'Submitting…' : 'Submit request'}
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    );
+                })()}
             </div>
         </div>
     );

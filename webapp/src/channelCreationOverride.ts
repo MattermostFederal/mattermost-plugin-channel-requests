@@ -1,5 +1,6 @@
 import type {Store} from 'redux';
 
+import {makeDebug} from './debug';
 import {openRequestModal} from './store';
 
 // Mattermost exposes no plugin API to modify the sidebar "+" dropdown,
@@ -27,7 +28,6 @@ const NATIVE_ITEM_ID = 'createNewChannelMenuItem';
 const NATIVE_LABEL = 'Create new channel';
 const REQUEST_LABEL = 'Request new channel';
 const INJECTED_MARK = 'data-mm-plugin-channel-requests-injected';
-const DEBUG_LS_KEY = 'PLUGIN_CHANNEL_REQUESTS_DEBUG';
 
 const SIBLING_LABELS = [
     'Browse channels',
@@ -49,16 +49,9 @@ type MinimalState = {
     };
 };
 
-function debug(...args: unknown[]): void {
-    try {
-        if (typeof localStorage !== 'undefined' && localStorage.getItem(DEBUG_LS_KEY) === 'true') {
-            // eslint-disable-next-line no-console
-            console.debug('[channel-requests]', ...args);
-        }
-    } catch {
-        // localStorage may throw in some sandbox contexts; ignore.
-    }
-}
+// Traces override behavior when localStorage
+// PLUGIN_CHANNEL_REQUESTS_DEBUG === "true". See ./debug.
+const debug = makeDebug('channel-requests');
 
 function isCurrentUserAdmin(store: Store): boolean {
     const state = store.getState() as MinimalState;
@@ -241,9 +234,21 @@ export function installChannelCreationOverride(store: Store): void {
     // Throttle: coalesce bursts of mutations into a single scan per
     // animation frame. requestAnimationFrame is well-supported and
     // aligns with React's render cadence.
+    //
+    // Skip batches that only churn text/attributes (the common case in a
+    // busy SPA — typing, presence, new-post edits). The "+" menu appears
+    // as newly-added element nodes, so only those warrant a full-document
+    // scan; this keeps the observer from running querySelectorAll over
+    // the whole document on essentially every frame.
     let scheduled = false;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((mutations) => {
         if (scheduled) {
+            return;
+        }
+        const addedElements = mutations.some((m) =>
+            Array.from(m.addedNodes).some((n) => n.nodeType === Node.ELEMENT_NODE),
+        );
+        if (!addedElements) {
             return;
         }
         scheduled = true;
@@ -276,8 +281,13 @@ export function installChannelCreationOverride(store: Store): void {
                 if (byId) {
                     match = byId;
                 } else {
+                    // Text-match fallback for a relabeled native item that
+                    // lacks a stable id. Scope it to the "+" menu (via
+                    // findMenuRoot) so we don't hijack an unrelated element
+                    // elsewhere in the UI that happens to read
+                    // "Request new channel".
                     const nearest = target.closest<HTMLElement>(ITEM_SELECTOR);
-                    if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL) {
+                    if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL && findMenuRoot(nearest)) {
                         match = nearest;
                     }
                 }

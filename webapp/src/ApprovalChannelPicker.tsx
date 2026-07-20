@@ -1,5 +1,5 @@
 import manifest from 'manifest';
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 
 // ApprovalChannelPicker: TWO coordinated custom admin-console settings
 // that replace the plain text slug fields for ApprovalTeam +
@@ -151,29 +151,77 @@ export const ChannelPicker: React.FC<Props> = (props) => {
     const [loading, setLoading] = useState(false);
     const [teamID, setTeamID] = useState<string>('');
 
+    // Read the latest value/onChange from the effect without making them
+    // effect dependencies (which would re-run the fetch on every keystroke
+    // elsewhere in the console). prevTeamRef distinguishes a real team
+    // change from the initial mount.
+    const valueRef = useRef(value);
+    valueRef.current = value;
+    const onChangeRef = useRef(onChange);
+    onChangeRef.current = onChange;
+    const prevTeamRef = useRef<string | null>(null);
+
     // Resolve team slug -> team id, then fetch that team's channels.
     // Cheapest path: fetch the full team list (we already do it for
     // TeamPicker; the browser caches) and look up by name.
     useEffect(() => {
+        // Guard against a slower earlier fetch resolving after a newer one
+        // when the admin switches teams rapidly — a stale response must not
+        // overwrite the current team's channels.
+        let cancelled = false;
+
+        const isTeamChange = prevTeamRef.current !== null && prevTeamRef.current !== teamSlug;
+        prevTeamRef.current = teamSlug;
+
+        // When the admin switches teams, clear any previously-selected
+        // channel so a slug from the OLD team can't be saved against the
+        // new one. Only on a genuine change — never clobber the saved
+        // value on initial mount.
+        const clearStaleChannel = () => {
+            if (isTeamChange && valueRef.current) {
+                onChangeRef.current(id, '');
+                setSaveNeeded?.();
+            }
+        };
+
         if (!teamSlug) {
             setChannels([]);
             setTeamID('');
-            return;
+            clearStaleChannel();
+            return undefined;
         }
         setLoading(true);
         fetchTeams().then(async (teams) => {
+            if (cancelled) {
+                return;
+            }
             const match = teams.find((t) => t.name === teamSlug);
             if (!match) {
                 setChannels([]);
                 setTeamID('');
                 setLoading(false);
+                clearStaleChannel();
+                return;
+            }
+            const list = await fetchChannels(match.id);
+            if (cancelled) {
                 return;
             }
             setTeamID(match.id);
-            const list = await fetchChannels(match.id);
             setChannels(list);
             setLoading(false);
+
+            // Clear the selection if the team changed and the old channel
+            // isn't one of the new team's channels.
+            if (isTeamChange && valueRef.current && !list.some((c) => c.name === valueRef.current)) {
+                onChangeRef.current(id, '');
+                setSaveNeeded?.();
+            }
         });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [teamSlug]);
 
     return (

@@ -54,10 +54,6 @@ endif
 
 PLUGIN_RELEASE_URL := $(PLUGIN_REPO_URL)/releases/tag/v$(PLUGIN_VERSION)
 
-# ldflags inject the resolved repo URL into the Go binary at compile time.
-# Read at runtime as (server package).RepoURL — see server/plugin.go.
-GO_LDFLAGS := -X 'github.com/MattermostFederal/mattermost-plugin-channel-requests/server.RepoURL=$(PLUGIN_REPO_URL)'
-
 # Include custom makefile, if present
 ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
@@ -193,10 +189,10 @@ endif
 	mkdir -p server/dist;
 ifneq ($(MM_SERVICESETTINGS_ENABLEDEVELOPER),)
 	@echo Building plugin only for $(DEFAULT_GOOS)-$(DEFAULT_GOARCH) because MM_SERVICESETTINGS_ENABLEDEVELOPER is enabled
-	cd server && env CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-$(DEFAULT_GOOS)-$(DEFAULT_GOARCH);
+	cd server && env CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-$(DEFAULT_GOOS)-$(DEFAULT_GOARCH);
 else
-	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-linux-amd64;
-	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -ldflags "$(GO_LDFLAGS)" -trimpath -o dist/plugin-linux-arm64;
+	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-linux-amd64;
+	cd server && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) -trimpath -o dist/plugin-linux-arm64;
 endif
 endif
 

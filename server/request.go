@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
@@ -31,6 +32,17 @@ const (
 	// Channel type values as plain strings, for use in dialog options, comparisons, and storage.
 	channelTypeOpen    = string(model.ChannelTypeOpen)
 	channelTypePrivate = string(model.ChannelTypePrivate)
+
+	// Server-side input bounds. The dialog enforces these client-side via
+	// MaxLength, but the webapp JSON endpoint bypasses the dialog, so the
+	// server must enforce them too.
+	maxDisplayNameLen = 64
+	maxPurposeLen     = 250
+
+	// maxMembersPerList caps the regular-member and channel-admin lists
+	// independently so a single request can't fan out into thousands of
+	// synchronous user-lookup and add-member API calls.
+	maxMembersPerList = 100
 )
 
 // channelRequest is a pending request to create a channel, persisted in the KV store until a System
@@ -56,14 +68,12 @@ type requestInput struct {
 	RequesterID string
 	TeamID      string
 	DisplayName string
-	// Name is the free-form channel URL portion. When the prefix-list
-	// feature is active, this holds ONLY THE SUFFIX (the part after the
-	// prefix); server code prepends the selected prefix. When empty
-	// prefix list, this behaves as before — the full channel name.
+	// Name holds ONLY THE SUFFIX (the part after the selected prefix);
+	// server code prepends the prefix. May be blank, in which case the
+	// suffix is generated from DisplayName.
 	Name string
 	// Prefix is the selected domain prefix (e.g., "team-", "project-").
-	// Non-empty only when the prefix-list feature is active AND the
-	// requester picked one. Ignored when the plugin is in legacy mode.
+	// Required — a request with no prefix is rejected by resolveChannelName.
 	Prefix         string
 	Purpose        string
 	ChannelType    string
@@ -96,9 +106,9 @@ func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (str
 	return resolvePrefixedName(config.Prefixes(), in)
 }
 
-// resolvePrefixedName handles the prefix-list flow. The suffix is
-// slugified BEFORE joining so users can type "My Team" and get
-// "team-my-team" — same forgiving normalization as the legacy path.
+// resolvePrefixedName joins the selected prefix with a slugified suffix.
+// The suffix is slugified BEFORE joining so users can type "My Team" and
+// get "team-my-team".
 func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, error) {
 	selected := strings.TrimSpace(in.Prefix)
 	if selected == "" {
@@ -118,8 +128,7 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	suffix := strings.TrimSpace(in.Name)
 	if suffix == "" {
 		// Fall back to slugifying the display name so users who leave
-		// the URL field blank still get a sensible suggestion. This
-		// matches the legacy path's forgiveness.
+		// the URL field blank still get a sensible suffix.
 		suffix = in.DisplayName
 	}
 	suffix = slugify(suffix)
@@ -132,17 +141,11 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
 	}
 
-	// Match the whole suffix, not any substring. Admins wrote patterns
-	// like [a-z0-9-]{2,16} expecting "the suffix must be exactly this
-	// shape" — surprise-anchor them instead of requiring every admin to
-	// remember ^ and $. Preserves the display text of the raw pattern
-	// in error messages so users see what they wrote, not our anchored
-	// rewrite.
-	if entry.SuffixPattern != nil {
-		match := entry.SuffixPattern.FindStringIndex(suffix)
-		if match == nil || match[0] != 0 || match[1] != len(suffix) {
-			return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
-		}
+	// The compiled pattern is anchored (^(?:...)$) so it must match the
+	// whole suffix. Error messages surface the raw pattern text so users
+	// see what the admin wrote, not our anchored rewrite.
+	if entry.SuffixPattern != nil && !entry.SuffixPattern.MatchString(suffix) {
+		return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
 	}
 
 	name := entry.Prefix + suffix
@@ -152,14 +155,60 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	return name, nil
 }
 
+// validateRequestInput checks the caller-supplied fields that require no
+// API calls, returning a user-facing error for the first problem. It is
+// pure so it can be unit-tested without mocks. Side-effecting checks —
+// team membership (authorization) and prefix/name resolution (needs
+// config) — happen in submitRequest after this passes.
+func validateRequestInput(in requestInput) error {
+	if strings.TrimSpace(in.DisplayName) == "" {
+		return errors.New("a channel name is required")
+	}
+	// Count runes on the trimmed value to match the dialog's MaxLength
+	// (which counts characters), so a multibyte name the UI accepts isn't
+	// rejected server-side by a byte-length check.
+	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
+		return errors.Errorf("channel name must be %d characters or fewer", maxDisplayNameLen)
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.Purpose)) > maxPurposeLen {
+		return errors.Errorf("purpose must be %d characters or fewer", maxPurposeLen)
+	}
+	if len(in.MemberIDs) > maxMembersPerList || len(in.AdminMemberIDs) > maxMembersPerList {
+		return errors.Errorf("too many members: at most %d members and %d channel admins per request", maxMembersPerList, maxMembersPerList)
+	}
+	if strings.TrimSpace(in.TeamID) == "" {
+		return errors.New("a team is required")
+	}
+	return nil
+}
+
 // submitRequest validates the input and either creates the channel immediately (if the requester is
 // a System Admin) or stores a pending request and posts it to the approval channel. It returns a
 // message suitable for showing to the requester.
 func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	config := p.getConfiguration()
 
-	if strings.TrimSpace(in.DisplayName) == "" {
-		return "", errors.New("a channel name is required")
+	if err := validateRequestInput(in); err != nil {
+		return "", err
+	}
+
+	requester, appErr := p.API.GetUser(in.RequesterID)
+	if appErr != nil {
+		return "", errors.Wrap(appErr, "failed to load requesting user")
+	}
+
+	// System Admins can create channels in any team (they administer all
+	// of them). Everyone else — including delegated auto-approve users —
+	// must belong to the target team, so a client-supplied TeamID can't be
+	// used to plant channels in a team the requester has no access to.
+	if !requester.IsSystemAdmin() {
+		// GetTeamMember returns soft-deleted rows (a user who LEFT the team
+		// still has a TeamMembers row with DeleteAt != 0), so an error isn't
+		// enough — require an active membership.
+		member, appErr := p.API.GetTeamMember(in.TeamID, in.RequesterID)
+		if appErr != nil || member == nil || member.DeleteAt != 0 {
+			return "", errors.New("you must be a member of the team to request a channel in it")
+		}
 	}
 
 	if in.ChannelType != channelTypeOpen && in.ChannelType != channelTypePrivate {
@@ -183,11 +232,6 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		AdminMemberIDs: in.AdminMemberIDs,
 	}
 
-	requester, appErr := p.API.GetUser(in.RequesterID)
-	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load requesting user")
-	}
-
 	// Bypass approval for:
 	//   - System Admins (always)
 	//   - Users on the admin-configured auto-approve list (delegated managers)
@@ -197,6 +241,11 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 			return "", err
 		}
 		p.postWelcomeMessage(channel, req, requester, requester)
+		// Audit the bypass-path creations too — these are the
+		// highest-privilege (System Admin / delegated auto-approve)
+		// creations and the ones an audit trail most needs to record.
+		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin or auto-approve)",
+			requester.Username, req.DisplayName, channel.Name))
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
@@ -282,16 +331,19 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 		}
 	}
 
-	added := map[string]bool{}
+	seen := map[string]bool{}
+	addedOK := map[string]bool{}
+	promotedOK := map[string]bool{}
 	for _, userID := range append(append([]string{req.RequesterID}, req.MemberIDs...), req.AdminMemberIDs...) {
-		if userID == "" || added[userID] {
+		if userID == "" || seen[userID] {
 			continue
 		}
-		added[userID] = true
+		seen[userID] = true
 		if _, appErr := p.API.AddChannelMember(channel.Id, userID); appErr != nil {
 			p.API.LogWarn("failed to add member to created channel", "channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
 			continue
 		}
+		addedOK[userID] = true
 		// Promote to channel admin if they were designated as such.
 		// "channel_user channel_admin" is the classic role string;
 		// MM handles the scheme-role mapping internally.
@@ -299,11 +351,31 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, "channel_user channel_admin"); appErr != nil {
 				p.API.LogWarn("failed to promote member to channel admin",
 					"channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
+				continue
 			}
+			promotedOK[userID] = true
 		}
 	}
 
+	// Trim the request's lists to who was actually added (and, for admins,
+	// actually promoted) so the welcome message doesn't claim users were
+	// added when the API call failed — e.g. a user who isn't a team member
+	// can't be added to the channel.
+	req.MemberIDs = filterIDs(req.MemberIDs, addedOK)
+	req.AdminMemberIDs = filterIDs(req.AdminMemberIDs, promotedOK)
+
 	return channel, nil
+}
+
+// filterIDs returns the elements of ids present in keep, preserving order.
+func filterIDs(ids []string, keep map[string]bool) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if keep[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (p *Plugin) storeRequest(req *channelRequest) error {
@@ -317,19 +389,23 @@ func (p *Plugin) storeRequest(req *channelRequest) error {
 	return nil
 }
 
-func (p *Plugin) loadRequest(id string) (*channelRequest, error) {
+// loadRequest returns the stored request and its raw KV bytes. The raw
+// bytes let callers do an atomic KVCompareAndDelete against exactly what
+// was read, rather than re-marshaling (which would silently stop matching
+// if the struct ever gained a map field or the on-disk schema evolved).
+func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 	data, appErr := p.API.KVGet(kvRequestPrefix + id)
 	if appErr != nil {
-		return nil, errors.Wrap(appErr, "failed to load request")
+		return nil, nil, errors.Wrap(appErr, "failed to load request")
 	}
 	if data == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var req channelRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal request")
+		return nil, nil, errors.Wrap(err, "failed to unmarshal request")
 	}
-	return &req, nil
+	return &req, data, nil
 }
 
 // postApprovalRequest posts a message with Approve/Deny buttons for an admin to act on. It prefers
