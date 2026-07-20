@@ -222,7 +222,7 @@ func (p *Plugin) adminApproverIDs(teamID string) []string {
 
 	if teamID != "" {
 		const perPage = 200
-		for page := 0; page < 50; page++ {
+		for page := range 50 {
 			members, appErr := p.API.GetTeamMembers(teamID, page, perPage)
 			if appErr != nil {
 				p.API.LogWarn("failed to list Team Admins for admin-request approvers", "team_id", teamID, "error", appErr.Error())
