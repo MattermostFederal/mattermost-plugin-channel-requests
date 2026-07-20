@@ -755,21 +755,6 @@ func (p *Plugin) canApproveAdminRequest(user *model.User, channelID string) bool
 	return p.isTeamAdminOfTeamID(user.Id, channel.TeamId)
 }
 
-// isActiveTeamMember reports whether userID is a CURRENT member of teamID.
-// GetTeamMember also returns soft-deleted memberships (DeleteAt != 0) for
-// users who have left the team, so the DeleteAt check is required — a former
-// member must not pass this gate.
-func (p *Plugin) isActiveTeamMember(userID, teamID string) bool {
-	if userID == "" || teamID == "" {
-		return false
-	}
-	member, appErr := p.API.GetTeamMember(teamID, userID)
-	if appErr != nil || member == nil {
-		return false
-	}
-	return member.DeleteAt == 0
-}
-
 // isTeamAdminOfTeamID reports whether the user is a Team Admin of the team
 // identified by teamID. Companion to isTeamAdmin, which resolves a team by its
 // name/slug; this one takes the ID directly (e.g. a channel's TeamId).
