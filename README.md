@@ -8,6 +8,12 @@ A Mattermost plugin that lets non-admins **request** new channels for System Adm
 - **Admin approval**: Requests are posted to a configured approval channel with Approve / Deny buttons. Only System Admins can act. Approving creates the channel and adds the requester + designated members; denying notifies the requester. Either way the requester gets a DM.
 - **Admin bypass**: System Admins' requests create the channel immediately.
 - **Configurable naming**: Optionally force a standard channel URL via a template (`team-{{name}}`) and/or enforce a regex pattern on the final URL.
+- **Channel Admin requests**: On an existing channel, a non-admin member can request that someone be made a Channel Admin — via a "Request Admin" button in the Members panel or the channel-name menu. The request is posted to the approval channel, @-mentioning the System Admins and the channel's Team Admins, who Approve / Deny.
+
+## Documentation
+
+- [Channel Requests — User Guide](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**.
+- [Channel Admin Requests — User Guide](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**.
 
 ## Configuration
 

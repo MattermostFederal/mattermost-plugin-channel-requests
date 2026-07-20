@@ -378,10 +378,12 @@ export interface PluginRegistry {
     registerChannelHeaderMenuAction(
         ...args: [
             component: ReactResolvable,
-            fn: (channelID: string) => void
+            fn: (channelID: string) => void,
+            shouldRender?: (state: any) => boolean
         ] | [{
             component: ReactResolvable;
             fn: (channelID: string) => void;
+            shouldRender?: (state: any) => boolean;
         }]
     ): UniqueIdentifier;
 

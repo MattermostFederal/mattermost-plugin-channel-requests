@@ -43,6 +43,12 @@ const (
 	// independently so a single request can't fan out into thousands of
 	// synchronous user-lookup and add-member API calls.
 	maxMembersPerList = 100
+
+	// channelAdminRoleString grants a channel member the Channel Admin
+	// role. MM maps this classic role string to the appropriate scheme
+	// role internally. Used both when creating a channel and when
+	// promoting members on an existing one.
+	channelAdminRoleString = "channel_user channel_admin"
 )
 
 // channelRequest is a pending request to create a channel, persisted in the KV store until a System
@@ -79,6 +85,19 @@ type requestInput struct {
 	ChannelType    string
 	MemberIDs      []string
 	AdminMemberIDs []string
+}
+
+// promoteSoleMember applies the orphaned-channel guard: when no Channel
+// Admins were designated and exactly one regular member was added, that
+// member becomes the Channel Admin (returned as the admin list, with the
+// member list emptied). In every other case the inputs pass through
+// unchanged. A single-member channel with no admin has nobody who can
+// manage it, which is the "No Channel Admin" orphan case.
+func promoteSoleMember(memberIDs, adminIDs []string) (members, admins []string) {
+	if len(adminIDs) == 0 && len(memberIDs) == 1 {
+		return nil, memberIDs
+	}
+	return memberIDs, adminIDs
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -215,6 +234,14 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		in.ChannelType = channelTypeOpen
 	}
 
+	// Guard against orphaned channels: when the requester adds exactly one
+	// member and names no Channel Admins, that lone member is promoted to
+	// Channel Admin so the channel always has someone who can manage it.
+	// Applied here (before the request is built) so the approval card and
+	// welcome message reflect the promotion too — not just the created
+	// channel.
+	in.MemberIDs, in.AdminMemberIDs = promoteSoleMember(in.MemberIDs, in.AdminMemberIDs)
+
 	name, err := p.resolveChannelName(config, in)
 	if err != nil {
 		return "", err
@@ -348,7 +375,7 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 		// "channel_user channel_admin" is the classic role string;
 		// MM handles the scheme-role mapping internally.
 		if adminSet[userID] {
-			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, "channel_user channel_admin"); appErr != nil {
+			if _, appErr := p.API.UpdateChannelMemberRoles(channel.Id, userID, channelAdminRoleString); appErr != nil {
 				p.API.LogWarn("failed to promote member to channel admin",
 					"channel_id", channel.Id, "user_id", userID, "error", appErr.Error())
 				continue
@@ -408,12 +435,21 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 	return &req, data, nil
 }
 
-// postApprovalRequest posts a message with Approve/Deny buttons for an admin to act on. It prefers
-// the configured approval channel, but when that isn't configured (or can't be found) it falls back
-// to DMing every System Admin so requests are never silently dropped.
+// postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
+// act on.
 func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) error {
+	return p.postApprovalAttachment(
+		p.approvalAttachment(req, requester),
+		"@channel — a new channel request needs your review.",
+	)
+}
+
+// postApprovalAttachment delivers an approval attachment to the reviewers. It prefers the configured
+// approval channel, but when that isn't configured (or can't be found) it falls back to DMing every
+// System Admin so requests are never silently dropped. Shared by the channel-creation and
+// channel-admin request flows.
+func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) error {
 	config := p.getConfiguration()
-	attachment := p.approvalAttachment(req, requester)
 
 	if strings.TrimSpace(config.ApprovalTeam) != "" && strings.TrimSpace(config.ApprovalChannel) != "" {
 		channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
@@ -421,7 +457,7 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 			post := &model.Post{
 				UserId:    p.botUserID,
 				ChannelId: channel.Id,
-				Message:   "@channel — a new channel request needs your review.",
+				Message:   headerMessage,
 			}
 			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
 			if _, postErr := p.API.CreatePost(post); postErr != nil {

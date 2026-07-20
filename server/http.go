@@ -17,6 +17,9 @@ const (
 	routeCreate           = "/api/v1/create"
 	routeApprove          = "/api/v1/approve"
 	routeDeny             = "/api/v1/deny"
+	routeRequestAdmin     = "/api/v1/request_admin" // request Channel Admin promotion on an existing channel
+	routeApproveAdmin     = "/api/v1/approve_admin"
+	routeDenyAdmin        = "/api/v1/deny_admin"
 	routePrefixes         = "/api/v1/prefixes"
 	routeTeams            = "/api/v1/teams"             // list teams for the approval-channel picker
 	routeChannels         = "/api/v1/channels"          // list channels in a team, ?team_id=...
@@ -37,6 +40,12 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleAction(w, r, true)
 	case routeDeny:
 		p.handleAction(w, r, false)
+	case routeRequestAdmin:
+		p.handleRequestAdmin(w, r)
+	case routeApproveAdmin:
+		p.handleAdminAction(w, r, true)
+	case routeDenyAdmin:
+		p.handleAdminAction(w, r, false)
 	case routePrefixes:
 		p.handlePrefixes(w, r)
 	case routeTeams:
@@ -438,6 +447,40 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"message": message})
 }
 
+// adminRequestBody is the JSON payload sent by the "Request Channel Admin"
+// modal.
+type adminRequestBody struct {
+	ChannelID string   `json:"channel_id"`
+	Nominees  []string `json:"nominees"` // usernames to promote to Channel Admin
+}
+
+func (p *Plugin) handleRequestAdmin(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var body adminRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	nomineeIDs, err := p.resolveUsernameList(body.Nominees)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+
+	message, err := p.submitAdminRequest(userID, body.ChannelID, nomineeIDs)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]string{"message": message})
+}
+
 func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {
 	// Identity comes from the authenticated header, NOT request.UserId in
 	// the body — trusting the body would let anyone who can read a pending
@@ -539,6 +582,88 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
+// handleAdminAction handles Approve/Deny on a channel-admin request. Mirrors
+// handleAction but operates on adminRequest records and promotes nominees
+// instead of creating a channel.
+func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, approve bool) {
+	// Same rule as handleAction: the acting user comes from the session, not
+	// the client-supplied body.
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var request model.PostActionIntegrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	actingUser, appErr := p.API.GetUser(userID)
+	if appErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
+		return
+	}
+
+	requestID, _ := request.Context[actionContextRequestID].(string)
+	req, err := p.loadAdminRequest(requestID)
+	if err != nil {
+		p.API.LogError("failed to load channel-admin request", "error", err.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
+		return
+	}
+	if req == nil {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
+		})
+		return
+	}
+
+	// A channel-admin request is scoped to a specific channel, so its own
+	// Channel Admins may act on it (in addition to the global approvers). We
+	// need the loaded request's ChannelID for that check, so it happens here
+	// rather than up front.
+	if !p.canApproveAdminRequest(actingUser, req.ChannelID) {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny this Channel Admin request. Contact a Channel Admin or System Admin."})
+		return
+	}
+
+	config := p.getConfiguration()
+	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for notify + audit
+	channel, channelErr := p.API.GetChannel(req.ChannelID)
+
+	channelRef := "the channel"
+	if channelErr == nil {
+		channelRef = "~" + channel.Name
+	}
+	nominees := p.mentionList(req.NomineeIDs)
+
+	var outcome string
+	if approve {
+		if channelErr != nil {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
+			return
+		}
+		p.promoteChannelAdmins(req)
+		p.postAdminPromotionMessage(channel, req, actingUser)
+		outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, nominees, channelRef)
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved.", nominees, channelRef))
+		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by @%s)",
+			actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
+	} else {
+		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was denied.", nominees, channelRef))
+		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
+			actingUser.Username, nominees, channelRef))
+	}
+
+	if appErr := p.API.KVDelete(kvAdminRequestPrefix + req.ID); appErr != nil {
+		p.API.LogWarn("failed to delete handled admin request", "error", appErr.Error())
+	}
+
+	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
+}
+
 // resolvedPost returns an updated version of the approval post with the buttons removed and a
 // status line appended.
 func (p *Plugin) resolvedPost(postID, status string) *model.Post {
@@ -591,10 +716,11 @@ func (p *Plugin) resolveUsernameList(usernames []string) ([]string, error) {
 //	Team Admin  of the approval team + opt-in flag on  -> yes
 //	everyone else                                      -> no
 //
-// Channel admins are NOT approvers by design: the channel-admin role
-// only exists on channels that already exist, whereas this plugin is
-// specifically for creating NEW channels. There's no meaningful
-// "channel admin" identity at approval time.
+// Channel admins are NOT approvers of channel-CREATION requests by
+// design: the channel-admin role only exists on channels that already
+// exist, whereas channel creation is about NEW channels. For
+// channel-ADMIN requests (promotions on an existing channel) that
+// reasoning is reversed — see canApproveAdminRequest.
 func (p *Plugin) canApprove(user *model.User) bool {
 	if user == nil {
 		return false
@@ -607,6 +733,58 @@ func (p *Plugin) canApprove(user *model.User) bool {
 		return true
 	}
 	return false
+}
+
+// canApproveAdminRequest reports whether the acting user may approve or deny a
+// Channel Admin request for the given channel. Beyond the global approvers
+// (System Admins, opted-in approval-team admins via canApprove), the Team
+// Admins of the TARGET channel's team may act on it — postAdminApprovalRequest
+// mentions exactly this set (System Admins + the channel's Team Admins) when it
+// posts to the approval channel.
+func (p *Plugin) canApproveAdminRequest(user *model.User, channelID string) bool {
+	if p.canApprove(user) {
+		return true
+	}
+	if user == nil || channelID == "" {
+		return false
+	}
+	channel, appErr := p.API.GetChannel(channelID)
+	if appErr != nil || channel == nil {
+		return false
+	}
+	return p.isTeamAdminOfTeamID(user.Id, channel.TeamId)
+}
+
+// isActiveTeamMember reports whether userID is a CURRENT member of teamID.
+// GetTeamMember also returns soft-deleted memberships (DeleteAt != 0) for
+// users who have left the team, so the DeleteAt check is required — a former
+// member must not pass this gate.
+func (p *Plugin) isActiveTeamMember(userID, teamID string) bool {
+	if userID == "" || teamID == "" {
+		return false
+	}
+	member, appErr := p.API.GetTeamMember(teamID, userID)
+	if appErr != nil || member == nil {
+		return false
+	}
+	return member.DeleteAt == 0
+}
+
+// isTeamAdminOfTeamID reports whether the user is a Team Admin of the team
+// identified by teamID. Companion to isTeamAdmin, which resolves a team by its
+// name/slug; this one takes the ID directly (e.g. a channel's TeamId).
+func (p *Plugin) isTeamAdminOfTeamID(userID, teamID string) bool {
+	if teamID == "" {
+		return false
+	}
+	member, appErr := p.API.GetTeamMember(teamID, userID)
+	if appErr != nil || member == nil {
+		return false
+	}
+	if slices.Contains(strings.Fields(member.Roles), model.TeamAdminRoleId) {
+		return true
+	}
+	return member.SchemeAdmin
 }
 
 // isTeamAdmin reports whether the user is a Team Admin of the team

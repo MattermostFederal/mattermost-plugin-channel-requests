@@ -8,29 +8,70 @@ import {ChannelPicker, TeamPicker} from './ApprovalChannelPicker';
 import {AutoApprovePicker} from './AutoApprovePicker';
 import {installChannelCreationOverride} from './channelCreationOverride';
 import {HeaderIcon} from './HeaderIcon';
+import {installMembersPanelButton} from './membersPanelButton';
 import {PrefixEditor} from './PrefixEditor';
+import {RequestChannelAdminModal} from './RequestChannelAdminModal';
 import {RequestChannelModal} from './RequestChannelModal';
-import reducer, {openRequestModal} from './store';
+import reducer, {getChannelType, getCurrentChannelId, openAdminRequestModal, openRequestModal} from './store';
+import type {GlobalState} from './store';
 
 export default class Plugin {
     public async initialize(registry: PluginRegistry, store: Store) {
         registry.registerReducer(reducer);
 
         registry.registerRootComponent(RequestChannelModal);
+        registry.registerRootComponent(RequestChannelAdminModal);
+
+        // Each feature is installed independently and defensively: a throw in
+        // one (e.g. a DOM hack that trips over unexpected markup) must not abort
+        // initialize() and take the others down with it. safe() logs and
+        // continues. The Members-panel injector is installed FIRST so it's
+        // never blocked by an earlier registration failing.
+        const safe = (label: string, fn: () => void) => {
+            try {
+                fn();
+            } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error(`[channel-requests] ${label} failed to initialize`, err);
+            }
+        };
+
+        // DOM injection of a "Request Admin" button into the native Members
+        // right-hand sidebar (next to "Add"). Mattermost has no plugin slot
+        // there, so this is a fragile hack that no-ops if the expected markup
+        // isn't found — the channel-name menu item below stays as the supported
+        // fallback.
+        safe('members-panel button', () => installMembersPanelButton(store));
 
         // For non-admins, reroute the native sidebar "Create new channel" action to the request
         // workflow and rename it to "Request new channel". Also injects a "Request new channel"
         // item when the native one has been stripped by permissions.
-        installChannelCreationOverride(store);
+        safe('channel-creation override', () => installChannelCreationOverride(store));
 
-        registry.registerChannelHeaderButtonAction(
+        safe('channel-header button', () => registry.registerChannelHeaderButtonAction(
             <HeaderIcon/>,
             () => {
                 store.dispatch(openRequestModal());
             },
             'Request Channel',
             'Request the creation of a new channel',
-        );
+        ));
+
+        // Channel name dropdown menu item. Members who can't manage the channel
+        // themselves can request that someone be made a Channel Admin; the
+        // request goes to an admin for approval. Shown only in public/private
+        // channels — DMs and group messages have no Channel Admin role, so the
+        // item is hidden there via shouldRender.
+        safe('channel-header menu', () => registry.registerChannelHeaderMenuAction(
+            'Request Channel Admin',
+            (channelId: string) => {
+                store.dispatch(openAdminRequestModal(channelId));
+            },
+            (state: GlobalState) => {
+                const type = getChannelType(state, getCurrentChannelId(state));
+                return type === 'O' || type === 'P';
+            },
+        ));
 
         // Custom admin console settings — replace plain-text fields
         // with structured pickers. Each maps to a settings_schema key
