@@ -606,7 +606,7 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 
 	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, err := p.loadAdminRequest(requestID)
+	req, rawReq, err := p.loadAdminRequest(requestID)
 	if err != nil {
 		p.API.LogError("failed to load channel-admin request", "error", err.Error())
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
@@ -638,12 +638,34 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 	nominees := p.mentionList(req.NomineeIDs)
 
+	// On approval we need a live channel to promote into; bail before claiming
+	// the request so a deleted channel leaves the pending request intact.
+	if approve && channelErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
+		return
+	}
+
+	// Atomically claim the request before acting. Two reviewers clicking
+	// Approve/Deny at nearly the same time both load a non-nil req; without an
+	// atomic claim both would promote (or one approve + one deny) the same
+	// request. Compare against the exact bytes read so the claim is robust
+	// regardless of marshaling. Whoever wins owns the outcome; the loser is
+	// told it was already handled. Mirrors handleAction.
+	claimed, claimErr := p.API.KVCompareAndDelete(kvAdminRequestPrefix+req.ID, rawReq)
+	if claimErr != nil {
+		p.API.LogError("failed to claim channel-admin request", "error", claimErr.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
+		return
+	}
+	if !claimed {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
+		})
+		return
+	}
+
 	var outcome string
 	if approve {
-		if channelErr != nil {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
-			return
-		}
 		p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, actingUser)
 		outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, nominees, channelRef)
@@ -657,10 +679,7 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 			actingUser.Username, nominees, channelRef))
 	}
 
-	if appErr := p.API.KVDelete(kvAdminRequestPrefix + req.ID); appErr != nil {
-		p.API.LogWarn("failed to delete handled admin request", "error", appErr.Error())
-	}
-
+	// The KV key was already removed by the atomic claim above.
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 

@@ -55,6 +55,18 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		return "", errors.Wrap(appErr, "failed to load requesting user")
 	}
 
+	// The requester must belong to the channel they're nominating admins for.
+	// The UI only offers channels the user is in, but that's a client-side
+	// convenience — a crafted request could name any channel ID, so enforce
+	// membership on the server. System Admins manage every channel and are
+	// exempt. GetChannelMember returns an error for non-members (channel
+	// memberships are hard-deleted on leave, so no soft-delete check needed).
+	if !requester.IsSystemAdmin() {
+		if _, appErr := p.API.GetChannelMember(channelID, requesterID); appErr != nil {
+			return "", errors.New("you must be a member of the channel to request Channel Admins for it")
+		}
+	}
+
 	req := &adminRequest{
 		ID:          model.NewId(),
 		RequesterID: requesterID,
@@ -140,52 +152,38 @@ func (p *Plugin) storeAdminRequest(req *adminRequest) error {
 	return nil
 }
 
-func (p *Plugin) loadAdminRequest(id string) (*adminRequest, error) {
+// loadAdminRequest returns the stored request and its raw KV bytes. The raw
+// bytes let handleAdminAction do an atomic KVCompareAndDelete against exactly
+// what was read, so two reviewers acting on the same request at once can't both
+// process it — mirrors loadRequest in the channel-creation flow.
+func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 	data, appErr := p.API.KVGet(kvAdminRequestPrefix + id)
 	if appErr != nil {
-		return nil, errors.Wrap(appErr, "failed to load admin request")
+		return nil, nil, errors.Wrap(appErr, "failed to load admin request")
 	}
 	if data == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var req adminRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal admin request")
+		return nil, nil, errors.Wrap(err, "failed to unmarshal admin request")
 	}
-	return &req, nil
+	return &req, data, nil
 }
 
-// postAdminApprovalRequest posts a channel-admin request (with Approve/Deny
-// buttons) to the configured approval channel, where the guaranteed set of
-// approvers — System Admins and the target channel's Team Admins — can act on
-// it. The post @-mentions those approvers so they're pulled into the review.
-//
-// The approval channel is REQUIRED: if none is configured (or it can't be
-// found) an error is returned so the requester is told, rather than the
-// request being silently dropped or landing somewhere with no one to approve
-// it. The requester sees this error in the request modal.
+// postAdminApprovalRequest delivers a channel-admin request (with Approve/Deny
+// buttons) to the reviewers. It reuses postApprovalAttachment, which prefers
+// the configured approval channel and — when that isn't configured or can't be
+// found — falls back to DMing every System Admin, exactly as the
+// channel-creation flow does. This guarantees a request is never silently
+// dropped for want of an approval channel. The header @-mentions the guaranteed
+// approvers (System Admins + the target channel's Team Admins) so they're
+// pulled into the review when it lands in a channel.
 func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) error {
-	config := p.getConfiguration()
-
-	if strings.TrimSpace(config.ApprovalTeam) == "" || strings.TrimSpace(config.ApprovalChannel) == "" {
-		return errors.New("No approval channel is configured for Channel Admin requests. Ask a System Admin to set the approval team and channel in the plugin settings.")
-	}
-
-	approvalChannel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
-	if appErr != nil || approvalChannel == nil {
-		return errors.New("The approval channel configured for Channel Admin requests could not be found. Ask a System Admin to check the plugin settings.")
-	}
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: approvalChannel.Id,
-		Message:   p.adminApprovalHeader(channel),
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{p.adminApprovalAttachment(req, requester, channel)})
-	if _, appErr := p.API.CreatePost(post); appErr != nil {
-		return errors.Wrap(appErr, "failed to post channel-admin request to the approval channel")
-	}
-	return nil
+	return p.postApprovalAttachment(
+		p.adminApprovalAttachment(req, requester, channel),
+		p.adminApprovalHeader(channel),
+	)
 }
 
 // adminApprovalHeader builds the message that leads the approval post,

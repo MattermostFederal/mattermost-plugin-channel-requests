@@ -87,6 +87,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
@@ -121,28 +122,61 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	require.Contains(t, posted.Message, "@lead")
 }
 
-func TestSubmitAdminRequest_NoApprovalChannelTellsRequester(t *testing.T) {
+func TestSubmitAdminRequest_NoApprovalChannelFallsBackToSystemAdmins(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	// No approval channel configured.
+	// No approval channel configured -> DM every System Admin, mirroring the
+	// channel-creation flow, rather than dropping the request.
 	p.setConfiguration(&configuration{})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
-	// The request is stored, then rolled back when posting fails (the config
-	// check returns before the nominee attachment is ever built).
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
-	api.On("KVDelete", mock.Anything).Return(nil)
+
+	// adminApprovalHeader also lists approvers; supply one System Admin who is
+	// both an approver mention and a DM recipient.
+	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
+	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil)
+	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
+
+	var dmPost *model.Post
+	api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) {
+		dmPost = args.Get(0).(*model.Post)
+	}).Return(&model.Post{}, nil)
+
+	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
+
+	require.NoError(t, err)
+	require.Contains(t, msg, "submitted for approval")
+	// The request was DMed to the System Admin, not dropped.
+	require.NotNil(t, dmPost)
+	require.Equal(t, "dm1", dmPost.ChannelId)
+	api.AssertCalled(t, "GetDirectChannel", "sys1", "bot-user-id")
+}
+
+func TestSubmitAdminRequest_RejectsNonChannelMember(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	// The requester is not a member of the channel.
+	api.On("GetChannelMember", "ch1", "u_req").Return(nil, testAppErr("not a member"))
 
 	_, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "No approval channel is configured")
-	// Nothing was posted, and the stored request was rolled back.
-	api.AssertNotCalled(t, "CreatePost", mock.Anything)
-	api.AssertCalled(t, "KVDelete", mock.Anything)
+	require.Contains(t, err.Error(), "member of the channel")
+	// No promotion and no stored request when the membership gate fails.
+	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 }
 
 func TestCanApproveAdminRequest_TeamAdminMayApprove(t *testing.T) {
