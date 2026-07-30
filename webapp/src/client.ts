@@ -23,6 +23,13 @@ export type ChannelRequestResult = {
     error?: string;
 };
 
+// AdminRequestPayload is sent by the "Request Channel Admin" modal. nominees
+// are usernames the requester wants promoted to Channel Admin on channel_id.
+export type AdminRequestPayload = {
+    channel_id: string;
+    nominees: string[];
+};
+
 export type ChannelPrefix = {
     prefix: string;
     description: string;
@@ -56,6 +63,32 @@ function getCSRFToken(): string {
 
 export async function submitChannelRequest(payload: ChannelRequestPayload): Promise<ChannelRequestResult> {
     const response = await fetch(`/plugins/${manifest.id}/api/v1/create`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    let body: ChannelRequestResult = {};
+    try {
+        body = await response.json();
+    } catch {
+        // Body may be empty or non-JSON on unexpected errors; fall through to status handling.
+    }
+
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+
+    return body;
+}
+
+export async function submitAdminRequest(payload: AdminRequestPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/request_admin`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {

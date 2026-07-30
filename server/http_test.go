@@ -385,3 +385,76 @@ func TestHandleAction_NonApproverRejected(t *testing.T) {
 	// A non-approver never reaches the pending request.
 	api.AssertNotCalled(t, "KVGet", mock.Anything)
 }
+
+func TestHandleAdminAction_ApproveClaimsAndPromotes(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	raw, err := json.Marshal(areq)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	// The claim compares against the exact bytes loadAdminRequest returned.
+	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
+	api.On("AddChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
+	api.On("UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post")) // resolvedPost falls back
+
+	r := httptest.NewRequest(http.MethodPost, routeApproveAdmin, strings.NewReader(actionBody(t, "areq1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleAdminAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Update)
+	api.AssertCalled(t, "KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw)
+	api.AssertCalled(t, "UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles)
+	// The claim deletes the key atomically; no separate KVDelete.
+	api.AssertNotCalled(t, "KVDelete", mock.Anything)
+}
+
+func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	raw, err := json.Marshal(areq)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	// Another reviewer already claimed and processed the request.
+	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	r := httptest.NewRequest(http.MethodPost, routeApproveAdmin, strings.NewReader(actionBody(t, "areq1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleAdminAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Update)
+	require.Contains(t, resp.Update.Message, "already been handled")
+	// The loser must not promote anyone.
+	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
+}

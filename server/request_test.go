@@ -465,6 +465,52 @@ func TestValidateRequestInput(t *testing.T) {
 	}
 }
 
+func TestPromoteSoleMember(t *testing.T) {
+	tests := []struct {
+		name        string
+		members     []string
+		admins      []string
+		wantMembers []string
+		wantAdmins  []string
+	}{
+		{
+			name:        "sole member, no admins -> member promoted",
+			members:     []string{"u1"},
+			admins:      nil,
+			wantMembers: nil,
+			wantAdmins:  []string{"u1"},
+		},
+		{
+			name:        "multiple members, no admins -> unchanged",
+			members:     []string{"u1", "u2"},
+			admins:      nil,
+			wantMembers: []string{"u1", "u2"},
+			wantAdmins:  nil,
+		},
+		{
+			name:        "sole member, admins already set -> unchanged",
+			members:     []string{"u1"},
+			admins:      []string{"u2"},
+			wantMembers: []string{"u1"},
+			wantAdmins:  []string{"u2"},
+		},
+		{
+			name:        "no members, no admins -> unchanged",
+			members:     nil,
+			admins:      nil,
+			wantMembers: nil,
+			wantAdmins:  nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			members, admins := promoteSoleMember(tt.members, tt.admins)
+			require.Equal(t, tt.wantMembers, members)
+			require.Equal(t, tt.wantAdmins, admins)
+		})
+	}
+}
+
 func TestResolveUsernameList(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
