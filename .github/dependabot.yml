@@ -34,6 +34,19 @@ updates:
         update-types:
           - minor
           - patch
+      # Group ALL security fixes into one PR per Dependabot run. Without
+      # this, security updates default to one pull request per vulnerable
+      # dependency, and when two advisories land close together neither PR
+      # can pass the required `SBOM + Grype --fail-on high` gate alone —
+      # each still carries the other's unpatched HIGH — deadlocking a
+      # strict, admin-enforced main.
+      # applies-to:security-updates is required; a group without it only
+      # covers version updates. (Only the Go server SBOM is Grype-gated
+      # here, so npm doesn't need this — see the npm block below.)
+      security-all:
+        applies-to: security-updates
+        patterns:
+          - '*'
 
   # npm — the React webapp. Group by patch-vs-minor to reduce PR churn.
   - package-ecosystem: npm
