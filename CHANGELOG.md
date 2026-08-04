@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.2.1...v0.3.0) (2026-08-04)
+
+
+### Features
+
+* channel-admin requests (menu + Members-panel button) and orphaned-channel guard ([#15](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/15)) ([fc6e85e](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/fc6e85e2370c0547d561225ed5586d18f0a40e49))
+
+
+### Bug Fixes
+
+* **deps:** bump Go deps to clear HIGH CVEs blocking the Grype gate ([c2ca69e](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c2ca69e11e40ff59844baf545d63026e1e2c368a))
+* harden channel-request auth/validation and unbreak the webapp toolchain ([#20](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/20)) ([923647b](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/923647bae8a873a13dc00d8db2755d0d9febeb4b))
+
+
+### Dependencies
+
+* **actions:** bump actions/setup-go from 6.5.0 to 7.0.0 ([1f7b265](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/1f7b265bb59901d5cadb0b6523ddce5b94177523))
+* **actions:** bump the actions-minor-patch group across 1 directory with 5 updates ([4031d52](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/4031d5216d87061e61269a59c4498631d5ac93e2))
+* **actions:** Bump the actions-minor-patch group with 5 updates ([0e28b27](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/0e28b278cea1f433970e63cec86ed8b8202919c8))
+* **npm:** bump the npm-minor-patch group across 1 directory with 13 updates ([711f9ff](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/711f9ff949eb536774783d8b89c06b98674ae575))
+* **npm:** Bump the npm-minor-patch group in /webapp with 2 updates ([cb41d0c](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/cb41d0ca964ea206bb8c0e784864cab70b60d9da))
+* **npm:** Bump typescript from 6.0.3 to 7.0.2 in /webapp ([c132307](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c13230720b64a614afc1d04b8a5f43e0d4a14e5e))
+
 ## [0.2.1](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.2.0...v0.2.1) (2026-07-06)
 
 
