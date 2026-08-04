@@ -25,6 +25,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Called by release-please.yml when it creates a release. release-please
+  # tags with GITHUB_TOKEN, whose events can't trigger the push:tags path
+  # above (GitHub anti-recursion), so it invokes this workflow directly.
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and publish (set by the release-please caller).
+        required: true
+        type: string
 
 permissions:
   contents: write       # create the release + upload assets
@@ -33,10 +42,18 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Effective tag: the workflow_call input when release-please invokes us,
+    # else the pushed tag's short name. Used for checkout, release tag_name,
+    # notes, and prerelease detection so both trigger paths behave identically.
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Check out the release tag explicitly — required on the
+          # workflow_call path, where the run's ref is main, not the tag.
+          ref: ${{ env.RELEASE_TAG }}
           # softprops/action-gh-release uses git history to generate
           # release notes between tags. Default depth 1 (just the tag
           # commit) makes the auto-notes empty.
@@ -104,6 +121,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          # Pin the target tag — on the workflow_call path github.ref is main,
+          # so the action's default (github.ref) would target the wrong ref.
+          tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ steps.plugin_info.outputs.plugin_id }} v${{ steps.plugin_info.outputs.plugin_version }}
           files: |
             dist/${{ steps.plugin_info.outputs.bundle_name }}
@@ -114,11 +134,11 @@ jobs:
           fail_on_unmatched_files: false
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
           body: |
-            ## Mattermost Alertmanager Plugin ${{ github.ref_name }}
+            ## Mattermost Alertmanager Plugin ${{ env.RELEASE_TAG }}
 
-            See [`CHANGELOG.md`](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for curated release notes.
+            See [`CHANGELOG.md`](${{ github.server_url }}/${{ github.repository }}/blob/${{ env.RELEASE_TAG }}/CHANGELOG.md) for curated release notes.
 
             ### Install
 
