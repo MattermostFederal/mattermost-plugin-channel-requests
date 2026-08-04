@@ -34,6 +34,16 @@ on:
         description: Tag to build and publish (set by the release-please caller).
         required: true
         type: string
+    # Least privilege: the caller passes only the signing secrets this
+    # workflow uses (not `secrets: inherit`, which would forward all of them).
+    # Optional — release-sign is a no-op when they're unset.
+    secrets:
+      PLUGIN_SIGNING_KEY:
+        description: GPG private key used to sign the release bundle.
+        required: false
+      PLUGIN_SIGNING_KEY_PASSPHRASE:
+        description: Passphrase for PLUGIN_SIGNING_KEY.
+        required: false
 
 permissions:
   contents: write       # create the release + upload assets
@@ -58,6 +68,13 @@ jobs:
           # release notes between tags. Default depth 1 (just the tag
           # commit) makes the auto-notes empty.
           fetch-depth: 0
+
+      # Resolve the checked-out tag's commit SHA so the SARIF upload can
+      # attribute findings to the release tag, not the caller's ref (which is
+      # main on the workflow_call path).
+      - name: Resolve release SHA
+        id: relsha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -117,6 +134,10 @@ jobs:
         with:
           sarif_file: dist/codeql-go.sarif
           category: codeql-go-release
+          # Attribute to the release tag/commit, not the caller ref (main on
+          # the workflow_call path).
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          sha: ${{ steps.relsha.outputs.sha }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
