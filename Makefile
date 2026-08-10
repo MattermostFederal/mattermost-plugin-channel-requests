@@ -518,7 +518,10 @@ ifneq ($(HAS_SERVER),)
 endif
 ifneq ($(HAS_WEBAPP),)
 	@echo "Generating Node.js SBOM..."
-	cd webapp && npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file ../dist/sbom/webapp-sbom.json
+	# --omit dev: the plugin bundle ships only production deps; the dev/build
+	# toolchain (eslint, webpack, babel) is never in webapp/dist, so its CVEs
+	# must not gate releases. Grype still blocks HIGH/CRITICAL in shipped deps.
+	cd webapp && npx @cyclonedx/cyclonedx-npm --omit dev --ignore-npm-errors --output-file ../dist/sbom/webapp-sbom.json
 endif
 	@echo "SBOMs generated in dist/sbom/"
 	@ls -la dist/sbom/
