@@ -1,18 +1,26 @@
-# Runs the SBOM + Grype scan and CodeQL static analysis on every PR
-# and every push to main. Uploads SARIF results to GitHub code scanning
-# so findings show up inline on PRs and in the Security tab.
+# Supply-chain scanning on every PR and every push to main:
+#   - SBOM (CycloneDX) for the Go server and the npm webapp
+#   - Grype CVE scan of both SBOMs, gated at HIGH
+#   - CodeQL static analysis of Go and JavaScript/TypeScript
+# SARIF from every scanner is uploaded to GitHub Code Scanning so
+# findings show up inline on the PR and in the Security tab.
 #
-# Build is gated:
-#   - Grype: --fail-on high blocks HIGH/CRITICAL CVEs
-#   - CodeQL: make security-gate fails on error-level SARIF findings
+# Everything runs through the same `make` targets the release pipeline
+# uses locally (make sbom / codeql-analyze / security-gate) — CI and a
+# developer's `make release` stay in lock-step, so a green PR here means
+# a green release build.
+#
+# Build gates:
+#   - Grype:  --fail-on high blocks HIGH/CRITICAL CVEs (see .grype.yaml
+#             for any documented, time-boxed exceptions)
+#   - CodeQL: `make security-gate` fails on error-level SARIF findings
 #   - SARIF upload to Code Scanning: required, no bypass
 #
 # REQUIREMENT: GitHub Code Scanning must be enabled on the repo.
-#   - Public repos: free, enable via Settings -> Code security and analysis
-#   - Private repos: requires GitHub Advanced Security (paid, Enterprise plan)
-# Without it, the SARIF upload step will fail and the workflow will go red.
-# That is intentional — security findings must reach the Security tab so
-# reviewers can see them inline on the PR.
+#   - Public repos: free — Settings -> Code security and analysis
+#   - Private repos: needs GitHub Advanced Security (paid)
+# Without it the SARIF upload fails and the workflow goes red. That is
+# intentional — security findings must reach the Security tab.
 name: Security
 
 on:
@@ -20,9 +28,9 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Re-run weekly to catch newly-disclosed CVEs even when no code changes.
-    # GHSA / NVD update continuously; we'd otherwise only notice on the
-    # next PR, which may be weeks away for a stable plugin.
+    # Weekly re-run catches newly-disclosed CVEs even with no code
+    # changes — GHSA/NVD publish continuously, and a stable plugin
+    # might otherwise go weeks between PRs.
     - cron: '0 6 * * 1'
 
 permissions:
@@ -37,6 +45,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job only reads the repo and uploads SARIF via GITHUB_TOKEN;
+          # it never pushes, so don't persist the git token in the workspace.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -44,7 +56,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Generate SBOM
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      # cyclonedx-npm reads the installed tree, so webapp deps must be
+      # present before `make sbom` runs.
+      - name: Install webapp dependencies
+        run: cd webapp && npm ci
+
+      - name: Generate SBOMs (server + webapp)
         run: make sbom
 
       - name: Upload SBOM artifact
@@ -54,48 +78,79 @@ jobs:
           path: dist/sbom/
           retention-days: 30
 
-      # Run Grype directly (rather than via make) so we can emit SARIF
-      # for GitHub code scanning. `make sbom-scan` emits table output
-      # only — useful for humans, not for the code scanning API.
-      - name: Scan SBOM with Grype (SARIF output)
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v6.7.0
-        id: grype-scan
+      # Scan each SBOM with Grype and emit SARIF for Code Scanning.
+      # fail-build: true reproduces `make sbom-scan`'s --fail-on high
+      # gate. Separate categories keep server vs webapp findings distinct
+      # in the Security tab.
+      - name: Scan Go SBOM (Grype -> SARIF)
+        id: grype-server
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           sbom: dist/sbom/server-sbom.json
           fail-build: true
           severity-cutoff: high
           output-format: sarif
 
-      # Upload is required, not best-effort. If Code Scanning isn't
-      # enabled on this repo, the step fails and the workflow goes red
-      # — by design. Enable Code Scanning in repo settings (public:
-      # free; private: needs GHAS).
-      # Best-effort: Code Scanning needs a public repo or GitHub Advanced
-      # Security. On a private repo without GHAS this upload 403s — don't
-      # fail the job for it. The hard CVE gate is the Grype scan above
-      # (fail-build: true on HIGH); this step only feeds the Security tab.
-      - name: Upload Grype SARIF to code scanning
-        if: always() && steps.grype-scan.outputs.sarif != ''
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v3.30.0
-        with:
-          sarif_file: ${{ steps.grype-scan.outputs.sarif }}
-          category: grype
+      # Grype's SBOM-mode SARIF emits an empty artifactLocation.uri (""),
+      # which Code Scanning rejects ("expected artifact location"). Anchor
+      # go-module findings to go.sum so the upload is accepted. (jq is
+      # preinstalled on ubuntu runners.)
+      - name: Anchor Go Grype SARIF findings (Code Scanning requires a location)
+        if: always() && steps.grype-server.outputs.sarif != ''
+        run: |
+          f="${{ steps.grype-server.outputs.sarif }}"
+          jq '(.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri) |= (if (. == "" or . == null) then "go.sum" else . end)' "$f" > "$f.fixed"
+          mv "$f.fixed" "$f"
 
-      - name: Upload Grype SARIF as workflow artifact
-        if: always() && steps.grype-scan.outputs.sarif != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      # Visibility-aware: required on public repos (the jq fix makes it valid,
+      # so it succeeds); tolerated on private forks without GitHub Advanced
+      # Security, where Code Scanning is unavailable. The Grype fail-build
+      # gate above is the real CVE block regardless.
+      - name: Upload Go Grype SARIF to code scanning
+        if: always() && steps.grype-server.outputs.sarif != ''
+        continue-on-error: ${{ github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
-          name: grype-sarif
-          path: ${{ steps.grype-scan.outputs.sarif }}
-          retention-days: 30
+          sarif_file: ${{ steps.grype-server.outputs.sarif }}
+          category: grype-server
+
+      - name: Scan webapp SBOM (Grype -> SARIF)
+        id: grype-webapp
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: dist/sbom/webapp-sbom.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+
+      # Same empty-uri fix as the Go SARIF above; anchor npm findings to the
+      # committed lockfile so Code Scanning accepts the upload.
+      - name: Anchor webapp Grype SARIF findings (Code Scanning requires a location)
+        if: always() && steps.grype-webapp.outputs.sarif != ''
+        run: |
+          f="${{ steps.grype-webapp.outputs.sarif }}"
+          jq '(.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri) |= (if (. == "" or . == null) then "webapp/package-lock.json" else . end)' "$f" > "$f.fixed"
+          mv "$f.fixed" "$f"
+
+      # Visibility-aware (see the Go upload step above for rationale).
+      - name: Upload webapp Grype SARIF to code scanning
+        if: always() && steps.grype-webapp.outputs.sarif != ''
+        continue-on-error: ${{ github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: ${{ steps.grype-webapp.outputs.sarif }}
+          category: grype-webapp
 
   codeql:
-    name: CodeQL static analysis (Go)
+    name: CodeQL static analysis (Go + JS/TS)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job only reads the repo and uploads SARIF via GITHUB_TOKEN;
+          # it never pushes, so don't persist the git token in the workspace.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -103,60 +158,62 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Generate the gitignored server/manifest.go before the traced build
-      # so CodeQL compiles and analyzes the full server package.
-      - name: Generate manifest
-        run: go run ./build/manifest apply
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v3.30.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          languages: go
-          # Index from repo root so root-package files (main.go,
-          # docs_embed.go, runbooks_embed.go) are covered. The Go
-          # module is rooted at the repo root — server/ is just a
-          # package inside it, not a separate module.
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v3.30.0
+      # codeql-js builds a database from the webapp source and needs the
+      # dependency tree present.
+      - name: Install webapp dependencies
+        run: cd webapp && npm ci
 
-      # Split analysis from upload so each step's success/failure has
-      # one clear meaning. `upload: never` writes SARIF locally; the
-      # explicit security-gate step then enforces the finding threshold,
-      # and the upload step pushes results to GitHub Code Scanning.
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v3.30.0
-        id: codeql-analyze
+      # Cache the CodeQL CLI bundle (~500MB) that `make install-codeql`
+      # downloads. Keyed on the version pinned in the Makefile so a bump
+      # there busts the cache automatically.
+      - name: Cache CodeQL CLI bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          category: codeql-go
-          upload: never
-          output: codeql-results
+          path: build/codeql
+          key: codeql-cli-${{ runner.os }}-2.20.1
 
-      # Stage the SARIF where `make security-gate` looks for it
-      # (dist/codeql-*.sarif). The Make target parses the SARIF
-      # for level=error findings and fails CI if any are present.
-      # Same gate as `make release` runs locally.
+      # Runs codeql-go + codeql-js, writing dist/codeql-go.sarif and
+      # dist/codeql-js.sarif — the exact files `make security-gate` and
+      # the release bundle consume.
+      - name: Run CodeQL analysis (Go + JS/TS)
+        run: make codeql-analyze
+
+      # Same gate as `make release`: fails on any error-level finding
+      # across dist/codeql-*.sarif.
       - name: Run security gate (fail on critical/high findings)
-        run: |
-          mkdir -p dist
-          cp codeql-results/*.sarif dist/codeql-go.sarif
-          make security-gate
+        run: make security-gate
 
-      # Best-effort: needs a public repo or GitHub Advanced Security. On a
-      # private repo without GHAS this 403s — don't fail the job. The hard
-      # gate is `make security-gate` above; this only feeds the Security tab.
-      - name: Upload CodeQL SARIF to code scanning
-        if: always()
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v3.30.0
+      # Visibility-aware, same as the Grype uploads: required on public,
+      # tolerated on private forks without GHAS. `make security-gate` above
+      # is the real CodeQL block regardless.
+      - name: Upload Go CodeQL SARIF to code scanning
+        if: always() && hashFiles('dist/codeql-go.sarif') != ''
+        continue-on-error: ${{ github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
-          sarif_file: codeql-results
+          sarif_file: dist/codeql-go.sarif
           category: codeql-go
+
+      # Visibility-aware (see the Go CodeQL upload above).
+      - name: Upload JS/TS CodeQL SARIF to code scanning
+        if: always() && hashFiles('dist/codeql-js.sarif') != ''
+        continue-on-error: ${{ github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: dist/codeql-js.sarif
+          category: codeql-js
 
       - name: Upload CodeQL SARIF as workflow artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: codeql-sarif
-          path: codeql-results/
+          path: dist/codeql-*.sarif
           retention-days: 30

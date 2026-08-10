@@ -34,9 +34,6 @@ build/codeql-db/
 # Spurious go.sum created by CodeQL in server directory
 server/go.sum
 
-# Compiled binary from `go build ./...` inside server/
-server/server
-
 # Playwright test output
 test-results/
 

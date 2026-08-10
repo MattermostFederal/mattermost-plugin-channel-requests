@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "tag-separator": "-",
-  "bootstrap-sha": "cc153043f1d9d612a66b1642544f925a9f3d6540",
+  "bootstrap-sha": "4a27c1641dfa3f10a5eef1b861f5cbd62ef0df2e",
   "packages": {
     ".": {
       "release-type": "simple",
@@ -16,61 +16,18 @@
         }
       ],
       "changelog-sections": [
-        {
-          "type": "feat",
-          "section": "Features"
-        },
-        {
-          "type": "fix",
-          "section": "Bug Fixes"
-        },
-        {
-          "type": "perf",
-          "section": "Performance"
-        },
-        {
-          "type": "deps",
-          "section": "Dependencies"
-        },
-        {
-          "type": "revert",
-          "section": "Reverts"
-        },
-        {
-          "type": "docs",
-          "section": "Documentation",
-          "hidden": true
-        },
-        {
-          "type": "style",
-          "section": "Style",
-          "hidden": true
-        },
-        {
-          "type": "chore",
-          "section": "Chores",
-          "hidden": true
-        },
-        {
-          "type": "refactor",
-          "section": "Refactors",
-          "hidden": true
-        },
-        {
-          "type": "test",
-          "section": "Tests",
-          "hidden": true
-        },
-        {
-          "type": "build",
-          "section": "Build",
-          "hidden": true
-        },
-        {
-          "type": "ci",
-          "section": "CI",
-          "hidden": true
-        }
+        {"type": "feat",     "section": "Features"},
+        {"type": "fix",      "section": "Bug Fixes"},
+        {"type": "perf",     "section": "Performance"},
+        {"type": "deps",     "section": "Dependencies"},
+        {"type": "revert",   "section": "Reverts"},
+        {"type": "docs",     "section": "Documentation", "hidden": true},
+        {"type": "style",    "section": "Style",         "hidden": true},
+        {"type": "chore",    "section": "Chores",        "hidden": true},
+        {"type": "refactor", "section": "Refactors",     "hidden": true},
+        {"type": "test",     "section": "Tests",         "hidden": true},
+        {"type": "build",    "section": "Build",         "hidden": true},
+        {"type": "ci",       "section": "CI",            "hidden": true}
       ]
     }
   }

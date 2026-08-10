@@ -1,0 +1,56 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # PR validation only builds/tests; it never pushes, so don't
+          # persist the git token in the workspace for later steps.
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install Go tools
+        run: make install-go-tools
+
+      - name: Install webapp dependencies
+        run: cd webapp && npm install
+
+      - name: Run style checks
+        run: make check-style
+
+      - name: Install Playwright browsers
+        run: cd webapp && npx playwright install --with-deps chromium
+
+      - name: Run tests
+        run: make test
+        timeout-minutes: 20
+
+      - name: Build plugin
+        run: make dist
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-dist
+          path: dist/*.tar.gz
+          retention-days: 7

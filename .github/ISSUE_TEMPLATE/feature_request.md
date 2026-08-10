@@ -18,8 +18,8 @@ assignees: ''
 
 ## Alternatives considered
 
-<!-- What other approaches did you think about, and why you didn't
-     pick them. Skip if there are no real alternatives. -->
+<!-- Other approaches you thought about and why you didn't pick them.
+     Skip if there are no real alternatives. -->
 
 ## Additional context
 

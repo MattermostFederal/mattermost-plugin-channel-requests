@@ -1,16 +1,18 @@
-# Dependabot config: scheduled dep updates across all three of our
-# dependency ecosystems (Go server, npm webapp, GitHub Actions).
-# PRs land on Monday mornings so weekly review is predictable;
-# max 5 open PRs per ecosystem to avoid swamping review capacity.
+# Dependabot config: scheduled dependency updates across every
+# ecosystem this plugin ships from — Go server, npm webapp, and the
+# GitHub Actions that run CI. PRs land Monday mornings so weekly
+# review is predictable; per-ecosystem open-PR caps keep review load
+# sane on a low-traffic template repo.
 #
-# Security updates (separate from these version updates) are enabled at
-# the repo level — those fire immediately when GHSA publishes a new
-# advisory affecting a pinned dep, regardless of this schedule.
+# Security updates (separate from the version updates configured here)
+# are enabled at the repo level too — those fire immediately when a
+# GHSA advisory lands against a pinned dep, regardless of this schedule.
 
 version: 2
 updates:
-  # Go module — the server binary. Includes transitive deps so the
-  # full security surface is tracked.
+  # Go modules — the plugin server. Single module rooted at the repo
+  # root (build/manifest and build/pluginctl are packages inside it,
+  # not separate go.mod files), so one entry covers the whole server.
   - package-ecosystem: gomod
     directory: /
     schedule:
@@ -25,11 +27,14 @@ updates:
     commit-message:
       # No `include: scope` — the prefix already carries the ecosystem
       # scope "(go)". Adding include:scope appends the dependency-type
-      # scope too, producing "deps(go)(deps):" — a double-scope that
-      # isn't valid Conventional Commit syntax, so release-please can't
-      # parse it and drops the bump from the changelog.
+      # scope too, producing "deps(go)(deps):" — a double scope that isn't
+      # valid Conventional Commit syntax, so release-please can't parse it
+      # and drops the bump from the changelog.
       prefix: "deps(go)"
     groups:
+      # Group minor + patch bumps into one PR to keep review noise low.
+      # Majors stay separate — they carry breaking changes worth a
+      # dedicated review.
       go-minor-patch:
         update-types:
           - minor
@@ -41,14 +46,14 @@ updates:
       # each still carries the other's unpatched HIGH — deadlocking a
       # strict, admin-enforced main.
       # applies-to:security-updates is required; a group without it only
-      # covers version updates. (Only the Go server SBOM is Grype-gated
-      # here, so npm doesn't need this — see the npm block below.)
+      # covers version updates.
       security-all:
         applies-to: security-updates
         patterns:
           - '*'
 
-  # npm — the React webapp. Group by patch-vs-minor to reduce PR churn.
+  # npm — the webapp. Grouped the same way as Go: minor/patch batched,
+  # majors isolated.
   - package-ecosystem: npm
     directory: /webapp
     schedule:
@@ -59,46 +64,45 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-      - npm
+      - javascript
     commit-message:
-      # No `include: scope` — see the go entry above. "deps(npm)" already
-      # scopes the ecosystem; include:scope would make "deps(npm)(deps-dev):"
-      # which release-please skips (that's why the eslint 10 bump never
-      # landed in the v0.2.0 changelog).
-      prefix: "deps(npm)"
-    # Hold webapp-toolchain majors that broke the build and aren't yet
-    # supported by the surrounding ecosystem. Revisit these together when
-    # the ecosystem catches up (fix-forward toolchain migration):
-    #   - typescript 7 (native "tsgo"): removes tsconfig options we use and
-    #     isn't supported by @typescript-eslint.
-    #   - eslint 10: no eslint-plugin-react release supports it.
-    #   - @babel/* 8 + babel-loader 10: ESM-only @babel/core breaks
-    #     babel-loader's require().
-    ignore:
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "eslint"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@babel/*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "babel-loader"
-        update-types: ["version-update:semver-major"]
+      # No `include: scope` — see the go entry above. "deps(webapp)"
+      # already scopes the ecosystem; include:scope would produce
+      # "deps(webapp)(deps-dev):" which release-please can't parse.
+      prefix: "deps(webapp)"
     groups:
       npm-minor-patch:
         update-types:
           - minor
           - patch
-      # Dev dependencies (linters, test tooling, build tools) change
-      # often but rarely affect runtime — bundle them separately.
-      npm-dev-dependencies:
-        dependency-type: development
+      # The webapp SBOM is Grype-gated at HIGH too (grype-webapp job), so
+      # npm security fixes face the same deadlock risk as Go — group them.
+      security-all:
+        applies-to: security-updates
+        patterns:
+          - '*'
+    ignore:
+      # eslint 10 removed context.getFilename(), which eslint-plugin-react
+      # (and other flat-config plugins) still call — so a major eslint bump
+      # breaks `make check-style` outright. Hold majors until the plugin
+      # ecosystem catches up; minor/patch on eslint 9.x still flow through.
+      - dependency-name: eslint
         update-types:
-          - minor
-          - patch
+          - version-update:semver-major
+      # TypeScript 7 is the native (Go-port) rewrite; its internal API
+      # changed and the pinned @typescript-eslint's typescript-estree crashes
+      # loading it ("Cannot read properties of undefined (reading 'Cjs')"),
+      # which breaks `make check-style` / the build. Hold TS majors until the
+      # eslint + build toolchain supports TS 7 (bump them together in a
+      # deliberate migration). Minor/patch on the current major still flow.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
 
-  # GitHub Actions used by .github/workflows/*.yml. Keeps action SHAs
-  # current — important because we pin all actions to SHAs (security),
-  # which means we don't get automatic updates the way @v4 tag users do.
+  # GitHub Actions used by .github/workflows/*.yml. We pin every action
+  # to a full commit SHA (supply-chain hardening — a moved tag can't
+  # swap the code out from under us). SHA pins don't auto-update the way
+  # @v4 tag users get, so Dependabot is what keeps them current.
   - package-ecosystem: github-actions
     directory: /
     schedule:

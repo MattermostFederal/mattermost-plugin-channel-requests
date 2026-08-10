@@ -22,38 +22,6 @@ include build/setup.mk
 
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
-# ====================================================================================
-# Build-time URL discovery
-# ====================================================================================
-# PLUGIN_REPO_URL resolves to "where this code lives in GitHub right now".
-# Used to substitute __PLUGIN_REPO_URL__ / __PLUGIN_RELEASE_URL__ /
-# __PLUGIN_VERSION__ placeholders in plugin.json's homepage_url,
-# support_url, and settings_schema.header. Result: fork or repo rename
-# flows into MM's System Console rendering without a source edit.
-#
-# Cascade (most authoritative first):
-#   1. CI: $(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY) — set by GitHub Actions.
-#   2. Local: parse `git remote get-url origin`, normalize SSH->HTTPS,
-#      strip trailing `.git`. Correct for normal dev clones AND forks.
-#   3. Hardcoded fallback PLUGIN_REPO_URL_DEFAULT — catches the
-#      "source tarball, no git, no CI" build case. Update this string
-#      if the upstream repo is permanently moved.
-# ====================================================================================
-
-PLUGIN_REPO_URL_DEFAULT := https://github.com/MattermostFederal/mattermost-plugin-channel-requests
-
-ifneq ($(GITHUB_REPOSITORY),)
-PLUGIN_REPO_URL := $(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)
-else
-PLUGIN_REPO_URL := $(shell git remote get-url origin 2>/dev/null | sed -e 's|^git@github.com:|https://github.com/|' -e 's|\.git$$||')
-endif
-
-ifeq ($(strip $(PLUGIN_REPO_URL)),)
-PLUGIN_REPO_URL := $(PLUGIN_REPO_URL_DEFAULT)
-endif
-
-PLUGIN_RELEASE_URL := $(PLUGIN_REPO_URL)/releases/tag/v$(PLUGIN_VERSION)
-
 # Include custom makefile, if present
 ifneq ($(wildcard build/custom.mk),)
 	include build/custom.mk
@@ -220,17 +188,6 @@ bundle:
 	rm -rf dist/
 	mkdir -p dist/$(PLUGIN_ID)
 	./build/bin/manifest dist
-	# Post-process the plugin.json that manifest just staged into
-	# dist/$(PLUGIN_ID)/plugin.json to substitute the URL/version
-	# placeholders. sed delimiter `|` because URLs contain slashes.
-	@if [ -f dist/$(PLUGIN_ID)/plugin.json ]; then \
-		sed -i.bak \
-			-e 's|__PLUGIN_RELEASE_URL__|$(PLUGIN_RELEASE_URL)|g' \
-			-e 's|__PLUGIN_REPO_URL__|$(PLUGIN_REPO_URL)|g' \
-			-e 's|__PLUGIN_VERSION__|$(PLUGIN_VERSION)|g' \
-			dist/$(PLUGIN_ID)/plugin.json && \
-		rm -f dist/$(PLUGIN_ID)/plugin.json.bak; \
-	fi
 ifneq ($(wildcard $(ASSETS_DIR)/.),)
 	cp -r $(ASSETS_DIR) dist/$(PLUGIN_ID)/
 endif
@@ -487,6 +444,28 @@ docker-plugin-list: docker-check
 .PHONY: deploy
 deploy: docker-deploy
 
+## Build and deploy to a Mattermost server running at MM_LOCAL_SITEURL
+## (default http://localhost:8065) via the bundled pluginctl tool. Unlike
+## `make deploy` (which targets the docker-compose stack), this hits a
+## locally-running server directly - useful when you develop against your own
+## Mattermost rather than the bundled Docker environment.
+##
+## pluginctl authenticates via one of (it validates and picks natively):
+##   - Local mode (auto-detected default socket, or MM_LOCALSOCKETPATH), or
+##   - MM_ADMIN_TOKEN                          (an admin personal access token), or
+##   - MM_ADMIN_USERNAME + MM_ADMIN_PASSWORD   (admin login)
+## Override the target server with `make deploy-local MM_LOCAL_SITEURL=...`.
+MM_LOCAL_SITEURL ?= http://localhost:8065
+.PHONY: deploy-local
+deploy-local: dist
+	@MM_SERVICESETTINGS_SITEURL=$(MM_LOCAL_SITEURL) ./build/bin/pluginctl deploy $(PLUGIN_ID) dist/$(BUNDLE_NAME) || { \
+		status=$$?; \
+		echo "deploy-local failed. pluginctl authenticates via local mode (default socket or MM_LOCALSOCKETPATH), MM_ADMIN_TOKEN, or MM_ADMIN_USERNAME + MM_ADMIN_PASSWORD."; \
+		echo "Or, with an already-authenticated mmctl, install directly:"; \
+		echo "  mmctl plugin add dist/$(BUNDLE_NAME) --force && mmctl plugin enable $(PLUGIN_ID)"; \
+		exit $$status; \
+	}
+
 # ====================================================================================
 # SBOM & Vulnerability Scanning
 # ====================================================================================
@@ -518,7 +497,10 @@ ifneq ($(HAS_SERVER),)
 endif
 ifneq ($(HAS_WEBAPP),)
 	@echo "Generating Node.js SBOM..."
-	cd webapp && npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file ../dist/sbom/webapp-sbom.json
+	# --omit dev: the plugin bundle ships only production deps; the dev/build
+	# toolchain (eslint, webpack, babel) is never in webapp/dist, so its CVEs
+	# must not gate releases. Grype still blocks HIGH/CRITICAL in shipped deps.
+	cd webapp && npx @cyclonedx/cyclonedx-npm --omit dev --ignore-npm-errors --output-file ../dist/sbom/webapp-sbom.json
 endif
 	@echo "SBOMs generated in dist/sbom/"
 	@ls -la dist/sbom/
@@ -576,6 +558,7 @@ ifneq ($(HAS_SERVER),)
 	@echo "Running CodeQL analysis on Go code..."
 	@rm -rf $(CODEQL_DB_DIR)/go
 	@mkdir -p $(CODEQL_DB_DIR)/go
+	@mkdir -p dist
 	$(CODEQL) database create $(CODEQL_DB_DIR)/go --language=go --source-root=server --overwrite
 	$(CODEQL) database analyze $(CODEQL_DB_DIR)/go --format=sarif-latest --output=dist/codeql-go.sarif -- codeql/go-queries
 	@echo "Go CodeQL results: dist/codeql-go.sarif"
@@ -588,6 +571,7 @@ ifneq ($(HAS_WEBAPP),)
 	@echo "Running CodeQL analysis on JavaScript/TypeScript code..."
 	@rm -rf $(CODEQL_DB_DIR)/js
 	@mkdir -p $(CODEQL_DB_DIR)/js
+	@mkdir -p dist
 	$(CODEQL) database create $(CODEQL_DB_DIR)/js --language=javascript --source-root=webapp --overwrite
 	$(CODEQL) database analyze $(CODEQL_DB_DIR)/js --format=sarif-latest --output=dist/codeql-js.sarif -- codeql/javascript-queries
 	@echo "JavaScript/TypeScript CodeQL results: dist/codeql-js.sarif"

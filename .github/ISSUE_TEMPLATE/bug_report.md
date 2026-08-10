@@ -22,20 +22,18 @@ assignees: ''
 
 ## Environment
 
-- Plugin version: <!-- /alertmanager about, or System Console > Plugins > Alertmanager > version footer -->
+- Plugin version: <!-- System Console > Plugins > <plugin> > version footer -->
 - Mattermost server version:
-- Alertmanager version:
 - OS (where MM runs):
 
 ## Logs / output
 
-<!-- Paste relevant lines from MM server log (System Console > Logs)
-     or any error message the slash command surfaced. Wrap in ``` so
-     they render readable. Scrub any tokens/URLs before posting. -->
+<!-- Paste relevant lines from the MM server log (System Console >
+     Logs). Wrap in a fenced block so they render. Scrub any tokens/URLs first. -->
 
-```
+```text
 ```
 
 ## Additional context
 
-<!-- Screenshots, AM config snippets (REDACTED), or anything else useful. -->
+<!-- Screenshots, config snippets (REDACTED), or anything else useful. -->

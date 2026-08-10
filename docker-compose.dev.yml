@@ -20,11 +20,6 @@ services:
       postgres:
         condition: service_healthy
     image: mattermost/mattermost-enterprise-edition:${MATTERMOST_IMAGE_TAG:-latest}
-    # mattermost-enterprise-edition ships linux/amd64 only — no arm64
-    # build. On Apple Silicon hosts Docker uses Rosetta emulation. On
-    # linux/amd64 CI runners this is a no-op. Override per-env by
-    # exporting MATTERMOST_PLATFORM if you need something else.
-    platform: ${MATTERMOST_PLATFORM:-linux/amd64}
     restart: unless-stopped
     ports:
       - "${MM_PORT:-8065}:8065"
