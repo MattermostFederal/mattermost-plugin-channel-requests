@@ -22,9 +22,8 @@ assignees: ''
 
 ## Environment
 
-- Plugin version: <!-- /alertmanager about, or System Console > Plugins > Alertmanager > version footer -->
+- Plugin version: <!-- System Console > Plugins > Channel Requests > version footer -->
 - Mattermost server version:
-- Alertmanager version:
 - OS (where MM runs):
 
 ## Logs / output
@@ -38,4 +37,4 @@ assignees: ''
 
 ## Additional context
 
-<!-- Screenshots, AM config snippets (REDACTED), or anything else useful. -->
+<!-- Screenshots, plugin config (REDACTED), or anything else useful. -->
