@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.3.0...v0.3.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **ci:** least-privilege secrets + correct SARIF ref on release call ([82c7f3a](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/82c7f3a3d9bb83cfeb54c816b54d2190ef29ac18))
+* **ci:** publish release assets via reusable workflow ([56dc238](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/56dc238e407cea57d4e6c8fee4e7a527e70f430e))
+* **ci:** publish release assets via reusable workflow ([0cc42d6](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/0cc42d6e5c1b3ba5ef82d658087ba63d25614080))
+* correct stale fork references (alertmanager/template leftovers) ([c302569](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c3025691b71e42b68bb1d49cd246355c131bf71b))
+* correct stale fork references (alertmanager/template leftovers) ([15cbe50](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/15cbe5017889485a80fd05ced2d72cc6b066595a))
+
+
+### Dependencies
+
+* **actions:** bump the actions-minor-patch group with 4 updates ([60a63e3](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/60a63e3e40b06f09cf13d8aaf90a8d21d329d8bb))
+* **npm:** bump the npm-minor-patch group in /webapp with 3 updates ([c32c27d](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c32c27dc655a593fc9095ccb8b4b407fe7d0dc02))
+
 ## [0.3.0](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.2.1...v0.3.0) (2026-08-04)
 
 
