@@ -6,7 +6,7 @@ In short: be respectful, assume good faith, and focus criticism on code and idea
 
 ## Reporting
 
-To report a violation, email the maintainer listed in [`CODEOWNERS`](./CODEOWNERS) or open a private security advisory at https://github.com/christopherfickess/mattermost-plugin-alertmanager/security/advisories/new. Reports are confidential and will be acknowledged within five business days.
+To report a violation, email the maintainer listed in [`CODEOWNERS`](./CODEOWNERS) or open a private security advisory at https://github.com/MattermostFederal/mattermost-plugin-channel-requests/security/advisories/new. Reports are confidential and will be acknowledged within five business days.
 
 ## Enforcement
 
