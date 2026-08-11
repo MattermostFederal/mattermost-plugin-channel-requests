@@ -33,7 +33,7 @@ jobs:
         run: make install-go-tools
 
       - name: Install webapp dependencies
-        run: cd webapp && npm install
+        run: cd webapp && npm ci
 
       - name: Run style checks
         run: make check-style

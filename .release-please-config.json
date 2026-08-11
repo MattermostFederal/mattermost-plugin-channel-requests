@@ -4,7 +4,6 @@
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "tag-separator": "-",
-  "bootstrap-sha": "4a27c1641dfa3f10a5eef1b861f5cbd62ef0df2e",
   "packages": {
     ".": {
       "release-type": "simple",
