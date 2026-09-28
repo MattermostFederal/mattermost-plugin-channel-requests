@@ -5,6 +5,18 @@ export const OPEN_REQUEST_MODAL = `${manifest.id}_open_request_modal`;
 export const CLOSE_REQUEST_MODAL = `${manifest.id}_close_request_modal`;
 export const OPEN_ADMIN_MODAL = `${manifest.id}_open_admin_modal`;
 export const CLOSE_ADMIN_MODAL = `${manifest.id}_close_admin_modal`;
+export const OPEN_TEAM_CREATION_MODAL = `${manifest.id}_open_team_creation_modal`;
+export const CLOSE_TEAM_CREATION_MODAL = `${manifest.id}_close_team_creation_modal`;
+export const OPEN_TEAM_ADMIN_REQUEST_MODAL = `${manifest.id}_open_team_admin_request_modal`;
+export const CLOSE_TEAM_ADMIN_REQUEST_MODAL = `${manifest.id}_close_team_admin_request_modal`;
+export const OPEN_BOT_REQUEST_MODAL = `${manifest.id}_open_bot_request_modal`;
+export const CLOSE_BOT_REQUEST_MODAL = `${manifest.id}_close_bot_request_modal`;
+export const OPEN_INCOMING_WEBHOOK_MODAL = `${manifest.id}_open_incoming_webhook_modal`;
+export const CLOSE_INCOMING_WEBHOOK_MODAL = `${manifest.id}_close_incoming_webhook_modal`;
+export const OPEN_OUTGOING_WEBHOOK_MODAL = `${manifest.id}_open_outgoing_webhook_modal`;
+export const CLOSE_OUTGOING_WEBHOOK_MODAL = `${manifest.id}_close_outgoing_webhook_modal`;
+export const OPEN_HUB_MODAL = `${manifest.id}_open_hub_modal`;
+export const CLOSE_HUB_MODAL = `${manifest.id}_close_hub_modal`;
 
 export const openRequestModal = (): Action => ({type: OPEN_REQUEST_MODAL});
 export const closeRequestModal = (): Action => ({type: CLOSE_REQUEST_MODAL});
@@ -16,12 +28,32 @@ type OpenAdminModalAction = Action & {channelId: string};
 export const openAdminRequestModal = (channelId: string): OpenAdminModalAction => ({type: OPEN_ADMIN_MODAL, channelId});
 export const closeAdminRequestModal = (): Action => ({type: CLOSE_ADMIN_MODAL});
 
+export const openTeamCreationModal = (): Action => ({type: OPEN_TEAM_CREATION_MODAL});
+export const closeTeamCreationModal = (): Action => ({type: CLOSE_TEAM_CREATION_MODAL});
+export const openTeamAdminRequestModal = (): Action => ({type: OPEN_TEAM_ADMIN_REQUEST_MODAL});
+export const closeTeamAdminRequestModal = (): Action => ({type: CLOSE_TEAM_ADMIN_REQUEST_MODAL});
+export const openBotRequestModal = (): Action => ({type: OPEN_BOT_REQUEST_MODAL});
+export const closeBotRequestModal = (): Action => ({type: CLOSE_BOT_REQUEST_MODAL});
+export const openIncomingWebhookModal = (): Action => ({type: OPEN_INCOMING_WEBHOOK_MODAL});
+export const closeIncomingWebhookModal = (): Action => ({type: CLOSE_INCOMING_WEBHOOK_MODAL});
+export const openOutgoingWebhookModal = (): Action => ({type: OPEN_OUTGOING_WEBHOOK_MODAL});
+export const closeOutgoingWebhookModal = (): Action => ({type: CLOSE_OUTGOING_WEBHOOK_MODAL});
+export const openHubModal = (): Action => ({type: OPEN_HUB_MODAL});
+export const closeHubModal = (): Action => ({type: CLOSE_HUB_MODAL});
+
 type PluginState = {
     modalOpen: boolean;
 
     // adminModalChannelId is the channel the "Request Channel Admin" modal is
     // open for, or null when the modal is closed.
     adminModalChannelId: string | null;
+
+    teamCreationModalOpen: boolean;
+    teamAdminRequestModalOpen: boolean;
+    botRequestModalOpen: boolean;
+    incomingWebhookModalOpen: boolean;
+    outgoingWebhookModalOpen: boolean;
+    hubModalOpen: boolean;
 };
 
 // GlobalState is a minimal shape of the parts of the Redux store this plugin reads. Plugin state is
@@ -30,6 +62,14 @@ export type GlobalState = {
     entities: {
         teams: {
             currentTeamId: string;
+
+            // Matches TeamsState from @mattermost/types — Record<string, Team>.
+            // display_name and name are non-optional on the Team type.
+            teams: Record<string, {id: string; display_name: string; name: string}>;
+
+            // Matches TeamsState.myMembers — Record<string, TeamMembership>.
+            // roles and scheme_admin are non-optional on TeamMembership.
+            myMembers: Record<string, {roles: string; scheme_admin: boolean}>;
         };
         users?: {
             currentUserId?: string;
@@ -59,7 +99,63 @@ export const getAdminModalChannelId = (state: GlobalState): string | null => {
     return pluginState?.adminModalChannelId ?? null;
 };
 
+export const isTeamCreationModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.teamCreationModalOpen);
+};
+
+export const isTeamAdminRequestModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.teamAdminRequestModalOpen);
+};
+
+export const isBotRequestModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.botRequestModalOpen);
+};
+
+export const isIncomingWebhookModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.incomingWebhookModalOpen);
+};
+
+export const isOutgoingWebhookModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.outgoingWebhookModalOpen);
+};
+
+export const isHubModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.hubModalOpen);
+};
+
+// isCurrentUserTeamAdmin returns true when the logged-in user is already a
+// Team Admin (or System Admin) in the given team. Used to hide the
+// "Request Team Admin" menu item for users who already have that role.
+export const isCurrentUserTeamAdmin = (state: GlobalState, teamId: string): boolean => {
+    const users = state?.entities?.users;
+    const currentUserId = users?.currentUserId ?? '';
+    const systemRoles = (currentUserId ? users?.profiles?.[currentUserId]?.roles : '') ?? '';
+    if (systemRoles.split(' ').includes('system_admin')) {
+        return true;
+    }
+    const myMember = teamId ? state.entities?.teams?.myMembers?.[teamId] : undefined;
+    if (!myMember) {
+        return false;
+    }
+    // scheme_admin and roles are non-optional on TeamMembership.
+    return myMember.scheme_admin || myMember.roles.split(' ').includes('team_admin');
+};
+
 export const getCurrentTeamId = (state: GlobalState): string => state.entities?.teams?.currentTeamId ?? '';
+
+// getCurrentTeamDisplayName returns the display name of the active team.
+// Falls back to the team ID when the entity map hasn't populated yet —
+// cosmetic fallback, acceptable on initial render.
+export const getCurrentTeamDisplayName = (state: GlobalState): string => {
+    const teamId = state.entities?.teams?.currentTeamId ?? '';
+    return state.entities?.teams?.teams?.[teamId]?.display_name ?? teamId;
+};
 
 export const getCurrentChannelId = (state: GlobalState): string => state.entities?.channels?.currentChannelId ?? '';
 
@@ -94,7 +190,16 @@ export const isCurrentUserChannelAdmin = (state: GlobalState, channelId: string)
     return (member.roles ?? '').split(' ').includes('channel_admin');
 };
 
-const initialState: PluginState = {modalOpen: false, adminModalChannelId: null};
+const initialState: PluginState = {
+    modalOpen: false,
+    adminModalChannelId: null,
+    teamCreationModalOpen: false,
+    teamAdminRequestModalOpen: false,
+    botRequestModalOpen: false,
+    incomingWebhookModalOpen: false,
+    outgoingWebhookModalOpen: false,
+    hubModalOpen: false,
+};
 
 export default function reducer(state: PluginState = initialState, action: Action): PluginState {
     switch (action.type) {
@@ -106,6 +211,30 @@ export default function reducer(state: PluginState = initialState, action: Actio
         return {...state, adminModalChannelId: (action as OpenAdminModalAction).channelId};
     case CLOSE_ADMIN_MODAL:
         return {...state, adminModalChannelId: null};
+    case OPEN_TEAM_CREATION_MODAL:
+        return {...state, teamCreationModalOpen: true};
+    case CLOSE_TEAM_CREATION_MODAL:
+        return {...state, teamCreationModalOpen: false};
+    case OPEN_TEAM_ADMIN_REQUEST_MODAL:
+        return {...state, teamAdminRequestModalOpen: true};
+    case CLOSE_TEAM_ADMIN_REQUEST_MODAL:
+        return {...state, teamAdminRequestModalOpen: false};
+    case OPEN_BOT_REQUEST_MODAL:
+        return {...state, botRequestModalOpen: true};
+    case CLOSE_BOT_REQUEST_MODAL:
+        return {...state, botRequestModalOpen: false};
+    case OPEN_INCOMING_WEBHOOK_MODAL:
+        return {...state, incomingWebhookModalOpen: true};
+    case CLOSE_INCOMING_WEBHOOK_MODAL:
+        return {...state, incomingWebhookModalOpen: false};
+    case OPEN_OUTGOING_WEBHOOK_MODAL:
+        return {...state, outgoingWebhookModalOpen: true};
+    case CLOSE_OUTGOING_WEBHOOK_MODAL:
+        return {...state, outgoingWebhookModalOpen: false};
+    case OPEN_HUB_MODAL:
+        return {...state, hubModalOpen: true};
+    case CLOSE_HUB_MODAL:
+        return {...state, hubModalOpen: false};
     default:
         return state;
     }

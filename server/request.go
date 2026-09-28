@@ -66,6 +66,13 @@ type channelRequest struct {
 	// approval, these users get channel_admin scheme roles in the newly
 	// created channel (in addition to being members).
 	AdminMemberIDs []string `json:"admin_member_ids"`
+
+	// Ticket messaging fields — set after the approval post and DM are created.
+	// Used by the MessageHasBeenPosted hook to route thread replies in both directions.
+	ApprovalPostID    string `json:"approval_post_id,omitempty"`
+	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
+	DMRootPostID      string `json:"dm_root_post_id,omitempty"`
+	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
@@ -120,7 +127,7 @@ func slugify(s string) string {
 // channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
 	if !config.UsesPrefixList() {
-		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
+		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Mattermost Permissions")
 	}
 	return resolvePrefixedName(config.Prefixes(), in)
 }
@@ -276,17 +283,72 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
+	// Store the request before posting the approval message so the approve/deny
+	// handlers can find it by ID the moment the post is live.
 	if err := p.storeRequest(req); err != nil {
 		return "", err
 	}
 
-	if err := p.postApprovalRequest(req, requester); err != nil {
+	approvalPostID, approvalChannelID, err := p.postApprovalRequest(req, requester)
+	if err != nil {
 		// Roll back the stored request so it isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
 		return "", err
 	}
 
+	req.ApprovalPostID = approvalPostID
+	req.ApprovalChannelID = approvalChannelID
+
+	dmRootPostID, dmChannelID := p.sendTicketCreatedDM(req, requester)
+	req.DMRootPostID = dmRootPostID
+	req.DMChannelID = dmChannelID
+
+	// Re-store with the post IDs filled in. Best-effort: if this fails the ticket
+	// still works (approve/deny still finds the request), but thread forwarding and
+	// threaded outcome notifications won't work for this ticket.
+	if storeErr := p.storeRequest(req); storeErr != nil {
+		p.API.LogWarn("failed to re-store request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	} else {
+		p.storeTicketLookups(threadAnchor{
+			ApprovalPostID:    approvalPostID,
+			ApprovalChannelID: approvalChannelID,
+			DMRootPostID:      dmRootPostID,
+			DMChannelID:       dmChannelID,
+		})
+	}
+
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
+}
+
+// sendTicketCreatedDM opens a DM between the bot and the requester and posts a
+// card mirroring the approval post (same fields, no buttons) as the root of
+// the ticket thread. The requester can reply here to add context; replies are
+// forwarded to the approval thread by MessageHasBeenPosted. Returns the root
+// post ID and DM channel ID; both empty on failure (non-fatal).
+func (p *Plugin) sendTicketCreatedDM(req *channelRequest, requester *model.User) (dmRootPostID, dmChannelID string) {
+	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
+	if appErr != nil {
+		p.API.LogWarn("failed to open DM for ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
+		return "", ""
+	}
+
+	attachment := p.approvalAttachment(req, requester)
+	attachment.Actions = nil
+	attachment.Color = colorPending
+
+	post := &model.Post{
+		UserId:    p.botUserID,
+		ChannelId: dm.Id,
+		Message:   "Your channel request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+
+	created, appErr := p.API.CreatePost(post)
+	if appErr != nil {
+		p.API.LogWarn("failed to send ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
+		return "", ""
+	}
+	return created.Id, dm.Id
 }
 
 // postWelcomeMessage posts a bot message in the newly-created channel announcing who requested it
@@ -318,18 +380,19 @@ func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest,
 	}
 }
 
-// logAudit posts an audit-trail line to the configured audit channel.
-// No-op when AuditChannelID is empty.
-func (p *Plugin) logAudit(config *configuration, message string) {
-	if strings.TrimSpace(config.AuditChannelID) == "" {
+// logAudit posts an audit-trail line to the auto-created audit channel.
+// No-op when ApprovalTeam is not configured (ensureAuditChannel returns nil).
+func (p *Plugin) logAudit(_ *configuration, message string) {
+	ch := p.ensureAuditChannel()
+	if ch == nil {
 		return
 	}
 	if _, appErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
-		ChannelId: config.AuditChannelID,
+		ChannelId: ch.Id,
 		Message:   message,
 	}); appErr != nil {
-		p.API.LogWarn("audit post failed", "channel_id", config.AuditChannelID, "error", appErr.Error())
+		p.API.LogWarn("audit post failed", "channel_id", ch.Id, "error", appErr.Error())
 	}
 }
 
@@ -351,8 +414,14 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 	}
 
 	// Union of everyone who should be a member: requester + regular + admin sets.
+	// If no explicit Channel Admins were designated, the requester is promoted
+	// automatically — a channel with no admin has nobody who can manage it.
+	adminIDs := req.AdminMemberIDs
+	if len(adminIDs) == 0 {
+		adminIDs = []string{req.RequesterID}
+	}
 	adminSet := map[string]bool{}
-	for _, uid := range req.AdminMemberIDs {
+	for _, uid := range adminIDs {
 		if uid != "" {
 			adminSet[uid] = true
 		}
@@ -436,39 +505,40 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 }
 
 // postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
-// act on.
-func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) error {
+// act on. Returns the created post's ID and channel ID, which are empty in fallback mode (when the
+// request is DM'd to system admins instead of posted to a channel).
+func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) (postID, channelID string, err error) {
+	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
 	return p.postApprovalAttachment(
 		p.approvalAttachment(req, requester),
-		"@channel — a new channel request needs your review.",
+		teamLabel+"@channel — a new channel request needs your review.",
+		approvalChannel,
 	)
 }
 
-// postApprovalAttachment delivers an approval attachment to the reviewers. It prefers the configured
-// approval channel, but when that isn't configured (or can't be found) it falls back to DMing every
-// System Admin so requests are never silently dropped. Shared by the channel-creation and
-// channel-admin request flows.
-func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) error {
-	config := p.getConfiguration()
-
-	if strings.TrimSpace(config.ApprovalTeam) != "" && strings.TrimSpace(config.ApprovalChannel) != "" {
-		channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
-		if appErr == nil {
-			post := &model.Post{
-				UserId:    p.botUserID,
-				ChannelId: channel.Id,
-				Message:   headerMessage,
-			}
-			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-			if _, postErr := p.API.CreatePost(post); postErr != nil {
-				return errors.Wrap(postErr, "failed to post approval request")
-			}
-			return nil
+// postApprovalAttachment delivers an approval attachment to the reviewers. When approvalChannel is
+// non-nil, the post goes there; otherwise it falls back to DMing every System Admin so requests are
+// never silently dropped. Shared by the channel-creation and channel-admin request flows.
+//
+// Returns (postID, channelID, error). postID and channelID are empty in fallback mode — in that case
+// the ticket messaging features (thread reply forwarding) are unavailable, but approve/deny notifications
+// still reach the requester via a new DM root post.
+func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string, approvalChannel *model.Channel) (postID, channelID string, err error) {
+	if approvalChannel != nil {
+		post := &model.Post{
+			UserId:    p.botUserID,
+			ChannelId: approvalChannel.Id,
+			Message:   headerMessage,
 		}
-		p.API.LogWarn("configured approval channel not found; falling back to System Admins", "team", config.ApprovalTeam, "channel", config.ApprovalChannel, "error", appErr.Error())
+		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+		created, postErr := p.API.CreatePost(post)
+		if postErr != nil {
+			return "", "", errors.Wrap(postErr, "failed to post approval request")
+		}
+		return created.Id, approvalChannel.Id, nil
 	}
 
-	return p.postApprovalToSystemAdmins(attachment)
+	return "", "", p.postApprovalToSystemAdmins(attachment)
 }
 
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
@@ -505,6 +575,9 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
+// Core identifying fields (requester, visibility, channel name, URL) are always visible.
+// Verbose details (purpose, members, admins) go in Text so Mattermost's native "Show more"
+// collapses them on long requests — the approval channel stays scannable.
 func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.MessageAttachment {
 	visibility := "Public"
 	if req.ChannelType == channelTypePrivate {
@@ -517,18 +590,16 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
 		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
 	}
+
+	var details []string
 	if req.Purpose != "" {
-		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
+		details = append(details, fmt.Sprintf("**Purpose:** %s", req.Purpose))
 	}
 	if len(req.MemberIDs) > 0 {
-		fields = append(fields, &model.MessageAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+		details = append(details, fmt.Sprintf("**Members to add:** %s", p.mentionList(req.MemberIDs)))
 	}
 	if len(req.AdminMemberIDs) > 0 {
-		fields = append(fields, &model.MessageAttachmentField{
-			Title: "Channel Admins to add",
-			Value: p.mentionList(req.AdminMemberIDs),
-			Short: false,
-		})
+		details = append(details, fmt.Sprintf("**Channel Admins to add:** %s", p.mentionList(req.AdminMemberIDs)))
 	}
 
 	siteURL := "/plugins/" + manifest.Id
@@ -536,6 +607,7 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		Title:   "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,
+		Text:    strings.Join(details, "\n"),
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
 }
@@ -576,18 +648,3 @@ func (p *Plugin) mentionList(userIDs []string) string {
 	return strings.Join(mentions, ", ")
 }
 
-// notifyRequester sends a DM from the bot to the requester about the outcome of their request.
-func (p *Plugin) notifyRequester(requesterID, message string) {
-	channel, appErr := p.API.GetDirectChannel(requesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM with requester", "user_id", requesterID, "error", appErr.Error())
-		return
-	}
-	if _, appErr := p.API.CreatePost(&model.Post{
-		UserId:    p.botUserID,
-		ChannelId: channel.Id,
-		Message:   message,
-	}); appErr != nil {
-		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", appErr.Error())
-	}
-}

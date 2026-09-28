@@ -45,8 +45,18 @@ type channelPrefix struct {
 //  5. Rate limits
 type configuration struct {
 	// --- 1. Approval routing ---
-	ApprovalTeam    string
-	ApprovalChannel string
+
+	// ApprovalTeam is the team where all named approval channels are created
+	// (bot, webhook, team, audit, and the root channel/admin channel requests).
+	// The channel URL is always "mattermost-channel-requests" — no separate
+	// setting is needed.
+	ApprovalTeam string
+
+	// PerTeamApprovalChannels enables automatic creation of a per-team
+	// approval channel (named by PerTeamChannelName) in every team. When
+	// true, channel and admin-promotion requests route to the requesting
+	// team's dedicated channel instead of the global ApprovalTeam/Channel.
+	PerTeamApprovalChannels bool
 
 	// --- 2. Naming enforcement ---
 	// ChannelNamePrefixes is the raw multi-line prefix list. Each line
@@ -68,12 +78,22 @@ type configuration struct {
 	// IDs on the server side, since usernames are what admins recognize.)
 	AutoApproveUserIDs string
 
-	// --- 4. Audit ---
-	AuditChannelID string
+	// --- 4. Security ---
+
+	// BotReviewGroup is the name of a Mattermost User Group (without @)
+	// that is @-mentioned on every bot account request alongside System
+	// Admins. Leave blank to notify System Admins only.
+	BotReviewGroup string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
 	autoApproveUserIDs []string
+}
+
+// TeamChannelName returns the fixed per-team approval channel URL name.
+// Follows the mattermost-*-requests pattern used by all plugin-managed channels.
+func (c *configuration) TeamChannelName() string {
+	return "mattermost-channel-requests"
 }
 
 // UsesPrefixList reports whether the admin has configured at least one
@@ -144,7 +164,17 @@ func (p *Plugin) OnConfigurationChange() error {
 	// instead of hitting the API for every request.
 	configuration.autoApproveUserIDs = p.resolveAutoApproveList(configuration.AutoApproveUserIDs)
 
+	// Detect PerTeamApprovalChannels being enabled for the first time so we can
+	// backfill channels for teams that existed before the setting was toggled on.
+	// Only triggers on the false→true transition to avoid an unnecessary team-list
+	// scan on every unrelated config save while the setting is already enabled.
+	prevPerTeamEnabled := p.getConfiguration().PerTeamApprovalChannels
+
 	p.setConfiguration(configuration)
+
+	if configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
+		go p.ensureAllTeamApprovalChannels()
+	}
 
 	return nil
 }

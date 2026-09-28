@@ -262,7 +262,7 @@ export const RequestChannelModal = () => {
                                     className='alert alert-warning'
                                     style={{marginBottom: 16}}
                                 >
-                                    {'Channel requests aren’t configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests.'}
+                                    {"Channel creation requests aren’t configured yet — no channel prefixes have been defined. Ask a System Admin to add at least one prefix in System Console → Plugins → Mattermost Permissions, then try again."}
                                 </div>
                                 <div style={{textAlign: 'right'}}>
                                     <button

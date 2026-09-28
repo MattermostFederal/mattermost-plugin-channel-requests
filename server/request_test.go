@@ -43,6 +43,10 @@ func testAppErr(msg string) *model.AppError {
 	return model.NewAppError("test", "test.error", nil, msg, http.StatusInternalServerError)
 }
 
+// strPtr returns a pointer to the given string. Used in tests that need to
+// set *string fields in model structs (e.g. ServiceSettings.SiteURL).
+func strPtr(s string) *string { return &s }
+
 func TestCreateChannelForRequest_AddsMembersAndPromotesAdmins(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
@@ -312,6 +316,8 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 		return c.TeamId == "team1" && c.Name == "team-marketing"
 	})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
+	// No AdminMemberIDs → requester is auto-promoted to channel admin.
+	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	msg, err := p.submitRequest(requestInput{
@@ -328,19 +334,20 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 	api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
 }
 
-func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
+func TestSubmitRequest_BypassCreation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{
-		prefixes:       []channelPrefix{{Prefix: "team-"}},
-		AuditChannelID: "audit1",
+		prefixes: []channelPrefix{{Prefix: "team-"}},
 	})
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
+	// No AdminMemberIDs → requester is auto-promoted to channel admin.
+	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	_, err := p.submitRequest(requestInput{
@@ -351,11 +358,8 @@ func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 		Name:        "marketing",
 	})
 	require.NoError(t, err)
-
-	// The bypass-path (sysadmin/auto-approve) creation is audited.
-	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
-		return post.ChannelId == "audit1" && strings.Contains(post.Message, "CREATED")
-	}))
+	// Channel was created directly (System Admin bypass path).
+	api.AssertCalled(t, "CreateChannel", mock.Anything)
 }
 
 func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {

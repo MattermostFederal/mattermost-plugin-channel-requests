@@ -152,6 +152,8 @@ func TestHandleAction_ApproveClaimsAndCreates(t *testing.T) {
 	api.On("KVCompareAndDelete", kvRequestPrefix+"req1", raw).Return(true, nil)
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-x"}, nil)
 	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+	// No AdminMemberIDs → requester is auto-promoted to channel admin.
+	api.On("UpdateChannelMemberRoles", "ch1", "u_req", channelAdminRoleString).Return(&model.ChannelMember{}, nil)
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post")) // resolvedPost falls back

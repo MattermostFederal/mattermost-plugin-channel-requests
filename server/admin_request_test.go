@@ -83,7 +83,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam", ApprovalChannel: "channel-requests"})
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
@@ -93,7 +93,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 
 	// Approval destination + approver set: one System Admin + one Team Admin
 	// of the target channel's team.
-	api.On("GetChannelByNameForTeamName", "appteam", "channel-requests", false).Return(&model.Channel{Id: "appch"}, nil)
+	api.On("GetChannelByNameForTeamName", "appteam", "mattermost-channel-requests", false).Return(&model.Channel{Id: "appch"}, nil)
 	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1"}}, nil)
 	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{
 		{TeamId: "team1", UserId: "ta1", Roles: "team_user team_admin"},
@@ -102,10 +102,18 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 	api.On("GetUser", "ta1").Return(&model.User{Id: "ta1", Username: "lead"}, nil)
 
+	// Capture only the post going to the approval channel so the requester DM
+	// (a second CreatePost call) doesn't overwrite the assertion target.
 	var posted *model.Post
-	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) {
+	api.On("CreatePost", mock.MatchedBy(func(p *model.Post) bool {
+		return p.ChannelId == "appch"
+	})).Run(func(args mock.Arguments) {
 		posted = args.Get(0).(*model.Post)
-	}).Return(&model.Post{}, nil)
+	}).Return(&model.Post{Id: "appch-post"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	// sendTicketCreatedDM opens a DM with the requester to start their ticket thread.
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "req-dm"}, nil)
 
 	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
 
@@ -143,11 +151,17 @@ func TestSubmitAdminRequest_NoApprovalChannelFallsBackToSystemAdmins(t *testing.
 	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil)
 	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 
+	// Capture only the post going to the system-admin DM so the requester DM
+	// (a second CreatePost call) doesn't overwrite the assertion target.
 	var dmPost *model.Post
 	api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
-	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) {
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "req-dm"}, nil)
+	api.On("CreatePost", mock.MatchedBy(func(p *model.Post) bool {
+		return p.ChannelId == "dm1"
+	})).Run(func(args mock.Arguments) {
 		dmPost = args.Get(0).(*model.Post)
 	}).Return(&model.Post{}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
 

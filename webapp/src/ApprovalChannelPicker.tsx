@@ -149,7 +149,6 @@ export const ChannelPicker: React.FC<Props> = (props) => {
 
     const [channels, setChannels] = useState<Channel[]>([]);
     const [loading, setLoading] = useState(false);
-    const [teamID, setTeamID] = useState<string>('');
 
     // Read the latest value/onChange from the effect without making them
     // effect dependencies (which would re-run the fetch on every keystroke
@@ -186,7 +185,6 @@ export const ChannelPicker: React.FC<Props> = (props) => {
 
         if (!teamSlug) {
             setChannels([]);
-            setTeamID('');
             clearStaleChannel();
             return undefined;
         }
@@ -198,7 +196,6 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             const match = teams.find((t) => t.name === teamSlug);
             if (!match) {
                 setChannels([]);
-                setTeamID('');
                 setLoading(false);
                 clearStaleChannel();
                 return;
@@ -207,7 +204,6 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             if (cancelled) {
                 return;
             }
-            setTeamID(match.id);
             setChannels(list);
             setLoading(false);
 
@@ -258,10 +254,6 @@ export const ChannelPicker: React.FC<Props> = (props) => {
                     </option>
                 ))}
             </select>
-            <small style={{opacity: 0.6}}>
-                {'The channel where new channel requests get posted for approval. '}
-                {teamID ? `Scoped to team ID ${teamID.slice(0, 8)}...` : 'Pick a team above first.'}
-            </small>
         </div>
     );
 };

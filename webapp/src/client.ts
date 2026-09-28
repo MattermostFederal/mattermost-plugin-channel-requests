@@ -87,6 +87,150 @@ export async function submitChannelRequest(payload: ChannelRequestPayload): Prom
     return body;
 }
 
+export type TeamCreationPayload = {
+    display_name: string;
+    name?: string;       // optional URL slug — server generates from display_name if blank
+    type: string;        // 'O' (open) or 'I' (invite-only)
+    description?: string;
+    request_team_admin?: boolean;
+};
+
+export type TeamAdminRequestPayload = {
+    team_id: string;
+};
+
+export async function submitTeamCreationRequest(payload: TeamCreationPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/submit_team_creation`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    let body: ChannelRequestResult = {};
+    try {
+        body = await response.json();
+    } catch {
+        // fall through
+    }
+
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
+export async function submitTeamAdminRequest(payload: TeamAdminRequestPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/submit_team_admin_request`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    let body: ChannelRequestResult = {};
+    try {
+        body = await response.json();
+    } catch {
+        // fall through
+    }
+
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
+export type BotRequestPayload = {
+    username: string;
+    display_name: string;
+    description?: string;
+    request_token?: boolean;
+    incoming_webhook_channel_id?: string;
+    incoming_webhook_display_name?: string;
+    outgoing_webhook_channel_id?: string;
+    outgoing_webhook_display_name?: string;
+    outgoing_webhook_callback_url?: string;
+};
+
+export type IncomingWebhookPayload = {
+    channel_id: string;
+    display_name: string;
+    description?: string;
+};
+
+export type OutgoingWebhookPayload = {
+    channel_id: string;
+    display_name: string;
+    description?: string;
+    callback_url: string;
+};
+
+export async function submitBotRequest(payload: BotRequestPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/submit_bot_request`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+    let body: ChannelRequestResult = {};
+    try { body = await response.json(); } catch { /* fall through */ }
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
+export async function submitIncomingWebhookRequest(payload: IncomingWebhookPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/submit_incoming_webhook_request`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+    let body: ChannelRequestResult = {};
+    try { body = await response.json(); } catch { /* fall through */ }
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
+export async function submitOutgoingWebhookRequest(payload: OutgoingWebhookPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/submit_outgoing_webhook_request`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+    let body: ChannelRequestResult = {};
+    try { body = await response.json(); } catch { /* fall through */ }
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
 export async function submitAdminRequest(payload: AdminRequestPayload): Promise<ChannelRequestResult> {
     const response = await fetch(`/plugins/${manifest.id}/api/v1/request_admin`, {
         method: 'POST',

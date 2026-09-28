@@ -1,11 +1,11 @@
 {
     "id": "com.mattermostfederal.channel-requests",
-    "name": "Channel Requests",
-    "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
+    "name": "Mattermost Permissions",
+    "description": "Governance plugin: lets non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all routed to the right approvers with full two-way messaging.",
     "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
     "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.3.0",
+    "version": "0.4.1",
     "min_server_version": "10.5.0",
     "server": {
         "executables": {
@@ -19,26 +19,18 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins) can approve or deny.\n\nPick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically. Requesters see a form with a prefix picker + tab-complete member + Channel Admin selectors.",
-        "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
+        "header": "## Mattermost Permissions\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all via /mattermost-permissions or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team and channel below, then set up channel domain prefixes.",
         "settings": [
             {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
-                "type": "custom",
-                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel."
+                "type": "custom"
             },
             {
-                "key": "ApprovalChannel",
-                "display_name": "Approval channel",
-                "type": "custom",
-                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval."
-            },
-            {
-                "key": "ChannelNamePrefixes",
-                "display_name": "Channel domain prefixes",
-                "type": "custom",
-                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
+                "key": "PerTeamApprovalChannels",
+                "display_name": "Per-team approval channels",
+                "type": "bool",
+                "help_text": "When enabled, the plugin auto-creates a dedicated approval channel in every team (named by the setting below). Channel and admin-promotion requests route to the requester's team channel instead of the global approval channel above. Team Admins are added to their team's channel at creation time. Enabling this setting immediately creates channels for all existing teams."
             },
             {
                 "key": "AllowTeamAdminApprovers",
@@ -47,16 +39,23 @@
                 "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
             },
             {
+                "key": "ChannelNamePrefixes",
+                "display_name": "Channel domain prefixes",
+                "type": "custom",
+                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
+            },
+            {
                 "key": "AutoApproveUserIDs",
                 "display_name": "Auto-approve requests from these users",
                 "type": "custom",
                 "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
             },
             {
-                "key": "AuditChannelID",
-                "display_name": "Audit channel ID (optional)",
+                "key": "BotReviewGroup",
+                "display_name": "Bot request security review group",
                 "type": "text",
-                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
+                "placeholder": "security-team",
+                "help_text": "Mattermost User Group name (without @) to @-mention on every bot account request. Members of this group are notified alongside System Admins. Leave blank to notify System Admins only."
             }
         ]
     }
