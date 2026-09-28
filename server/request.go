@@ -29,6 +29,11 @@ const (
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
 
+	// fieldCategory is the optional sidebar category name the requester specifies.
+	// On approval the new channel is placed in this category for the requester and
+	// all designated members.
+	fieldCategory = "category"
+
 	// Channel type values as plain strings, for use in dialog options, comparisons, and storage.
 	channelTypeOpen    = string(model.ChannelTypeOpen)
 	channelTypePrivate = string(model.ChannelTypePrivate)
@@ -67,6 +72,11 @@ type channelRequest struct {
 	// created channel (in addition to being members).
 	AdminMemberIDs []string `json:"admin_member_ids"`
 
+	// CategoryName is the optional sidebar category the requester wants the
+	// new channel placed in on approval. Matched case-insensitively against
+	// the user's existing sidebar categories — not created if absent.
+	CategoryName string `json:"category_name,omitempty"`
+
 	// Ticket messaging fields — set after the approval post and DM are created.
 	// Used by the MessageHasBeenPosted hook to route thread replies in both directions.
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
@@ -92,6 +102,9 @@ type requestInput struct {
 	ChannelType    string
 	MemberIDs      []string
 	AdminMemberIDs []string
+	// CategoryName is the optional sidebar category name to place the channel
+	// in on approval. Passed through to channelRequest unchanged.
+	CategoryName string
 }
 
 // promoteSoleMember applies the orphaned-channel guard: when no Channel
@@ -264,6 +277,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		ChannelType:    in.ChannelType,
 		MemberIDs:      in.MemberIDs,
 		AdminMemberIDs: in.AdminMemberIDs,
+		CategoryName:   strings.TrimSpace(in.CategoryName),
 	}
 
 	// Bypass approval for:
@@ -274,6 +288,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
 		// Audit the bypass-path creations too — these are the
 		// highest-privilege (System Admin / delegated auto-approve)
@@ -590,6 +605,9 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
 		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
 	}
+	if req.CategoryName != "" {
+		fields = append(fields, &model.MessageAttachmentField{Title: "Sidebar category", Value: req.CategoryName, Short: true})
+	}
 
 	var details []string
 	if req.Purpose != "" {
@@ -635,6 +653,56 @@ func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction 
 			},
 		},
 	}
+}
+
+// addChannelToSidebarCategory places the newly-created channel in the
+// requester's chosen sidebar category for all relevant users (requester +
+// members + channel admins). Best-effort: failures are logged and don't
+// block the overall approval flow.
+func (p *Plugin) addChannelToSidebarCategory(channelID, teamID string, req *channelRequest) {
+	if req.CategoryName == "" {
+		return
+	}
+	seen := map[string]bool{}
+	for _, uid := range append([]string{req.RequesterID}, append(req.MemberIDs, req.AdminMemberIDs...)...) {
+		if uid == "" || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		if err := p.placeChannelInCategory(uid, teamID, channelID, req.CategoryName); err != nil {
+			p.API.LogWarn("failed to place channel in sidebar category",
+				"user_id", uid, "category", req.CategoryName, "error", err.Error())
+		}
+	}
+}
+
+// placeChannelInCategory adds channelID to the named sidebar category for a
+// single user. The match is case-insensitive against existing category display
+// names. If the category doesn't exist for this user the call is a no-op
+// (logged at info level so admins can diagnose mismatches without alert noise).
+func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName string) error {
+	cats, appErr := p.API.GetChannelSidebarCategories(userID, teamID)
+	if appErr != nil {
+		return appErr
+	}
+	for _, cat := range cats.Categories {
+		if !strings.EqualFold(cat.DisplayName, categoryName) {
+			continue
+		}
+		for _, id := range cat.Channels {
+			if id == channelID {
+				return nil // already in this category
+			}
+		}
+		cat.Channels = append(cat.Channels, channelID)
+		if _, appErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); appErr != nil {
+			return appErr
+		}
+		return nil
+	}
+	p.API.LogInfo("sidebar category not found for user — channel not auto-placed",
+		"user_id", userID, "team_id", teamID, "category", categoryName)
+	return nil
 }
 
 // mentionList renders a list of user IDs as @mentions for display.

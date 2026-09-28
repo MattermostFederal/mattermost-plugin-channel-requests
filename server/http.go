@@ -48,6 +48,7 @@ const (
 	routeSubmitBotWebapp                = "/api/v1/submit_bot_request"
 	routeSubmitIncomingWebhookWebapp    = "/api/v1/submit_incoming_webhook_request"
 	routeSubmitOutgoingWebhookWebapp    = "/api/v1/submit_outgoing_webhook_request"
+	routeSidebarCategories              = "/api/v1/sidebar_categories" // ?team_id=... — list caller's sidebar categories
 
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
@@ -116,6 +117,8 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleSubmitIncomingWebhookWebapp(w, r)
 	case routeSubmitOutgoingWebhookWebapp:
 		p.handleSubmitOutgoingWebhookWebapp(w, r)
+	case routeSidebarCategories:
+		p.handleListSidebarCategories(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -362,6 +365,14 @@ func (p *Plugin) openRequestDialog(triggerID, teamID string) error {
 			},
 		},
 		{
+			DisplayName: "Sidebar category",
+			Name:        fieldCategory,
+			Type:        "text",
+			Optional:    true,
+			HelpText:    "Existing sidebar category to place the channel in on approval (case-insensitive match). Leave blank to skip.",
+			MaxLength:   64,
+		},
+		{
 			DisplayName: "Members to add",
 			Name:        fieldMembers,
 			Type:        "select",
@@ -436,6 +447,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		ChannelType:    submissionString(submission.Submission, fieldType),
 		MemberIDs:      splitIDs(submissionString(submission.Submission, fieldMembers)),
 		AdminMemberIDs: splitIDs(submissionString(submission.Submission, fieldAdmins)),
+		CategoryName:   submissionString(submission.Submission, fieldCategory),
 	}
 
 	message, err := p.submitRequest(in)
@@ -465,6 +477,9 @@ type webappCreateRequest struct {
 	ChannelType  string   `json:"channel_type"`
 	Members      []string `json:"members"`       // usernames — regular members
 	AdminMembers []string `json:"admin_members"` // usernames — Channel Admins
+	// Category is the optional sidebar category name to place the new channel
+	// in on approval. Matched case-insensitively against existing categories.
+	Category string `json:"category"`
 }
 
 func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
@@ -500,6 +515,7 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 		ChannelType:    body.ChannelType,
 		MemberIDs:      memberIDs,
 		AdminMemberIDs: adminMemberIDs,
+		CategoryName:   body.Category,
 	})
 	if err != nil {
 		writeJSON(w, map[string]string{"error": err.Error()})
@@ -637,6 +653,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
 			return
 		}
+		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
 		if requester != nil {
 			p.postWelcomeMessage(channel, req, requester, actingUser)
@@ -1429,6 +1446,37 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
+// handleListSidebarCategories returns the caller's sidebar categories for a
+// team. The webapp modal uses this to populate the "Sidebar category" dropdown.
+// Query param: team_id (required).
+func (p *Plugin) handleListSidebarCategories(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	teamID := r.URL.Query().Get("team_id")
+	if teamID == "" {
+		http.Error(w, "team_id required", http.StatusBadRequest)
+		return
+	}
+	cats, appErr := p.API.GetChannelSidebarCategories(userID, teamID)
+	if appErr != nil {
+		p.API.LogWarn("sidebar-categories list failed", "user_id", userID, "team_id", teamID, "error", appErr.Error())
+		http.Error(w, "failed to list categories", http.StatusInternalServerError)
+		return
+	}
+	type catDTO struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Type        string `json:"type"`
+	}
+	out := make([]catDTO, 0, len(cats.Categories))
+	for _, c := range cats.Categories {
+		out = append(out, catDTO{ID: c.Id, DisplayName: c.DisplayName, Type: string(c.Type)})
+	}
+	writeJSON(w, out)
+}
+
 // resolvedPost returns an updated version of the approval post that collapses
 // the attachment to a single outcome line. All previously-visible fields are
 // moved into the attachment's Text block so reviewers can still expand and read
@@ -1458,6 +1506,12 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 		}
 		attachment.Fields = nil
 		attachment.Actions = nil
+		// Pad to exceed Mattermost's ~300px attachment-text collapse threshold
+		// so resolved cards always render compact (title + "▸" expander) rather
+		// than showing all archived fields expanded. Each \n is ~22px rendered.
+		if archived.Len() > 0 {
+			archived.WriteString(strings.Repeat("\n", 12))
+		}
 		attachment.Text = archived.String()
 		attachment.Color = resolvedColor(status)
 	}

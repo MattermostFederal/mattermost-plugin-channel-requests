@@ -16,6 +16,16 @@ export type ChannelRequestPayload = {
     // Channel Admin role on the newly-created channel. Server promotes
     // them via UpdateChannelMemberRoles at creation time.
     admin_members: string[];
+
+    // category is the optional sidebar category name to place the channel
+    // in on approval. Empty string means no placement.
+    category?: string;
+};
+
+export type SidebarCategory = {
+    id: string;
+    display_name: string;
+    type: string;
 };
 
 export type ChannelRequestResult = {
@@ -49,6 +59,21 @@ export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
     });
     if (!response.ok) {
         throw new Error(`Failed to load prefixes (${response.status})`);
+    }
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+}
+
+// fetchSidebarCategories returns the caller's sidebar categories for the given
+// team. Used by the channel-request modal to populate the optional category
+// placement dropdown. Throws on network or server error.
+export async function fetchSidebarCategories(teamId: string): Promise<SidebarCategory[]> {
+    const response = await fetch(
+        `/plugins/${manifest.id}/api/v1/sidebar_categories?team_id=${encodeURIComponent(teamId)}`,
+        {method: 'GET', credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}},
+    );
+    if (!response.ok) {
+        throw new Error(`Failed to load sidebar categories (${response.status})`);
     }
     const body = await response.json();
     return Array.isArray(body) ? body : [];

@@ -2,8 +2,8 @@ import manifest from 'manifest';
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
-import {fetchPrefixes, submitChannelRequest} from './client';
-import type {ChannelPrefix} from './client';
+import {fetchPrefixes, fetchSidebarCategories, submitChannelRequest} from './client';
+import type {ChannelPrefix, SidebarCategory} from './client';
 import {MemberPicker, parseUsernames} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
@@ -66,6 +66,8 @@ export const RequestChannelModal = () => {
     const [prefixesLoaded, setPrefixesLoaded] = useState(false);
     const [prefixError, setPrefixError] = useState(false);
     const [selectedPrefix, setSelectedPrefix] = useState('');
+    const [categories, setCategories] = useState<SidebarCategory[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState('');
 
     // Generation counter so only the latest fetch updates state. Rapid
     // Retry clicks, or close-then-reopen while a fetch is in flight, would
@@ -103,6 +105,9 @@ export const RequestChannelModal = () => {
             return;
         }
         loadPrefixes();
+        // Load sidebar categories alongside prefixes. Failures are silent —
+        // the dropdown just won't appear (feature degrades gracefully).
+        fetchSidebarCategories(teamId).then(setCategories).catch(() => setCategories([]));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
@@ -127,6 +132,7 @@ export const RequestChannelModal = () => {
         setChannelType('O');
         setMembersText('');
         setAdminMembersText('');
+        setSelectedCategory('');
         setError('');
         setSuccess('');
         setSubmitting(false);
@@ -166,6 +172,7 @@ export const RequestChannelModal = () => {
                 channel_type: channelType,
                 members,
                 admin_members: adminMembers,
+                category: selectedCategory || undefined,
             });
 
             if (result.error) {
@@ -424,6 +431,31 @@ export const RequestChannelModal = () => {
                                 </>
                             );
                         })()}
+
+                        {categories.length > 0 && (
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-category'>{'Sidebar category (optional)'}</label>
+                                <select
+                                    id='cr-category'
+                                    className='form-control'
+                                    value={selectedCategory}
+                                    onChange={(e) => setSelectedCategory(e.target.value)}
+                                >
+                                    <option value=''>{"— None (don't auto-place) —"}</option>
+                                    {categories.map((c) => (
+                                        <option
+                                            key={c.id}
+                                            value={c.display_name}
+                                        >
+                                            {c.display_name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <small style={{opacity: 0.6}}>
+                                    {"On approval, the new channel is placed in this sidebar category for you and any members you've added."}
+                                </small>
+                            </div>
+                        )}
 
                             {error ? (
                                 <div
