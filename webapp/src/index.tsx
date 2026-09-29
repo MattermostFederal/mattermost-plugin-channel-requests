@@ -7,6 +7,7 @@ import type {PluginRegistry} from 'types/mattermost-webapp';
 import {ChannelPicker, TeamPicker} from './ApprovalChannelPicker';
 import {AutoApprovePicker} from './AutoApprovePicker';
 import {installChannelCreationOverride} from './channelCreationOverride';
+import {fetchEnabledRequestTypes} from './client';
 import {HeaderIcon} from './HeaderIcon';
 import {installMembersPanelButton} from './membersPanelButton';
 import {PrefixEditor} from './PrefixEditor';
@@ -43,19 +44,30 @@ export default class Plugin {
         // fallback.
         safe('members-panel button', () => installMembersPanelButton(store));
 
-        // For non-admins, reroute the native sidebar "Create new channel" action to the request
-        // workflow and rename it to "Request new channel". Also injects a "Request new channel"
-        // item when the native one has been stripped by permissions.
-        safe('channel-creation override', () => installChannelCreationOverride(store));
+        // Fetch which request types the admin has enabled so we can hide the
+        // channel-request entry points when the feature is off. Fails open
+        // (channel enabled) on error — the server still enforces the gate on
+        // submit, so a transient failure never hides a working feature.
+        const enabled = await fetchEnabledRequestTypes();
 
-        safe('channel-header button', () => registry.registerChannelHeaderButtonAction(
-            <HeaderIcon/>,
-            () => {
-                store.dispatch(openRequestModal());
-            },
-            'Request Channel',
-            'Request the creation of a new channel',
-        ));
+        // Channel-request entry points are gated on the channel toggle. The
+        // "Request Channel Admin" affordances below are a separate feature and
+        // stay registered regardless.
+        if (enabled.channel) {
+            // For non-admins, reroute the native sidebar "Create new channel" action to the request
+            // workflow and rename it to "Request new channel". Also injects a "Request new channel"
+            // item when the native one has been stripped by permissions.
+            safe('channel-creation override', () => installChannelCreationOverride(store));
+
+            safe('channel-header button', () => registry.registerChannelHeaderButtonAction(
+                <HeaderIcon/>,
+                () => {
+                    store.dispatch(openRequestModal());
+                },
+                'Request Channel',
+                'Request the creation of a new channel',
+            ));
+        }
 
         // Channel name dropdown menu item. Members who can't manage the channel
         // themselves can request that someone be made a Channel Admin; the

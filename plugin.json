@@ -23,6 +23,27 @@
         "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
+                "key": "AllowChannelRequests",
+                "display_name": "Allow channel requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new channels. Turn this off to hide the channel-request entry points and reject channel-request submissions."
+            },
+            {
+                "key": "AllowTeamRequests",
+                "display_name": "Allow team requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request the creation of new teams for admin approval."
+            },
+            {
+                "key": "AllowWebhookRequests",
+                "display_name": "Allow webhook requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request incoming webhooks for a channel, delivered privately once approved."
+            },
+            {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
                 "type": "custom",

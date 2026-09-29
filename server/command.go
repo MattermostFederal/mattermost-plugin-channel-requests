@@ -33,6 +33,12 @@ func getAutocompleteData() *model.AutocompleteData {
 }
 
 func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	// Feature gate first: if an admin has disabled channel requests, say so
+	// rather than opening a form that would be rejected on submit.
+	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
+		return ephemeralResponse(channelRequestsDisabledMsg), nil
+	}
+
 	// Requests require at least one configured prefix; without one the
 	// dialog could only ever fail on submit. Tell the user instead of
 	// opening a doomed form.

@@ -24,10 +24,15 @@ const (
 	routeTeams            = "/api/v1/teams"             // list teams for the approval-channel picker
 	routeChannels         = "/api/v1/channels"          // list channels in a team, ?team_id=...
 	routeUserAutocomplete = "/api/v1/user_autocomplete" // ?q=... for the request-modal member picker
+	routeConfig           = "/api/v1/config"            // per-type request toggles for the webapp
 
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
 	fieldPrefix = "prefix"
+
+	// channelRequestsDisabledMsg is shown when a user tries to submit a
+	// channel request while an admin has the feature turned off.
+	channelRequestsDisabledMsg = "Channel requests are currently disabled by an administrator."
 )
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
@@ -54,6 +59,8 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleListChannels(w, r)
 	case routeUserAutocomplete:
 		p.handleUserAutocomplete(w, r)
+	case routeConfig:
+		p.handleConfig(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -243,6 +250,24 @@ func (p *Plugin) handlePrefixes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// handleConfig serves the per-type request toggles so the webapp can hide
+// entry points for disabled request types. Read-only and authenticated;
+// any logged-in user may read it (the flags aren't sensitive, and the
+// server re-checks them authoritatively on every submission). The webapp
+// treats a load failure as fail-open so a transient error never hides a
+// working feature.
+func (p *Plugin) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUserID(w, r); !ok {
+		return
+	}
+	config := p.getConfiguration()
+	writeJSON(w, map[string]bool{
+		requestTypeChannel: config.RequestEnabled(requestTypeChannel),
+		requestTypeTeam:    config.RequestEnabled(requestTypeTeam),
+		requestTypeWebhook: config.RequestEnabled(requestTypeWebhook),
+	})
+}
+
 // openRequestDialog opens the interactive channel request dialog for the
 // slash command entry point. Callers must ensure a prefix list is
 // configured (ExecuteCommand guards this) — the dialog always presents a
@@ -357,6 +382,14 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gate at the entry point: the modal/dialog may still be open from before
+	// an admin disabled the feature, so reject the submission rather than
+	// trusting the client to have hidden the form.
+	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
+		writeJSON(w, model.SubmitDialogResponse{Error: channelRequestsDisabledMsg})
+		return
+	}
+
 	teamID := submission.State
 	if teamID == "" {
 		teamID = submission.TeamId
@@ -408,6 +441,11 @@ type webappCreateRequest struct {
 func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+
+	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
+		writeJSON(w, map[string]string{"error": channelRequestsDisabledMsg})
 		return
 	}
 

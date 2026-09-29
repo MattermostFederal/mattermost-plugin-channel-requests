@@ -237,7 +237,7 @@ func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
 
 	// The header says "realuser"; the body tries to forge a sysadmin.
 	api.On("GetUser", "realuser").Return(&model.User{Id: "realuser", Roles: "system_user"}, nil)
@@ -264,6 +264,83 @@ func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
 	api.AssertCalled(t, "GetUser", "realuser")
 	api.AssertNotCalled(t, "GetUser", "forged-admin")
 	api.AssertCalled(t, "GetTeamMember", "team1", "realuser")
+}
+
+func TestHandleWebappCreate_DisabledRejected(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: false})
+
+	r := httptest.NewRequest(http.MethodPost, routeCreate, strings.NewReader(`{"display_name":"X"}`))
+	r.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleWebappCreate(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Contains(t, body["error"], "disabled")
+	// The gate short-circuits before any request work.
+	api.AssertNotCalled(t, "GetUser", mock.Anything)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestHandleDialogSubmit_DisabledRejected(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: false, prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	body, err := json.Marshal(model.SubmitDialogRequest{
+		State:      "team1",
+		Submission: map[string]any{fieldDisplayName: "X", fieldPrefix: "team-", fieldName: "marketing"},
+	})
+	require.NoError(t, err)
+
+	r := httptest.NewRequest(http.MethodPost, routeDialog, strings.NewReader(string(body)))
+	r.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleDialogSubmit(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.SubmitDialogResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp.Error, "disabled")
+	// No request work happens for a disabled feature.
+	api.AssertNotCalled(t, "GetUser", mock.Anything)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestHandleConfig_ReturnsToggles(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowTeamRequests: false, AllowWebhookRequests: true})
+
+	r := httptest.NewRequest(http.MethodGet, routeConfig, nil)
+	r.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleConfig(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]bool
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.True(t, body[requestTypeChannel])
+	require.False(t, body[requestTypeTeam])
+	require.True(t, body[requestTypeWebhook])
+}
+
+func TestHandleConfig_MissingHeaderUnauthorized(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	r := httptest.NewRequest(http.MethodGet, routeConfig, nil)
+	w := httptest.NewRecorder()
+	p.handleConfig(w, r)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestCanApprove(t *testing.T) {

@@ -11,6 +11,17 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Request type identifiers. Each names a kind of request users can
+// submit and maps to a per-type admin toggle via RequestEnabled. They
+// also (from Phase 2 on) key the /request subcommands and route
+// dispatch. Kept as plain strings so they can travel over the wire to
+// the webapp (see handleConfig) without a translation layer.
+const (
+	requestTypeChannel = "channel"
+	requestTypeTeam    = "team"
+	requestTypeWebhook = "webhook"
+)
+
 // channelPrefix is one entry in the admin-configured list of allowed
 // domain prefixes. The requester picks a prefix by ID from a dropdown;
 // the server enforces that the final channel name starts with the
@@ -71,6 +82,17 @@ type configuration struct {
 	// --- 4. Audit ---
 	AuditChannelID string
 
+	// --- 5. Requestable types (per-type feature toggles) ---
+	// Each governs whether users may submit that kind of request — both the
+	// visibility of its entry points (webapp) and whether the server accepts
+	// a submission. AllowChannelRequests defaults to true (the plugin's
+	// original behavior, so an upgrade is behavior-preserving); Team and
+	// Webhook default to false so admins opt into the newer capabilities.
+	// The defaults live in plugin.json's settings_schema.
+	AllowChannelRequests bool
+	AllowTeamRequests    bool
+	AllowWebhookRequests bool
+
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
 	autoApproveUserIDs []string
@@ -96,6 +118,22 @@ func (c *configuration) Prefixes() []channelPrefix {
 // admin-configured auto-approve list.
 func (c *configuration) AutoApproveContains(userID string) bool {
 	return slices.Contains(c.autoApproveUserIDs, userID)
+}
+
+// RequestEnabled reports whether the given request type is currently
+// enabled for users to submit. Unknown types return false so a new entry
+// point can't accidentally bypass the gate before its toggle is wired up.
+func (c *configuration) RequestEnabled(requestType string) bool {
+	switch requestType {
+	case requestTypeChannel:
+		return c.AllowChannelRequests
+	case requestTypeTeam:
+		return c.AllowTeamRequests
+	case requestTypeWebhook:
+		return c.AllowWebhookRequests
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) getConfiguration() *configuration {

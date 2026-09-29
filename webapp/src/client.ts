@@ -54,6 +54,41 @@ export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
     return Array.isArray(body) ? body : [];
 }
 
+// EnabledRequestTypes mirrors the per-type toggles served by the server's
+// /api/v1/config endpoint — which kinds of request the admin has enabled.
+export type EnabledRequestTypes = {
+    channel: boolean;
+    team: boolean;
+    webhook: boolean;
+};
+
+// fetchEnabledRequestTypes returns which request types the admin has
+// enabled, used to hide entry points for disabled types. It FAILS OPEN
+// (channel enabled) on any error: the server re-checks the toggle
+// authoritatively on every submission, so a transient config-load failure
+// should never hide an otherwise-working feature.
+export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
+    const failOpen: EnabledRequestTypes = {channel: true, team: false, webhook: false};
+    try {
+        const response = await fetch(`/plugins/${manifest.id}/api/v1/config`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        });
+        if (!response.ok) {
+            return failOpen;
+        }
+        const body = await response.json();
+        return {
+            channel: Boolean(body?.channel),
+            team: Boolean(body?.team),
+            webhook: Boolean(body?.webhook),
+        };
+    } catch {
+        return failOpen;
+    }
+}
+
 // getCSRFToken reads the CSRF token Mattermost sets as a cookie, required for authenticated
 // state-changing requests to plugin endpoints.
 function getCSRFToken(): string {
