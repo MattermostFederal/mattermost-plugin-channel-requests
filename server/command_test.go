@@ -16,7 +16,7 @@ func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 	// not-configured message must win over opening a doomed dialog.
 	p.setConfiguration(&configuration{AllowChannelRequests: true})
 
-	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request channel", TriggerId: "trig", TeamId: "team1"})
 
 	require.Nil(t, appErr)
 	require.NotNil(t, resp)
@@ -32,7 +32,7 @@ func TestExecuteCommand_OpensDialogWhenConfigured(t *testing.T) {
 
 	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
 
-	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request channel", TriggerId: "trig", TeamId: "team1"})
 
 	require.Nil(t, appErr)
 	require.NotNil(t, resp)
@@ -45,11 +45,81 @@ func TestExecuteCommand_DisabledDoesNotOpenDialog(t *testing.T) {
 	// Prefixes are configured, but channel requests are toggled off.
 	p.setConfiguration(&configuration{AllowChannelRequests: false, prefixes: []channelPrefix{{Prefix: "team-"}}})
 
-	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request channel", TriggerId: "trig", TeamId: "team1"})
 
 	require.Nil(t, appErr)
 	require.NotNil(t, resp)
 	require.Contains(t, resp.Text, "disabled")
 	// The feature gate short-circuits before any dialog is opened.
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_LegacyAliasOpensChannelDialog(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	// The deprecated `/channel-request` trigger must behave like `/request channel`.
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/channel-request", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_NoSubcommandShowsUsage(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "Usage")
+	// Usage help must never open a dialog.
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_TeamDisabledReportsDisabled(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	// Team requests are off by default.
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "disabled")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_TeamEnabledReportsComingSoon(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	// Toggle on, but the team flow isn't implemented yet (Phase 3).
+	p.setConfiguration(&configuration{AllowTeamRequests: true})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "aren't available yet")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_WebhookDisabledReportsDisabled(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request webhook", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "disabled")
 	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
 }
