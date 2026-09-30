@@ -20,6 +20,10 @@ const (
 	routeRequestAdmin     = "/api/v1/request_admin" // request Channel Admin promotion on an existing channel
 	routeApproveAdmin     = "/api/v1/approve_admin"
 	routeDenyAdmin        = "/api/v1/deny_admin"
+	routeDialogTeam       = "/api/v1/dialog_team" // team request dialog (slash command) submissions
+	routeCreateTeam       = "/api/v1/create_team" // team request (webapp modal) submissions
+	routeApproveTeam      = "/api/v1/approve_team"
+	routeDenyTeam         = "/api/v1/deny_team"
 	routePrefixes         = "/api/v1/prefixes"
 	routeTeams            = "/api/v1/teams"             // list teams for the approval-channel picker
 	routeChannels         = "/api/v1/channels"          // list channels in a team, ?team_id=...
@@ -33,6 +37,9 @@ const (
 	// channelRequestsDisabledMsg is shown when a user tries to submit a
 	// channel request while an admin has the feature turned off.
 	channelRequestsDisabledMsg = "Channel requests are currently disabled by an administrator."
+
+	// teamRequestsDisabledMsg is the team-request counterpart.
+	teamRequestsDisabledMsg = "Team requests are currently disabled by an administrator."
 )
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
@@ -51,6 +58,14 @@ func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Req
 		p.handleAdminAction(w, r, true)
 	case routeDenyAdmin:
 		p.handleAdminAction(w, r, false)
+	case routeDialogTeam:
+		p.handleTeamDialogSubmit(w, r)
+	case routeCreateTeam:
+		p.handleWebappCreateTeam(w, r)
+	case routeApproveTeam:
+		p.handleTeamAction(w, r, true)
+	case routeDenyTeam:
+		p.handleTeamAction(w, r, false)
 	case routePrefixes:
 		p.handlePrefixes(w, r)
 	case routeTeams:
@@ -483,6 +498,261 @@ func (p *Plugin) handleWebappCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"message": message})
+}
+
+// openTeamRequestDialog opens the interactive team request dialog for the slash
+// command entry point. Teams use no prefix list, so the dialog presents a plain
+// "Team name" + optional "URL name" pair.
+func (p *Plugin) openTeamRequestDialog(triggerID string) error {
+	elements := []model.DialogElement{
+		{
+			DisplayName: "Team name",
+			Name:        fieldDisplayName,
+			Type:        "text",
+			Placeholder: "e.g. Marketing",
+			MaxLength:   maxDisplayNameLen,
+		},
+		{
+			DisplayName: "URL name",
+			Name:        fieldName,
+			Type:        "text",
+			Optional:    true,
+			HelpText:    "The team's URL. Lowercase letters, numbers, and hyphens. Leave blank to generate from the team name.",
+			MaxLength:   model.TeamNameMaxLength,
+		},
+		{
+			DisplayName: "Description",
+			Name:        fieldDescription,
+			Type:        "textarea",
+			Optional:    true,
+			MaxLength:   maxPurposeLen,
+		},
+		{
+			DisplayName: "Visibility",
+			Name:        fieldTeamType,
+			Type:        "radio",
+			Default:     teamTypeOpen,
+			Options: []*model.PostActionOptions{
+				{Text: "Open (anyone on the server can join)", Value: teamTypeOpen},
+				{Text: "Invite only", Value: teamTypeInvite},
+			},
+		},
+		{
+			DisplayName: "Members to add",
+			Name:        fieldMembers,
+			Type:        "select",
+			DataSource:  "users",
+			MultiSelect: true,
+			Optional:    true,
+			HelpText:    "These users are added to the team once it's approved.",
+		},
+	}
+
+	dialog := model.Dialog{
+		CallbackId:       teamDialogCallbackID,
+		Title:            "Request a Team",
+		IntroductionText: "This request will be sent to an admin for approval.",
+		SubmitLabel:      "Submit request",
+		Elements:         elements,
+	}
+
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+		TriggerId: triggerID,
+		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeDialogTeam),
+		Dialog:    dialog,
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
+}
+
+func (p *Plugin) handleTeamDialogSubmit(w http.ResponseWriter, r *http.Request) {
+	// Identity comes from the authenticated header, NOT the submission body.
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var submission model.SubmitDialogRequest
+	if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if submission.Cancelled {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Gate at the entry point: the dialog may still be open from before an
+	// admin disabled the feature, so reject the submission server-side.
+	if !p.getConfiguration().RequestEnabled(requestTypeTeam) {
+		writeJSON(w, model.SubmitDialogResponse{Error: teamRequestsDisabledMsg})
+		return
+	}
+
+	in := teamRequestInput{
+		RequesterID: userID,
+		DisplayName: submissionString(submission.Submission, fieldDisplayName),
+		Name:        submissionString(submission.Submission, fieldName),
+		Description: submissionString(submission.Submission, fieldDescription),
+		TeamType:    submissionString(submission.Submission, fieldTeamType),
+		MemberIDs:   splitIDs(submissionString(submission.Submission, fieldMembers)),
+	}
+
+	message, err := p.submitTeamRequest(in)
+	if err != nil {
+		writeJSON(w, model.SubmitDialogResponse{Error: err.Error()})
+		return
+	}
+
+	p.API.SendEphemeralPost(userID, &model.Post{
+		ChannelId: submission.ChannelId,
+		Message:   message,
+	})
+	w.WriteHeader(http.StatusOK)
+}
+
+// webappCreateTeamRequest is the JSON payload sent by the webapp team modal.
+type webappCreateTeamRequest struct {
+	DisplayName string   `json:"display_name"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	TeamType    string   `json:"team_type"`
+	Members     []string `json:"members"` // usernames
+}
+
+func (p *Plugin) handleWebappCreateTeam(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	if !p.getConfiguration().RequestEnabled(requestTypeTeam) {
+		writeJSON(w, map[string]string{"error": teamRequestsDisabledMsg})
+		return
+	}
+
+	var body webappCreateTeamRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	memberIDs, err := p.resolveUsernameList(body.Members)
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+
+	message, err := p.submitTeamRequest(teamRequestInput{
+		RequesterID: userID,
+		DisplayName: body.DisplayName,
+		Name:        body.Name,
+		Description: body.Description,
+		TeamType:    body.TeamType,
+		MemberIDs:   memberIDs,
+	})
+	if err != nil {
+		writeJSON(w, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]string{"message": message})
+}
+
+// handleTeamAction handles Approve/Deny on a team-creation request. Mirrors
+// handleAction but operates on teamRequest records and creates a team.
+func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approve bool) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var request model.PostActionIntegrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Team-creation approvers are the global approvers (System Admins, plus
+	// opted-in approval-team admins) — there's no target team to scope to.
+	actingUser, appErr := p.API.GetUser(userID)
+	if appErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
+		return
+	}
+	if !p.canApprove(actingUser) {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny team requests. Contact a System Admin."})
+		return
+	}
+
+	requestID, _ := request.Context[actionContextRequestID].(string)
+	req, rawReq, err := p.loadTeamRequest(requestID)
+	if err != nil {
+		p.API.LogError("failed to load team request", "error", err.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
+		return
+	}
+	if req == nil {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
+		})
+		return
+	}
+
+	// Atomically claim the request before acting — same concurrency guard as
+	// handleAction/handleAdminAction.
+	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamRequestPrefix+req.ID, rawReq)
+	if claimErr != nil {
+		p.API.LogError("failed to claim team request", "error", claimErr.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
+		return
+	}
+	if !claimed {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
+		})
+		return
+	}
+
+	config := p.getConfiguration()
+	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for create + notify + audit
+
+	var outcome string
+	if approve {
+		if requester == nil {
+			// The requester is needed as the team's owner/contact email; if we
+			// can't load them, restore the request rather than dropping it.
+			if restoreErr := p.storeTeamRequest(req); restoreErr != nil {
+				p.API.LogError("failed to restore team request after requester-load failure", "error", restoreErr.Error())
+			}
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the requester; the request is still pending."})
+			return
+		}
+		team, createErr := p.createTeamForRequest(req, requester)
+		if createErr != nil {
+			p.API.LogError("failed to create team on approval", "error", createErr.Error())
+			// Restore so a transient failure doesn't silently drop the request.
+			if restoreErr := p.storeTeamRequest(req); restoreErr != nil {
+				p.API.LogError("failed to restore team request after create failure", "error", restoreErr.Error())
+				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
+				return
+			}
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team: %s. The request is still pending. If this keeps failing, the team name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
+			return
+		}
+		outcome = fmt.Sprintf("✅ Approved by @%s. Team **%s** created.", actingUser.Username, team.DisplayName)
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for team **%s** was approved. You're now a Team Admin of it.", req.DisplayName))
+		p.logAudit(config, fmt.Sprintf("TEAM APPROVED: @%s approved team request `%s` (%s) from @%s",
+			actingUser.Username, req.DisplayName, team.Name, requesterUsername(requester, req.RequesterID)))
+	} else {
+		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for team **%s** was denied.", req.DisplayName))
+		p.logAudit(config, fmt.Sprintf("TEAM DENIED: @%s denied team request `%s` from @%s",
+			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
+	}
+
+	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
 // adminRequestBody is the JSON payload sent by the "Request Channel Admin"

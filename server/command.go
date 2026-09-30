@@ -77,7 +77,7 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 	case subCommandChannel:
 		return p.executeChannelRequest(args)
 	case subCommandTeam:
-		return p.executePlaceholderRequest(requestTypeTeam, "Team"), nil
+		return p.executeTeamRequest(args)
 	case subCommandWebhook:
 		return p.executePlaceholderRequest(requestTypeWebhook, "Webhook"), nil
 	default:
@@ -127,10 +127,25 @@ func (p *Plugin) executeChannelRequest(args *model.CommandArgs) (*model.CommandR
 	return &model.CommandResponse{}, nil
 }
 
+// executeTeamRequest opens the team-creation request form, gating on the team
+// toggle first. Unlike channels, teams need no prefix configuration.
+func (p *Plugin) executeTeamRequest(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeam) {
+		return ephemeralResponse(requestDisabledMsg("Team")), nil
+	}
+
+	if err := p.openTeamRequestDialog(args.TriggerId); err != nil {
+		p.API.LogError("failed to open team request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the team request form. Please try again."), nil
+	}
+
+	return &model.CommandResponse{}, nil
+}
+
 // executePlaceholderRequest handles request types whose flow isn't built yet
-// (team, webhook). It still honors the per-type toggle so the gate behaves
-// consistently; when enabled it reports that the feature is on its way. Phases
-// 3 and 4 replace these with real handlers.
+// (webhook). It still honors the per-type toggle so the gate behaves
+// consistently; when enabled it reports that the feature is on its way. Phase 4
+// replaces this with a real handler.
 func (p *Plugin) executePlaceholderRequest(requestType, label string) *model.CommandResponse {
 	if !p.getConfiguration().RequestEnabled(requestType) {
 		return ephemeralResponse(requestDisabledMsg(label))

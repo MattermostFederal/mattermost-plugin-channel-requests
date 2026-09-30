@@ -97,18 +97,18 @@ func TestExecuteCommand_TeamDisabledReportsDisabled(t *testing.T) {
 	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
 }
 
-func TestExecuteCommand_TeamEnabledReportsComingSoon(t *testing.T) {
+func TestExecuteCommand_TeamEnabledOpensDialog(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	// Toggle on, but the team flow isn't implemented yet (Phase 3).
 	p.setConfiguration(&configuration{AllowTeamRequests: true})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
 
 	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team", TriggerId: "trig", TeamId: "team1"})
 
 	require.Nil(t, appErr)
 	require.NotNil(t, resp)
-	require.Contains(t, resp.Text, "aren't available yet")
-	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
 }
 
 func TestExecuteCommand_WebhookDisabledReportsDisabled(t *testing.T) {
