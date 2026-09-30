@@ -111,6 +111,74 @@ func TestExecuteCommand_TeamEnabledOpensDialog(t *testing.T) {
 	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
 }
 
+func TestExecuteCommand_TeamAdminDisabledReportsDisabled(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team-admin", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "disabled")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_TeamAdminEnabledOpensDialog(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowTeamAdminRequests: true})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team-admin", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_TeamAdminNoTeamContext(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowTeamAdminRequests: true})
+
+	// No team context (e.g. run from a DM) — can't scope the request.
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team-admin", TriggerId: "trig", TeamId: ""})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "within the team")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_BotTokenDisabledReportsDisabled(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request bot-token", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Contains(t, resp.Text, "disabled")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_BotTokenEnabledOpensDialog(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowBotTokenRequests: true})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request bot-token", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
 func TestExecuteCommand_WebhookDisabledReportsDisabled(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
@@ -122,4 +190,18 @@ func TestExecuteCommand_WebhookDisabledReportsDisabled(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Contains(t, resp.Text, "disabled")
 	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_WebhookEnabledOpensDialog(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowWebhookRequests: true})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request webhook", TriggerId: "trig", TeamId: "team1", ChannelId: "c1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
 }

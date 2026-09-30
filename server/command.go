@@ -22,9 +22,11 @@ const (
 // Subcommands of `/request`. These mirror the per-type request toggles in
 // configuration (requestType* constants) one-for-one.
 const (
-	subCommandChannel = "channel"
-	subCommandTeam    = "team"
-	subCommandWebhook = "webhook"
+	subCommandChannel   = "channel"
+	subCommandTeam      = "team"
+	subCommandTeamAdmin = "team-admin"
+	subCommandWebhook   = "webhook"
+	subCommandBotToken  = "bot-token"
 )
 
 func getCommand() *model.Command {
@@ -68,7 +70,9 @@ func getAutocompleteData() *model.AutocompleteData {
 	)
 	cmd.AddCommand(model.NewAutocompleteData(subCommandChannel, "", "Request the creation of a new channel"))
 	cmd.AddCommand(model.NewAutocompleteData(subCommandTeam, "", "Request the creation of a new team"))
+	cmd.AddCommand(model.NewAutocompleteData(subCommandTeamAdmin, "", "Request Team Admin on the current team"))
 	cmd.AddCommand(model.NewAutocompleteData(subCommandWebhook, "", "Request an incoming webhook for a channel"))
+	cmd.AddCommand(model.NewAutocompleteData(subCommandBotToken, "", "Request a bot token (needs security + system approval)"))
 	return cmd
 }
 
@@ -78,8 +82,12 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 		return p.executeChannelRequest(args)
 	case subCommandTeam:
 		return p.executeTeamRequest(args)
+	case subCommandTeamAdmin:
+		return p.executeTeamAdminRequest(args)
+	case subCommandBotToken:
+		return p.executeBotTokenRequest(args)
 	case subCommandWebhook:
-		return p.executePlaceholderRequest(requestTypeWebhook, "Webhook"), nil
+		return p.executeWebhookRequest(args)
 	default:
 		return ephemeralResponse(requestUsage()), nil
 	}
@@ -142,22 +150,66 @@ func (p *Plugin) executeTeamRequest(args *model.CommandArgs) (*model.CommandResp
 	return &model.CommandResponse{}, nil
 }
 
-// executePlaceholderRequest handles request types whose flow isn't built yet
-// (webhook). It still honors the per-type toggle so the gate behaves
-// consistently; when enabled it reports that the feature is on its way. Phase 4
-// replaces this with a real handler.
-func (p *Plugin) executePlaceholderRequest(requestType, label string) *model.CommandResponse {
-	if !p.getConfiguration().RequestEnabled(requestType) {
-		return ephemeralResponse(requestDisabledMsg(label))
+// executeTeamAdminRequest opens the team-admin request form for the team the
+// command was run in, gating on the team-admin toggle first.
+func (p *Plugin) executeTeamAdminRequest(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeamAdmin) {
+		return ephemeralResponse(requestDisabledMsg("Team admin")), nil
 	}
-	return ephemeralResponse(fmt.Sprintf("%s requests aren't available yet.", label))
+
+	if args.TeamId == "" {
+		return ephemeralResponse("Run this from within the team you want Team Admin on."), nil
+	}
+
+	if err := p.openTeamAdminRequestDialog(args.TriggerId, args.TeamId); err != nil {
+		p.API.LogError("failed to open team-admin request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the team admin request form. Please try again."), nil
+	}
+
+	return &model.CommandResponse{}, nil
+}
+
+// executeBotTokenRequest opens the bot-token request form, gating on the
+// bot-token toggle first.
+func (p *Plugin) executeBotTokenRequest(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeBotToken) {
+		return ephemeralResponse(requestDisabledMsg("Bot token")), nil
+	}
+
+	if err := p.openBotTokenRequestDialog(args.TriggerId); err != nil {
+		p.API.LogError("failed to open bot-token request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the bot token request form. Please try again."), nil
+	}
+
+	return &model.CommandResponse{}, nil
+}
+
+// executeWebhookRequest opens the incoming-webhook request form for the channel
+// the command was run in, gating on the webhook toggle first.
+func (p *Plugin) executeWebhookRequest(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeWebhook) {
+		return ephemeralResponse(requestDisabledMsg("Webhook")), nil
+	}
+
+	if args.ChannelId == "" {
+		return ephemeralResponse("Run this from the channel you want a webhook for."), nil
+	}
+
+	if err := p.openWebhookRequestDialog(args.TriggerId, args.ChannelId); err != nil {
+		p.API.LogError("failed to open webhook request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the webhook request form. Please try again."), nil
+	}
+
+	return &model.CommandResponse{}, nil
 }
 
 func requestUsage() string {
-	return "Usage: `/request [channel|team|webhook]`\n\n" +
+	return "Usage: `/request [channel|team|team-admin|webhook|bot-token]`\n\n" +
 		"• `/request channel` — request a new channel\n" +
 		"• `/request team` — request a new team\n" +
-		"• `/request webhook` — request an incoming webhook for a channel"
+		"• `/request team-admin` — request Team Admin on the current team\n" +
+		"• `/request webhook` — request an incoming webhook for a channel\n" +
+		"• `/request bot-token` — request a bot token (needs security + system approval)"
 }
 
 func requestDisabledMsg(label string) string {

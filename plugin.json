@@ -44,6 +44,34 @@
                 "help_text": "When enabled, users can request incoming webhooks for a channel, delivered privately once approved."
             },
             {
+                "key": "AllowTeamAdminRequests",
+                "display_name": "Allow team admin requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request Team Admin promotion on a team they belong to, for admin approval."
+            },
+            {
+                "key": "AllowBotTokenRequests",
+                "display_name": "Allow bot token requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request a bot token. Bot token requests require two-step approval (a security approver and a system approver)."
+            },
+            {
+                "key": "SecurityApproverAttribute",
+                "display_name": "Security approver attribute",
+                "type": "text",
+                "default": "security_approver",
+                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a security-step approver for two-step requests. A user with a non-empty value for this attribute may approve the security step. Manage the attribute and its values in System Console → User Management → Attributes."
+            },
+            {
+                "key": "SystemApproverAttribute",
+                "display_name": "System approver attribute",
+                "type": "text",
+                "default": "system_approver",
+                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a system/admin-step approver for two-step requests. A user with a non-empty value for this attribute may approve the system step."
+            },
+            {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
                 "type": "custom",
