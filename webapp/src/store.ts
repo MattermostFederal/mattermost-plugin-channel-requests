@@ -3,11 +3,16 @@ import type {Action} from 'redux';
 
 export const OPEN_REQUEST_MODAL = `${manifest.id}_open_request_modal`;
 export const CLOSE_REQUEST_MODAL = `${manifest.id}_close_request_modal`;
+export const OPEN_TEAM_MODAL = `${manifest.id}_open_team_modal`;
+export const CLOSE_TEAM_MODAL = `${manifest.id}_close_team_modal`;
 export const OPEN_ADMIN_MODAL = `${manifest.id}_open_admin_modal`;
 export const CLOSE_ADMIN_MODAL = `${manifest.id}_close_admin_modal`;
 
 export const openRequestModal = (): Action => ({type: OPEN_REQUEST_MODAL});
 export const closeRequestModal = (): Action => ({type: CLOSE_REQUEST_MODAL});
+
+export const openTeamRequestModal = (): Action => ({type: OPEN_TEAM_MODAL});
+export const closeTeamRequestModal = (): Action => ({type: CLOSE_TEAM_MODAL});
 
 // openAdminRequestModal carries the channel the request is scoped to, since
 // the "Request Channel Admin" action is invoked from a specific channel's
@@ -18,6 +23,10 @@ export const closeAdminRequestModal = (): Action => ({type: CLOSE_ADMIN_MODAL});
 
 type PluginState = {
     modalOpen: boolean;
+
+    // teamModalOpen tracks the "Request a Team" modal independently of the
+    // channel modal so the two never interfere.
+    teamModalOpen: boolean;
 
     // adminModalChannelId is the channel the "Request Channel Admin" modal is
     // open for, or null when the modal is closed.
@@ -52,6 +61,11 @@ export type GlobalState = {
 export const isRequestModalOpen = (state: GlobalState): boolean => {
     const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
     return Boolean(pluginState?.modalOpen);
+};
+
+export const isTeamRequestModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.teamModalOpen);
 };
 
 export const getAdminModalChannelId = (state: GlobalState): string | null => {
@@ -94,7 +108,7 @@ export const isCurrentUserChannelAdmin = (state: GlobalState, channelId: string)
     return (member.roles ?? '').split(' ').includes('channel_admin');
 };
 
-const initialState: PluginState = {modalOpen: false, adminModalChannelId: null};
+const initialState: PluginState = {modalOpen: false, teamModalOpen: false, adminModalChannelId: null};
 
 export default function reducer(state: PluginState = initialState, action: Action): PluginState {
     switch (action.type) {
@@ -102,6 +116,10 @@ export default function reducer(state: PluginState = initialState, action: Actio
         return {...state, modalOpen: true};
     case CLOSE_REQUEST_MODAL:
         return {...state, modalOpen: false};
+    case OPEN_TEAM_MODAL:
+        return {...state, teamModalOpen: true};
+    case CLOSE_TEAM_MODAL:
+        return {...state, teamModalOpen: false};
     case OPEN_ADMIN_MODAL:
         return {...state, adminModalChannelId: (action as OpenAdminModalAction).channelId};
     case CLOSE_ADMIN_MODAL:

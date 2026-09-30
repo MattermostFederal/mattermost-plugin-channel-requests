@@ -23,6 +23,16 @@ export type ChannelRequestResult = {
     error?: string;
 };
 
+// TeamRequestPayload is sent by the "Request a Team" modal. members are
+// usernames to add to the team once it's created.
+export type TeamRequestPayload = {
+    display_name: string;
+    name: string;
+    description: string;
+    team_type: string;
+    members: string[];
+};
+
 // AdminRequestPayload is sent by the "Request Channel Admin" modal. nominees
 // are usernames the requester wants promoted to Channel Admin on channel_id.
 export type AdminRequestPayload = {
@@ -98,6 +108,32 @@ function getCSRFToken(): string {
 
 export async function submitChannelRequest(payload: ChannelRequestPayload): Promise<ChannelRequestResult> {
     const response = await fetch(`/plugins/${manifest.id}/api/v1/create`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    let body: ChannelRequestResult = {};
+    try {
+        body = await response.json();
+    } catch {
+        // Body may be empty or non-JSON on unexpected errors; fall through to status handling.
+    }
+
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+
+    return body;
+}
+
+export async function submitTeamRequest(payload: TeamRequestPayload): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}/api/v1/create_team`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {

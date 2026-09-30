@@ -13,7 +13,8 @@ import {installMembersPanelButton} from './membersPanelButton';
 import {PrefixEditor} from './PrefixEditor';
 import {RequestChannelAdminModal} from './RequestChannelAdminModal';
 import {RequestChannelModal} from './RequestChannelModal';
-import reducer, {getChannelType, getCurrentChannelId, openAdminRequestModal, openRequestModal} from './store';
+import {RequestTeamModal} from './RequestTeamModal';
+import reducer, {getChannelType, getCurrentChannelId, openAdminRequestModal, openRequestModal, openTeamRequestModal} from './store';
 import type {GlobalState} from './store';
 
 export default class Plugin {
@@ -22,6 +23,7 @@ export default class Plugin {
 
         registry.registerRootComponent(RequestChannelModal);
         registry.registerRootComponent(RequestChannelAdminModal);
+        registry.registerRootComponent(RequestTeamModal);
 
         // Each feature is installed independently and defensively: a throw in
         // one (e.g. a DOM hack that trips over unexpected markup) must not abort
@@ -66,6 +68,19 @@ export default class Plugin {
                 },
                 'Request Channel',
                 'Request the creation of a new channel',
+            ));
+        }
+
+        // Team-request entry point, gated on the team toggle. Registered
+        // independently of the channel button so either can be enabled alone.
+        if (enabled.team) {
+            safe('team-header button', () => registry.registerChannelHeaderButtonAction(
+                <HeaderIcon/>,
+                () => {
+                    store.dispatch(openTeamRequestModal());
+                },
+                'Request Team',
+                'Request the creation of a new team',
             ));
         }
 
