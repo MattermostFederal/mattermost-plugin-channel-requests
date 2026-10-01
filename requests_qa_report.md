@@ -279,15 +279,19 @@ Still requires a running server/browser (not executed here):
 - Team Admin promotion status/audit accurate on partial failure: **VERIFIED** (regression test — `6f8282d`)
 - Team creation status accurate on partial failure: **VERIFIED** (regression test — `fe6cba8`)
 - Channel-admin request can be disabled by admins: **VERIFIED** (regression test — `bf8dcce`)
-- Webhook creation idempotent on ambiguous-success retry: match rule **VERIFIED** (unit test — `68f8479`); end-to-end reuse against a live server **NOT TESTED**
-- Channel-admin stays enabled after in-place upgrade (manifest default applied): **NOT TESTED** (needs an upgrade on a real server; default is `true`)
-- Concurrency: no regression to pending, no duplicate side effect under races: **NOT TESTED** (reasoned from CAS code + single-side-effect observed live; no parallel stress harness)
-- Negative authorization at action endpoints (live): **NOT TESTED** (unit test covers bot-token non-approver; others code-reviewed)
-- Webapp Team modal UX / a11y: **NOT TESTED** (needs browser)
-- Playwright suites: **NOT TESTED**
+- Webhook creation idempotent on ambiguous-success retry: match rule **VERIFIED** (unit test — `68f8479`); per-request marker now **VERIFIED live** (embedded in the created hook's description). True ambiguous-success *reuse* still **NOT TESTED** end-to-end (can't force a lost-response retry without fault injection).
+- Channel-admin stays enabled after in-place upgrade (manifest default applied): **VERIFIED** (live — the daily-insights config predates the `allowchanneladminrequests` key, yet `/api/v1/config` returns `channel_admin:true`, confirming the plugin.json default applies on upgrade).
+- Concurrency: no regression to pending, no duplicate side effect under races: **VERIFIED** (live — 5× concurrent completing approvals produced exactly one webhook, one marker, and the pending KV entry consumed once; CAS claim-before-execute holds).
+- Negative authorization at action endpoints (live): **VERIFIED** (live — requester cannot approve or deny own webhook/bot-token request; the same approver cannot fill both steps; no side effect on blocked attempts).
+- Full two-step webhook flow end-to-end (live): **VERIFIED** (partial→complete, secret DM'd to requester only, not in approvals channel, and posting to the delivered URL returns 200).
+- Webhook delivery-failure live (undeliverable secret → cleanup + flag): **NOT TESTED** (needs DM-send fault injection; bot-token equivalent is regression-tested and the webhook path mirrors it).
+- Webapp Team modal UX / a11y: **NOT TESTED** (needs browser; logic covered by Playwright CT).
+- Playwright component suite: **VERIFIED** (8/8 for the Request Team modal); broader E2E/a11y **NOT TESTED**.
 
 ## Overall verdict
 
 **Initial review: not production-ready** — the privileged-side-effect failure paths were unsafe (bot-token could brick a request and leak a bot, secrets could be silently lost, admin-promotion workflows overclaimed success including in the audit log).
 
-**After the fix pass: the six confirmed bugs are resolved**, each with a regression test, and the Go suite + webapp build are green. The design and concurrency/secret-confidentiality fundamentals remain sound. Before shipping, complete the remaining **NOT TESTED** items above — most importantly a live re-run of the two-step flows (webhook delivery-failure + idempotency reuse), a concurrency/stress pass, negative-authorization checks at the action endpoints, the webapp modal a11y review, and an in-place-upgrade check that the channel-admin default applies.
+**After the fix pass: the six confirmed bugs are resolved**, each with a regression test, and the Go suite + webapp build are green. The design and concurrency/secret-confidentiality fundamentals remain sound.
+
+**After the live verification pass (2026-10-01):** the two-step webhook flow is confirmed end-to-end against a running server (partial→complete, secret DM-only, delivered URL usable), negative authorization at the action endpoints holds, the CAS survives a 5× concurrent completion with a single side effect, the idempotency marker is embedded in the created hook, and the channel-admin default correctly applies on in-place upgrade. The remaining gaps are narrow and require fault injection or a browser: forcing an undeliverable-secret cleanup (webhook path mirrors the regression-tested bot-token path), forcing a true ambiguous-success reuse, and a webapp modal a11y/keyboard review. **For an internal or limited rollout this is ship-ready; the remaining items are fast-follow confidence checks rather than known defects.**
