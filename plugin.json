@@ -30,6 +30,13 @@
                 "help_text": "When enabled, users can request the creation of new channels. Turn this off to hide the channel-request entry points and reject channel-request submissions."
             },
             {
+                "key": "AllowChannelAdminRequests",
+                "display_name": "Allow channel admin requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, members can request that someone be promoted to Channel Admin on an existing channel. Turn this off to hide the \"Request Channel Admin\" menu item and reject its submissions."
+            },
+            {
                 "key": "AllowTeamRequests",
                 "display_name": "Allow team requests",
                 "type": "bool",

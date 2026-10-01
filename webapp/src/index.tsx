@@ -53,8 +53,8 @@ export default class Plugin {
         const enabled = await fetchEnabledRequestTypes();
 
         // Channel-request entry points are gated on the channel toggle. The
-        // "Request Channel Admin" affordances below are a separate feature and
-        // stay registered regardless.
+        // "Request Channel Admin" affordance below is a separate feature with
+        // its own toggle (enabled.channelAdmin).
         if (enabled.channel) {
             // For non-admins, reroute the native sidebar "Create new channel" action to the request
             // workflow and rename it to "Request new channel". Also injects a "Request new channel"
@@ -84,21 +84,24 @@ export default class Plugin {
             ));
         }
 
-        // Channel name dropdown menu item. Members who can't manage the channel
-        // themselves can request that someone be made a Channel Admin; the
-        // request goes to an admin for approval. Shown only in public/private
-        // channels — DMs and group messages have no Channel Admin role, so the
-        // item is hidden there via shouldRender.
-        safe('channel-header menu', () => registry.registerChannelHeaderMenuAction(
-            'Request Channel Admin',
-            (channelId: string) => {
-                store.dispatch(openAdminRequestModal(channelId));
-            },
-            (state: GlobalState) => {
-                const type = getChannelType(state, getCurrentChannelId(state));
-                return type === 'O' || type === 'P';
-            },
-        ));
+        // Channel name dropdown menu item, gated on the channel-admin toggle.
+        // Members who can't manage the channel themselves can request that
+        // someone be made a Channel Admin; the request goes to an admin for
+        // approval. Shown only in public/private channels — DMs and group
+        // messages have no Channel Admin role, so the item is hidden there via
+        // shouldRender.
+        if (enabled.channelAdmin) {
+            safe('channel-header menu', () => registry.registerChannelHeaderMenuAction(
+                'Request Channel Admin',
+                (channelId: string) => {
+                    store.dispatch(openAdminRequestModal(channelId));
+                },
+                (state: GlobalState) => {
+                    const type = getChannelType(state, getCurrentChannelId(state));
+                    return type === 'O' || type === 'P';
+                },
+            ));
+        }
 
         // Custom admin console settings — replace plain-text fields
         // with structured pickers. Each maps to a settings_schema key

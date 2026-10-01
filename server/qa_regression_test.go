@@ -167,3 +167,23 @@ func TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails(t *testing
 		return strings.Contains(post.Message, "You're now a Team Admin")
 	}))
 }
+
+// TestHandleRequestAdmin_DisabledToggleRejects covers Bug 5: channel-admin
+// requests must be gated by their own toggle. When disabled, the submission is
+// rejected server-side and nothing is stored.
+func TestHandleRequestAdmin_DisabledToggleRejects(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: false})
+
+	r := httptest.NewRequest(http.MethodPost, routeRequestAdmin, strings.NewReader(`{"channel_id":"ch1","nominees":["bob"]}`))
+	r.Header.Set(headerUserID, "u_req")
+	w := httptest.NewRecorder()
+	p.handleRequestAdmin(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "disabled")
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+}

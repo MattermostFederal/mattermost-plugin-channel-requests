@@ -17,11 +17,12 @@ import (
 // dispatch. Kept as plain strings so they can travel over the wire to
 // the webapp (see handleConfig) without a translation layer.
 const (
-	requestTypeChannel   = "channel"
-	requestTypeTeam      = "team"
-	requestTypeTeamAdmin = "team_admin"
-	requestTypeWebhook   = "webhook"
-	requestTypeBotToken  = "bot_token"
+	requestTypeChannel      = "channel"
+	requestTypeChannelAdmin = "channel_admin"
+	requestTypeTeam         = "team"
+	requestTypeTeamAdmin    = "team_admin"
+	requestTypeWebhook      = "webhook"
+	requestTypeBotToken     = "bot_token"
 )
 
 // channelPrefix is one entry in the admin-configured list of allowed
@@ -95,6 +96,11 @@ type configuration struct {
 	AllowTeamRequests    bool
 	AllowWebhookRequests bool
 
+	// AllowChannelAdminRequests governs requests to promote members to Channel
+	// Admin on an existing channel. Defaults to true, matching the plugin's
+	// prior behavior (the feature had no toggle and was always available).
+	AllowChannelAdminRequests bool
+
 	// AllowTeamAdminRequests governs requests to be promoted to Team Admin on
 	// an existing team (the team analogue of channel-admin requests). Defaults
 	// to false — opt-in, like the other newer request types.
@@ -149,6 +155,8 @@ func (c *configuration) RequestEnabled(requestType string) bool {
 	switch requestType {
 	case requestTypeChannel:
 		return c.AllowChannelRequests
+	case requestTypeChannelAdmin:
+		return c.AllowChannelAdminRequests
 	case requestTypeTeam:
 		return c.AllowTeamRequests
 	case requestTypeTeamAdmin:

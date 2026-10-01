@@ -48,6 +48,9 @@ const (
 	// channel request while an admin has the feature turned off.
 	channelRequestsDisabledMsg = "Channel requests are currently disabled by an administrator."
 
+	// channelAdminRequestsDisabledMsg is the channel-admin-request counterpart.
+	channelAdminRequestsDisabledMsg = "Channel admin requests are currently disabled by an administrator."
+
 	// teamRequestsDisabledMsg is the team-request counterpart.
 	teamRequestsDisabledMsg = "Team requests are currently disabled by an administrator."
 
@@ -316,9 +319,10 @@ func (p *Plugin) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	config := p.getConfiguration()
 	writeJSON(w, map[string]bool{
-		requestTypeChannel: config.RequestEnabled(requestTypeChannel),
-		requestTypeTeam:    config.RequestEnabled(requestTypeTeam),
-		requestTypeWebhook: config.RequestEnabled(requestTypeWebhook),
+		requestTypeChannel:      config.RequestEnabled(requestTypeChannel),
+		requestTypeChannelAdmin: config.RequestEnabled(requestTypeChannelAdmin),
+		requestTypeTeam:         config.RequestEnabled(requestTypeTeam),
+		requestTypeWebhook:      config.RequestEnabled(requestTypeWebhook),
 	})
 }
 
@@ -1549,6 +1553,11 @@ type adminRequestBody struct {
 func (p *Plugin) handleRequestAdmin(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+
+	if !p.getConfiguration().RequestEnabled(requestTypeChannelAdmin) {
+		writeJSON(w, map[string]string{"error": channelAdminRequestsDisabledMsg})
 		return
 	}
 

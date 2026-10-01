@@ -68,6 +68,7 @@ export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
 // /api/v1/config endpoint — which kinds of request the admin has enabled.
 export type EnabledRequestTypes = {
     channel: boolean;
+    channelAdmin: boolean;
     team: boolean;
     webhook: boolean;
 };
@@ -78,7 +79,7 @@ export type EnabledRequestTypes = {
 // authoritatively on every submission, so a transient config-load failure
 // should never hide an otherwise-working feature.
 export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
-    const failOpen: EnabledRequestTypes = {channel: true, team: false, webhook: false};
+    const failOpen: EnabledRequestTypes = {channel: true, channelAdmin: true, team: false, webhook: false};
     try {
         const response = await fetch(`/plugins/${manifest.id}/api/v1/config`, {
             method: 'GET',
@@ -91,6 +92,7 @@ export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
         const body = await response.json();
         return {
             channel: Boolean(body?.channel),
+            channelAdmin: Boolean(body?.channel_admin),
             team: Boolean(body?.team),
             webhook: Boolean(body?.webhook),
         };
