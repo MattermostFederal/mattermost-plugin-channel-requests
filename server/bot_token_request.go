@@ -52,6 +52,13 @@ func validateBotTokenInput(in botTokenRequestInput) error {
 	if username == "" {
 		return errors.New("a bot username is required")
 	}
+	// model.IsValidUsername permits 1-64 characters, but the dialog + help
+	// advertise 3-22 (the usual Mattermost username range). Enforce that here so
+	// the server matches what the user was told, rather than accepting a name
+	// the UI never offered.
+	if len(username) < 3 || len(username) > 22 {
+		return errors.New("bot username must be 3-22 characters")
+	}
 	if !model.IsValidUsername(username) {
 		return errors.New("bot username must be lowercase letters, numbers, and . - _ (3-22 characters)")
 	}

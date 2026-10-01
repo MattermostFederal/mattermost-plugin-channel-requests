@@ -17,6 +17,11 @@ func TestValidateBotTokenInput(t *testing.T) {
 	require.Error(t, validateBotTokenInput(botTokenRequestInput{Username: ""}))
 	require.Error(t, validateBotTokenInput(botTokenRequestInput{Username: "Bad Name!"}))
 	require.NoError(t, validateBotTokenInput(botTokenRequestInput{Username: "deploy-bot"}))
+
+	// Length must be the advertised 3-22, not model.IsValidUsername's 1-64.
+	require.Error(t, validateBotTokenInput(botTokenRequestInput{Username: "ab"}), "2 chars should be rejected")
+	require.Error(t, validateBotTokenInput(botTokenRequestInput{Username: strings.Repeat("b", 23)}), "23 chars should be rejected")
+	require.NoError(t, validateBotTokenInput(botTokenRequestInput{Username: strings.Repeat("b", 22)}), "22 chars is the max")
 }
 
 func TestSubmitBotTokenRequest_SysAdminBypassCreatesBotAndDMsToken(t *testing.T) {
