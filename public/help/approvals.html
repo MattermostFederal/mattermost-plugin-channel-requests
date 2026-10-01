@@ -74,6 +74,20 @@
                 an audit line there so there's a durable record of who acted on what.
             </p>
         </div>
+
+        <h2>Two-step approval: webhooks &amp; bot tokens</h2>
+        <p>
+            Incoming-webhook and bot-token requests need <strong>two</strong> approvals — one from a
+            <strong>security</strong> approver and one from a <strong>system</strong> approver — and
+            they must be two different people. Eligibility comes from User Attributes your admin
+            configures (System Admins can always fill the system step).
+        </p>
+        <ul>
+            <li>The card's Approve button shows which step you'd fill (e.g. <em>Approve (security)</em>), and the <strong>Approvals</strong> section tracks each step's status.</li>
+            <li>The first approval keeps the request open and updates the card; the second, from a different qualified person, completes it.</li>
+            <li>On completion the webhook URL / bot token is <strong>DM'd privately to the requester</strong> — it is never posted in the approval channel.</li>
+            <li>Either approver can <strong>Deny</strong> to reject the whole request.</li>
+        </ul>
     </main>
 </div>
 </body>
