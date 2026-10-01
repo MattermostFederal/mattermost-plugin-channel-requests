@@ -10,16 +10,33 @@ The branch adds a general `/request` command (`channel`, `team`, `team-admin`, `
 
 **The core approval machinery is sound.** The two-step engine enforces two distinct approvers, works in both approval orders, and is race-safe for the single privileged side effect (verified live with delta assertions, and by reading the `KVCompareAndSet`/`KVCompareAndDelete` claim logic). Secrets (webhook URLs, bot tokens) are never persisted, logged, or posted to the approval/audit channels — only DM'd to the requester (verified live + code audit). Feature toggles are enforced server-side on every *submission* path. The Go suite, webapp `tsc`, lint, and production build all pass.
 
-**However, the failure-recovery and partial-success paths are not production-ready.** The most serious issues are all in the "what happens after the irreversible side effect" space the happy-path tests never touch:
+**The failure-recovery and partial-success paths were not production-ready when first reviewed.** The most serious issues were all in the "what happens after the irreversible side effect" space the happy-path tests never touch. **All six have since been fixed on this branch — see the Resolution Update below.**
 
-- **A bot-token request can orphan a privileged bot account and become permanently unrecoverable** if token issuance fails after bot creation (High).
-- **A freshly minted secret (bot token / webhook URL) can be irretrievably lost** if the DM delivery fails, because the request is already resolved (High).
-- **Team Admin promotion reports complete success — including in the audit log — even when some or all promotions failed** (High), with no retry and no durable record of partial completion.
-- Team creation tells the requester they are a Team Admin even if that promotion failed (Medium).
-- Channel-admin requests have **no feature toggle** and no server-side enable gate (Medium).
-- Webhook creation can **duplicate** on an ambiguous-success retry (Medium).
+- ~~**A bot-token request can orphan a privileged bot account and become permanently unrecoverable** if token issuance fails after bot creation (High).~~ **FIXED**
+- ~~**A freshly minted secret (bot token / webhook URL) can be irretrievably lost** if the DM delivery fails, because the request is already resolved (High).~~ **FIXED**
+- ~~**Team Admin promotion reports complete success — including in the audit log — even when some or all promotions failed** (High).~~ **FIXED**
+- ~~Team creation tells the requester they are a Team Admin even if that promotion failed (Medium).~~ **FIXED**
+- ~~Channel-admin requests have **no feature toggle** and no server-side enable gate (Medium).~~ **FIXED**
+- ~~Webhook creation can **duplicate** on an ambiguous-success retry (Medium).~~ **FIXED**
 
-Recommendation: **not ready for production** until the High items are fixed and the partial-success reporting is made truthful.
+Original recommendation: not ready for production until the High items are fixed and partial-success reporting is made truthful. **Current status: those fixes have landed (with regression tests); remaining open items are Low (a stale docs label) — see Resolution Update.**
+
+## Resolution Update
+
+All six confirmed bugs were fixed on this branch after the initial review, each in its own commit with a regression test. The Go suite (`go test -count=1 ./...`), `go vet`, and the webapp `tsc`/lint/production build all pass after the changes.
+
+| Bug | Severity | Fix commit | Fix summary | Regression test |
+|---|---|---|---|---|
+| 1 Bot-token orphan/unrecoverable | High | `fec6f56` | On token-issuance failure the orphaned bot is `PermanentDeleteBot`-ed, freeing the username so a retry succeeds | `TestCreateBotTokenForRequest_DeletesOrphanBotOnTokenFailure` |
+| 2 Secret lost on delivery failure | High | `fec6f56` | DM delivery now returns an error; on failure the bot/webhook is removed and the failure is reported (no false success) | `TestHandleBotTokenAction_DeliveryFailureRemovesBotAndReportsFailure` |
+| 3 Team-Admin promotion overclaim | High | `6f8282d` | `promoteTeamAdmins` returns `(promoted, failed)`; card/DM/audit report only real promotions and flag failures | `TestHandleTeamAdminAction_PartialPromotionReportedTruthfully` |
+| 4 Team-creation overclaim | Medium | `fe6cba8` | `createTeamForRequest` reports whether the requester was actually promoted + trims members to real adds | `TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails` |
+| 5 Channel-admin had no toggle | Medium | `bf8dcce` | New `AllowChannelAdminRequests` toggle (default on) gating `handleRequestAdmin`, `handleConfig`, and the webapp menu item | `TestHandleRequestAdmin_DisabledToggleRejects` |
+| 6 Webhook duplicate on retry | Medium | `68f8479` | Per-request marker embedded in the hook description; a retry finds and reuses the existing hook instead of duplicating | `TestWebhookRequestIdempotencyMatching` |
+
+Remedy principle for the secret bugs (1, 2): **fail closed on the secret** — if a bot token or webhook URL cannot be delivered to the right person, the credential is destroyed (`PermanentDeleteBot` / `DeleteIncomingWebhook`) rather than left live and unowned; resubmission is the clean recovery.
+
+Still open (lower priority, not yet addressed): the **Low** docs mismatch (`approvals.html` still describes the old "Approve (security)" button label), and the benign `handleConfig` key inconsistency.
 
 ## Commands Executed
 
@@ -51,7 +68,9 @@ Security step is gated purely on the security attribute — **System Admins do n
 
 ## Confirmed Bugs
 
-### [High] Bot-token request orphans a privileged bot and becomes permanently unrecoverable when token issuance fails after bot creation
+> **All six bugs below are now RESOLVED** (see the Resolution Update section for the fix commits and regression tests). They are retained here as the original findings with reproductions, evidence, and the fixes that were applied.
+
+### [High] [RESOLVED — `fec6f56`] Bot-token request orphans a privileged bot and becomes permanently unrecoverable when token issuance fails after bot creation
 
 **Files:** `server/bot_token_request.go`, `server/http.go`
 **Functions:** `createBotTokenForRequest` (bot_token_request.go ~117–140), `handleBotTokenAction` completion branch (http.go ~1404–1448)
@@ -203,18 +222,21 @@ Not executed as a true parallel stress test (would need a concurrency harness ag
 
 ## Missing Tests
 
-High-value automated tests that should exist (most target the integration path, not helpers):
+Added during the fix pass (all in `server/qa_regression_test.go`, passing):
 
-1. **Bot-token orphan on token failure** — `createBotTokenForRequest` with `CreateBot` ok + `CreateUserAccessToken` fail → assert bot cleanup / idempotent retry. (Added, Skip-guarded: `Test_BUG_OrphanBotOnTokenFailure`.)
-2. **Secret-delivery failure** — `handleWebhookAction`/`handleBotTokenAction` completion with DM `CreatePost` failing → assert the response signals delivery failure and does not claim unqualified success; for bot-token, token is rotated/deleted.
-3. **Partial Team-Admin promotion** — inject `UpdateTeamMemberRoles` failure for one of two nominees → assert outcome/audit/DM name only the succeeded nominee.
-4. **Partial team creation** — `CreateTeam` ok, requester promotion fails → assert the requester isn't told they're Team Admin.
-5. **Channel-admin toggle** — once added, disabled toggle → `handleRequestAdmin` rejects and stores nothing.
-6. **Approval after disable** — pending request + toggle disabled → document/assert intended behavior (currently approvable).
-7. **Cross-type request id** — POST a team request id to `approve_webhook` → assert "already handled", no mutation.
-8. **Stale CAS** — `KVCompareAndSet`/`KVCompareAndDelete` returns false → assert "already handled/try again", no side effect, no duplicate notification. (Partially covered for bot-token partial path.)
-9. **Malformed stored JSON** — `load*Request` on corrupt bytes → assert graceful ephemeral, no panic.
-10. **Webhook duplicate on retry** — simulate create success + restore + retry → assert de-dup (after a fix adds one).
+1. ✅ **Bot-token orphan on token failure** — `TestCreateBotTokenForRequest_DeletesOrphanBotOnTokenFailure`.
+2. ✅ **Secret-delivery failure (bot-token)** — `TestHandleBotTokenAction_DeliveryFailureRemovesBotAndReportsFailure`.
+3. ✅ **Partial Team-Admin promotion** — `TestHandleTeamAdminAction_PartialPromotionReportedTruthfully`.
+4. ✅ **Partial team creation** — `TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails`.
+5. ✅ **Channel-admin toggle** — `TestHandleRequestAdmin_DisabledToggleRejects`.
+6. ✅ **Webhook idempotency match rule** — `TestWebhookRequestIdempotencyMatching`.
+
+Still worth adding:
+
+7. **Secret-delivery failure (webhook)** — the webhook completion path mirrors bot-token but calls Client4 REST (`restClient`), which isn't mockable via `plugintest.API`; cover with a live/integration test.
+8. **Cross-type request id** — POST a team request id to `approve_webhook` → assert "already handled", no mutation.
+9. **Stale CAS** — `KVCompareAndSet`/`KVCompareAndDelete` returns false → assert "already handled/try again", no side effect, no duplicate notification. (Partially covered for bot-token partial path.)
+10. **Malformed stored JSON** — `load*Request` on corrupt bytes → assert graceful ephemeral, no panic.
 
 ## Remaining Manual QA
 
@@ -233,19 +255,22 @@ Requires a running server/browser (not executed here):
 - System Admin cannot satisfy the security step: **VERIFIED** (live)
 - No premature creation before 2nd approval; single side effect on completion: **VERIFIED** (live delta)
 - Secrets never leak to approval/audit/logs/ephemeral; DM-only delivery: **VERIFIED** (code audit + live)
-- Feature toggles enforced on all five submission paths: **VERIFIED** (code; channel-admin has none — **FAILED**)
-- Go unit suite / webapp tsc / lint / build: **VERIFIED** (executed)
-- Bot-token recoverable after token-issuance failure: **FAILED** (Bug 1, reproduced)
-- Secret guaranteed-or-flagged on delivery failure: **FAILED** (Bug 2)
-- Team Admin promotion status/audit accurate on partial failure: **FAILED** (Bug 3)
-- Team creation status accurate on partial failure: **FAILED** (Bug 4)
-- Channel-admin request can be disabled by admins: **FAILED** (Bug 5)
-- Webhook creation idempotent on ambiguous-success retry: **FAILED** (Bug 6)
-- Concurrency: no regression to pending, no duplicate side effect under races: **NOT TESTED** (reasoned from CAS code + single-side-effect observed; no parallel stress harness)
+- Feature toggles enforced on every submission path (incl. channel-admin): **VERIFIED** (code + regression test; channel-admin gate added in `bf8dcce`)
+- Go unit suite / webapp tsc / lint / build: **VERIFIED** (executed, including after all fixes)
+- Bot-token recoverable after token-issuance failure: **VERIFIED** (regression test; orphan bot deleted — `fec6f56`)
+- Secret guaranteed-or-flagged on delivery failure: **VERIFIED** for bot-token (regression test — `fec6f56`); webhook path mirrors it but is **NOT TESTED** in Go (needs live/integration — Client4 not mockable)
+- Team Admin promotion status/audit accurate on partial failure: **VERIFIED** (regression test — `6f8282d`)
+- Team creation status accurate on partial failure: **VERIFIED** (regression test — `fe6cba8`)
+- Channel-admin request can be disabled by admins: **VERIFIED** (regression test — `bf8dcce`)
+- Webhook creation idempotent on ambiguous-success retry: match rule **VERIFIED** (unit test — `68f8479`); end-to-end reuse against a live server **NOT TESTED**
+- Channel-admin stays enabled after in-place upgrade (manifest default applied): **NOT TESTED** (needs an upgrade on a real server; default is `true`)
+- Concurrency: no regression to pending, no duplicate side effect under races: **NOT TESTED** (reasoned from CAS code + single-side-effect observed live; no parallel stress harness)
 - Negative authorization at action endpoints (live): **NOT TESTED** (unit test covers bot-token non-approver; others code-reviewed)
 - Webapp Team modal UX / a11y: **NOT TESTED** (needs browser)
 - Playwright suites: **NOT TESTED**
 
 ## Overall verdict
 
-**Not production-ready.** The design and the concurrency/secret-confidentiality fundamentals are solid, but the privileged-side-effect failure paths are not: a bot-token failure can brick a request and leak a bot (High), secrets can be silently lost (High), and admin-promotion workflows overclaim success including in the audit log (High). Fix the three High items and make partial-success reporting truthful, then re-run with the new regression tests and a live concurrency + negative-authorization pass.
+**Initial review: not production-ready** — the privileged-side-effect failure paths were unsafe (bot-token could brick a request and leak a bot, secrets could be silently lost, admin-promotion workflows overclaimed success including in the audit log).
+
+**After the fix pass: the six confirmed bugs are resolved**, each with a regression test, and the Go suite + webapp build are green. The design and concurrency/secret-confidentiality fundamentals remain sound. Before shipping, complete the remaining **NOT TESTED** items above — most importantly a live re-run of the two-step flows (webhook delivery-failure + idempotency reuse), a concurrency/stress pass, negative-authorization checks at the action endpoints, the webapp modal a11y review, and an in-place-upgrade check that the channel-admin default applies.
