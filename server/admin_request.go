@@ -37,12 +37,12 @@ type adminRequest struct {
 // for showing to the requester.
 func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
-		return "", errors.New("a channel is required")
+		return "", errors.New("A channel is required.")
 	}
 
 	nominees := dedupeNonEmpty(nomineeIDs)
 	if len(nominees) == 0 {
-		return "", errors.New("pick at least one person to make a Channel Admin")
+		return "", errors.New("Pick at least one person to make a Channel Admin.")
 	}
 
 	channel, appErr := p.API.GetChannel(channelID)
@@ -63,7 +63,7 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	// memberships are hard-deleted on leave, so no soft-delete check needed).
 	if !requester.IsSystemAdmin() {
 		if _, appErr := p.API.GetChannelMember(channelID, requesterID); appErr != nil {
-			return "", errors.New("you must be a member of the channel to request Channel Admins for it")
+			return "", errors.New("You must be a member of the channel to request Channel Admins for it.")
 		}
 	}
 

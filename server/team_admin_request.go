@@ -38,12 +38,12 @@ type teamAdminRequest struct {
 // and posts it to the approval channel. Returns a message for the requester.
 func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs []string) (string, error) {
 	if strings.TrimSpace(teamID) == "" {
-		return "", errors.New("a team is required")
+		return "", errors.New("A team is required.")
 	}
 
 	nominees := dedupeNonEmpty(nomineeIDs)
 	if len(nominees) == 0 {
-		return "", errors.New("pick at least one person to make a Team Admin")
+		return "", errors.New("Pick at least one person to make a Team Admin.")
 	}
 
 	team, appErr := p.API.GetTeam(teamID)
@@ -62,7 +62,7 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	if !requester.IsSystemAdmin() {
 		member, appErr := p.API.GetTeamMember(teamID, requesterID)
 		if appErr != nil || member == nil || member.DeleteAt != 0 {
-			return "", errors.New("you must be a member of the team to request Team Admins for it")
+			return "", errors.New("You must be a member of the team to request Team Admins for it.")
 		}
 	}
 
@@ -80,7 +80,7 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
 		promoted, failed := p.promoteTeamAdmins(req)
 		if len(promoted) == 0 {
-			return "", errors.Errorf("could not promote %s to Team Admin in %s", p.mentionList(failed), team.DisplayName)
+			return "", errors.Errorf("Could not promote %s to Team Admin in %s.", p.mentionList(failed), team.DisplayName)
 		}
 		p.logAudit(config, fmt.Sprintf("TEAM ADMIN: @%s promoted %s to Team Admin in team `%s`",
 			requester.Username, p.mentionList(promoted), team.Name))

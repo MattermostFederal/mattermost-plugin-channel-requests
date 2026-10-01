@@ -46,16 +46,16 @@ type webhookRequestInput struct {
 
 func validateWebhookInput(in webhookRequestInput) error {
 	if strings.TrimSpace(in.ChannelID) == "" {
-		return errors.New("a channel is required")
+		return errors.New("A channel is required.")
 	}
 	if strings.TrimSpace(in.DisplayName) == "" {
-		return errors.New("a webhook name is required")
+		return newFieldError(fieldWebhookName, "A webhook name is required.")
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
-		return errors.Errorf("webhook name must be %d characters or fewer", maxDisplayNameLen)
+		return newFieldError(fieldWebhookName, fmt.Sprintf("Webhook name must be %d characters or fewer.", maxDisplayNameLen))
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.Description)) > maxPurposeLen {
-		return errors.Errorf("description must be %d characters or fewer", maxPurposeLen)
+		return newFieldError(fieldWebhookDescription, fmt.Sprintf("Description must be %d characters or fewer.", maxPurposeLen))
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 	// (System Admins are exempt).
 	if !requester.IsSystemAdmin() {
 		if _, appErr := p.API.GetChannelMember(in.ChannelID, in.RequesterID); appErr != nil {
-			return "", errors.New("you must be a member of the channel to request a webhook for it")
+			return "", errors.New("You must be a member of the channel to request a webhook for it.")
 		}
 	}
 

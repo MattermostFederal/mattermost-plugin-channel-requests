@@ -134,7 +134,7 @@ func slugify(s string) string {
 // channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
 	if !config.UsesPrefixList() {
-		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
+		return "", errors.New("Plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests.")
 	}
 	return resolvePrefixedName(config.Prefixes(), in)
 }
@@ -145,7 +145,7 @@ func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (str
 func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, error) {
 	selected := strings.TrimSpace(in.Prefix)
 	if selected == "" {
-		return "", errors.New("please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown")
+		return "", errors.New("Please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown.")
 	}
 	var entry *channelPrefix
 	for i := range prefixes {
@@ -155,7 +155,7 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 		}
 	}
 	if entry == nil {
-		return "", errors.Errorf("prefix %q is not in the list of allowed prefixes", selected)
+		return "", errors.Errorf("Prefix %q is not in the list of allowed prefixes.", selected)
 	}
 
 	suffix := strings.TrimSpace(in.Name)
@@ -171,19 +171,19 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	suffix = strings.Trim(suffix, "-")
 
 	if suffix == "" {
-		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
+		return "", errors.New("Channel name suffix is required (letters/numbers, becomes the part after the prefix).")
 	}
 
 	// The compiled pattern is anchored (^(?:...)$) so it must match the
 	// whole suffix. Error messages surface the raw pattern text so users
 	// see what the admin wrote, not our anchored rewrite.
 	if entry.SuffixPattern != nil && !entry.SuffixPattern.MatchString(suffix) {
-		return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+		return "", errors.Errorf("Suffix %q doesn't match the required pattern for prefix %q (%s).", suffix, entry.Prefix, entry.SuffixPatternRaw)
 	}
 
 	name := entry.Prefix + suffix
 	if !model.IsValidChannelIdentifier(name) {
-		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens", name)
+		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens.", name)
 	}
 	return name, nil
 }
@@ -195,22 +195,22 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 // config) — happen in submitRequest after this passes.
 func validateRequestInput(in requestInput) error {
 	if strings.TrimSpace(in.DisplayName) == "" {
-		return errors.New("a channel name is required")
+		return errors.New("A channel name is required.")
 	}
 	// Count runes on the trimmed value to match the dialog's MaxLength
 	// (which counts characters), so a multibyte name the UI accepts isn't
 	// rejected server-side by a byte-length check.
 	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
-		return errors.Errorf("channel name must be %d characters or fewer", maxDisplayNameLen)
+		return errors.Errorf("Channel name must be %d characters or fewer.", maxDisplayNameLen)
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.Purpose)) > maxPurposeLen {
-		return errors.Errorf("purpose must be %d characters or fewer", maxPurposeLen)
+		return errors.Errorf("Purpose must be %d characters or fewer.", maxPurposeLen)
 	}
 	if len(in.MemberIDs) > maxMembersPerList || len(in.AdminMemberIDs) > maxMembersPerList {
-		return errors.Errorf("too many members: at most %d members and %d channel admins per request", maxMembersPerList, maxMembersPerList)
+		return errors.Errorf("Too many members: at most %d members and %d channel admins per request.", maxMembersPerList, maxMembersPerList)
 	}
 	if strings.TrimSpace(in.TeamID) == "" {
-		return errors.New("a team is required")
+		return errors.New("A team is required.")
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		// enough — require an active membership.
 		member, appErr := p.API.GetTeamMember(in.TeamID, in.RequesterID)
 		if appErr != nil || member == nil || member.DeleteAt != 0 {
-			return "", errors.New("you must be a member of the team to request a channel in it")
+			return "", errors.New("You must be a member of the team to request a channel in it.")
 		}
 	}
 
@@ -523,7 +523,7 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 	}
 
 	if posted == 0 {
-		return errors.New("no System Admins are available to receive the approval request")
+		return errors.New("No System Admins are available to receive the approval request.")
 	}
 	return nil
 }

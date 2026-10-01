@@ -1102,7 +1102,7 @@ func (p *Plugin) handleWebhookDialogSubmit(w http.ResponseWriter, r *http.Reques
 		Description: submissionString(submission.Submission, fieldWebhookDescription),
 	})
 	if err != nil {
-		writeJSON(w, model.SubmitDialogResponse{Error: err.Error()})
+		writeJSON(w, dialogErrorResponse(err))
 		return
 	}
 
@@ -1357,7 +1357,7 @@ func (p *Plugin) handleBotTokenDialogSubmit(w http.ResponseWriter, r *http.Reque
 		Description: submissionString(submission.Submission, fieldBotDescription),
 	})
 	if err != nil {
-		writeJSON(w, model.SubmitDialogResponse{Error: err.Error()})
+		writeJSON(w, dialogErrorResponse(err))
 		return
 	}
 
@@ -1830,7 +1830,7 @@ func (p *Plugin) resolveUsernameList(usernames []string) ([]string, error) {
 	// Bound the list before the per-username lookups so a crafted request
 	// can't fan out into thousands of synchronous GetUserByUsername calls.
 	if len(usernames) > maxMembersPerList {
-		return nil, errors.Errorf("too many users: at most %d per list", maxMembersPerList)
+		return nil, errors.Errorf("Too many users: at most %d per list.", maxMembersPerList)
 	}
 	out := make([]string, 0, len(usernames))
 	for _, username := range usernames {

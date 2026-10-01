@@ -474,22 +474,22 @@ func TestValidateRequestInput(t *testing.T) {
 		{
 			name:    "purpose too long",
 			in:      requestInput{DisplayName: "Marketing", TeamID: "team1", Purpose: strings.Repeat("x", maxPurposeLen+1)},
-			wantErr: "purpose must be",
+			wantErr: "Purpose must be",
 		},
 		{
 			name:    "too many members",
 			in:      requestInput{DisplayName: "Marketing", TeamID: "team1", MemberIDs: tooManyMembers},
-			wantErr: "too many members",
+			wantErr: "Too many members",
 		},
 		{
 			name:    "too many admins",
 			in:      requestInput{DisplayName: "Marketing", TeamID: "team1", AdminMemberIDs: tooManyMembers},
-			wantErr: "too many members",
+			wantErr: "Too many members",
 		},
 		{
 			name:    "missing team",
 			in:      requestInput{DisplayName: "Marketing", TeamID: "  "},
-			wantErr: "a team is required",
+			wantErr: "A team is required",
 		},
 	}
 
@@ -581,7 +581,7 @@ func TestResolveUsernameList_RejectsTooMany(t *testing.T) {
 	// registered, so a lookup would fail the test).
 	require.Error(t, err)
 	require.Nil(t, ids)
-	require.Contains(t, err.Error(), "too many users")
+	require.Contains(t, err.Error(), "Too many users")
 }
 
 func TestResolveUsernameList_UnknownUserErrors(t *testing.T) {

@@ -50,23 +50,23 @@ type botTokenRequestInput struct {
 func validateBotTokenInput(in botTokenRequestInput) error {
 	username := strings.ToLower(strings.TrimSpace(in.Username))
 	if username == "" {
-		return errors.New("a bot username is required")
+		return newFieldError(fieldUsername, "A bot username is required.")
 	}
 	// model.IsValidUsername permits 1-64 characters, but the dialog + help
 	// advertise 3-22 (the usual Mattermost username range). Enforce that here so
 	// the server matches what the user was told, rather than accepting a name
 	// the UI never offered.
 	if len(username) < 3 || len(username) > 22 {
-		return errors.New("bot username must be 3-22 characters")
+		return newFieldError(fieldUsername, "Bot username must be 3-22 characters.")
 	}
 	if !model.IsValidUsername(username) {
-		return errors.New("bot username must be lowercase letters, numbers, and . - _ (3-22 characters)")
+		return newFieldError(fieldUsername, "Bot username must be lowercase letters, numbers, and . - _ (3-22 characters).")
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
-		return errors.Errorf("display name must be %d characters or fewer", maxDisplayNameLen)
+		return newFieldError(fieldDisplayName, fmt.Sprintf("Display name must be %d characters or fewer.", maxDisplayNameLen))
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.Description)) > maxBotDescriptionLen {
-		return errors.Errorf("description must be %d characters or fewer", maxBotDescriptionLen)
+		return newFieldError(fieldBotDescription, fmt.Sprintf("Description must be %d characters or fewer.", maxBotDescriptionLen))
 	}
 	return nil
 }

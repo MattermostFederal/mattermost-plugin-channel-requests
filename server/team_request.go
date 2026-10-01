@@ -70,16 +70,16 @@ type teamRequestInput struct {
 // API calls. Pure, so it can be unit-tested without mocks.
 func validateTeamRequestInput(in teamRequestInput) error {
 	if strings.TrimSpace(in.DisplayName) == "" {
-		return errors.New("a team name is required")
+		return errors.New("A team name is required.")
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
-		return errors.Errorf("team name must be %d characters or fewer", maxDisplayNameLen)
+		return errors.Errorf("Team name must be %d characters or fewer.", maxDisplayNameLen)
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.Description)) > maxPurposeLen {
-		return errors.Errorf("description must be %d characters or fewer", maxPurposeLen)
+		return errors.Errorf("Description must be %d characters or fewer.", maxPurposeLen)
 	}
 	if len(in.MemberIDs) > maxMembersPerList {
-		return errors.Errorf("too many members: at most %d per request", maxMembersPerList)
+		return errors.Errorf("Too many members: at most %d per request.", maxMembersPerList)
 	}
 	return nil
 }
@@ -94,10 +94,10 @@ func resolveTeamName(in teamRequestInput) (string, error) {
 	}
 	name = slugify(name)
 	if utf8.RuneCountInString(name) < 2 {
-		return "", errors.New("team URL name must be at least 2 characters (lowercase letters, numbers, or hyphens)")
+		return "", errors.New("Team URL name must be at least 2 characters (lowercase letters, numbers, or hyphens).")
 	}
 	if !model.IsValidTeamName(name) {
-		return "", errors.Errorf("%q is not a valid team URL name; use lowercase letters, numbers, and hyphens", name)
+		return "", errors.Errorf("%q is not a valid team URL name; use lowercase letters, numbers, and hyphens.", name)
 	}
 	return name, nil
 }
