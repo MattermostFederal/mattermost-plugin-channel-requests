@@ -149,7 +149,7 @@ func (p *Plugin) submitTeamRequest(in teamRequestInput) (string, error) {
 	// Bypass approval for System Admins and delegated auto-approve users,
 	// mirroring the channel-creation flow.
 	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
-		team, err := p.createTeamForRequest(req, requester)
+		team, _, err := p.createTeamForRequest(req, requester)
 		if err != nil {
 			return "", err
 		}
@@ -174,8 +174,10 @@ func (p *Plugin) submitTeamRequest(in teamRequestInput) (string, error) {
 // createTeamForRequest creates the team described by req, makes the requester a
 // Team Admin, and adds any additional members. Per-user membership failures are
 // logged but don't abort the others — a partially-populated team is better than
-// none. Returns the created team.
-func (p *Plugin) createTeamForRequest(req *teamRequest, requester *model.User) (*model.Team, error) {
+// none. It returns the created team and whether the requester was actually made
+// a Team Admin, and trims req.MemberIDs to those actually added, so callers can
+// report the true outcome instead of claiming membership/admin that didn't happen.
+func (p *Plugin) createTeamForRequest(req *teamRequest, requester *model.User) (team *model.Team, requesterPromoted bool, err error) {
 	team, appErr := p.API.CreateTeam(&model.Team{
 		Name:            req.Name,
 		DisplayName:     req.DisplayName,
@@ -187,7 +189,7 @@ func (p *Plugin) createTeamForRequest(req *teamRequest, requester *model.User) (
 		Email: requester.Email,
 	})
 	if appErr != nil {
-		return nil, errors.Wrap(appErr, "failed to create team")
+		return nil, false, errors.Wrap(appErr, "failed to create team")
 	}
 
 	// Add the requester and promote them to Team Admin so the team they asked
@@ -196,18 +198,25 @@ func (p *Plugin) createTeamForRequest(req *teamRequest, requester *model.User) (
 		p.API.LogWarn("failed to add requester to created team", "team_id", team.Id, "user_id", req.RequesterID, "error", appErr.Error())
 	} else if _, appErr := p.API.UpdateTeamMemberRoles(team.Id, req.RequesterID, teamAdminRoleString); appErr != nil {
 		p.API.LogWarn("failed to promote requester to team admin", "team_id", team.Id, "user_id", req.RequesterID, "error", appErr.Error())
+	} else {
+		requesterPromoted = true
 	}
 
+	added := make([]string, 0, len(req.MemberIDs))
 	for _, userID := range req.MemberIDs {
 		if userID == "" || userID == req.RequesterID {
 			continue
 		}
 		if _, appErr := p.API.CreateTeamMember(team.Id, userID); appErr != nil {
 			p.API.LogWarn("failed to add member to created team", "team_id", team.Id, "user_id", userID, "error", appErr.Error())
+			continue
 		}
+		added = append(added, userID)
 	}
+	// Reflect who was actually added so downstream messaging is truthful.
+	req.MemberIDs = added
 
-	return team, nil
+	return team, requesterPromoted, nil
 }
 
 func (p *Plugin) storeTeamRequest(req *teamRequest) error {

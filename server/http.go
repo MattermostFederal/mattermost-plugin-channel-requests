@@ -768,7 +768,7 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the requester; the request is still pending."})
 			return
 		}
-		team, createErr := p.createTeamForRequest(req, requester)
+		team, requesterPromoted, createErr := p.createTeamForRequest(req, requester)
 		if createErr != nil {
 			p.API.LogError("failed to create team on approval", "error", createErr.Error())
 			// Restore so a transient failure doesn't silently drop the request.
@@ -793,7 +793,13 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			return
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Team **%s** created.", actingUser.Username, team.DisplayName)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for team **%s** was approved. You're now a Team Admin of it.", req.DisplayName))
+		// Only tell the requester they're a Team Admin if the promotion actually
+		// succeeded; otherwise they may be a plain member (or not added).
+		if requesterPromoted {
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for team **%s** was approved. You're now a Team Admin of it.", req.DisplayName))
+		} else {
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for team **%s** was approved and the team was created. We couldn't set you as a Team Admin automatically — ask an admin to grant it.", req.DisplayName))
+		}
 		p.logAudit(config, fmt.Sprintf("TEAM APPROVED: @%s approved team request `%s` (%s) from @%s",
 			actingUser.Username, req.DisplayName, team.Name, requesterUsername(requester, req.RequesterID)))
 	} else {

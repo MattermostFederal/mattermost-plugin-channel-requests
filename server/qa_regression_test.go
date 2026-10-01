@@ -126,3 +126,44 @@ func TestHandleTeamAdminAction_PartialPromotionReportedTruthfully(t *testing.T) 
 	require.Contains(t, body, "Could not promote")    // failure surfaced
 	require.Contains(t, body, "nom2")                 // the one that failed
 }
+
+// TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails covers Bug 4:
+// if the team is created but the requester's Team Admin promotion fails, the
+// requester must not be told they're a Team Admin.
+func TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	req := &teamRequest{ID: "t1", RequesterID: "u_req", Name: "mktg", DisplayName: "Mktg", TeamType: teamTypeOpen}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: model.SystemAdminRoleId}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req", Email: "req@example.com"}, nil)
+	api.On("KVGet", kvTeamRequestPrefix+"t1").Return(raw, nil)
+	api.On("KVCompareAndDelete", kvTeamRequestPrefix+"t1", raw).Return(true, nil)
+	api.On("CreateTeam", mock.Anything).Return(&model.Team{Id: "team1", Name: "mktg", DisplayName: "Mktg"}, nil)
+	api.On("CreateTeamMember", "team1", "u_req").Return(&model.TeamMember{}, nil)
+	// Promotion of the requester fails.
+	api.On("UpdateTeamMemberRoles", "team1", "u_req", teamAdminRoleString).Return(nil, testAppErr("role update failed"))
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	r := httptest.NewRequest(http.MethodPost, routeApproveTeam, strings.NewReader(actionBody(t, "t1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleTeamAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// The requester DM must NOT claim Team Admin; it should say it couldn't be set.
+	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
+		return strings.Contains(post.Message, "couldn't set you as a Team Admin")
+	}))
+	api.AssertNotCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
+		return strings.Contains(post.Message, "You're now a Team Admin")
+	}))
+}

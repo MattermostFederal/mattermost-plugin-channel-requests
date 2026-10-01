@@ -68,9 +68,12 @@ func TestCreateTeamForRequest_CreatesTeamPromotesRequesterAddsMembers(t *testing
 	}
 	requester := &model.User{Id: "u_req", Username: "req", Email: "req@example.com"}
 
-	team, err := p.createTeamForRequest(req, requester)
+	team, requesterPromoted, err := p.createTeamForRequest(req, requester)
 	require.NoError(t, err)
 	require.Equal(t, "team1", team.Id)
+	require.True(t, requesterPromoted)
+	// MemberIDs is trimmed to who was actually added (requester is skipped).
+	require.Equal(t, []string{"u_m1"}, req.MemberIDs)
 }
 
 func TestSubmitTeamRequest_SysAdminBypassCreatesTeam(t *testing.T) {
