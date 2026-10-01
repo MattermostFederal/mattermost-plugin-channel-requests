@@ -51,6 +51,20 @@ const (
 	channelAdminRoleString = "channel_user channel_admin"
 )
 
+// fieldError is an input error tied to a specific dialog field. The
+// interactive-dialog handlers surface it inline under that field (via
+// SubmitDialogResponse.Errors) instead of as a detached message at the bottom
+// of the dialog. Plain-string callers (the webapp modals) still get a sensible
+// message through Error(), so the same error works for both entry points.
+type fieldError struct {
+	field string
+	msg   string
+}
+
+func (e *fieldError) Error() string { return e.msg }
+
+func newFieldError(field, msg string) *fieldError { return &fieldError{field: field, msg: msg} }
+
 // channelRequest is a pending request to create a channel, persisted in the KV store until a System
 // Admin approves or denies it.
 type channelRequest struct {
@@ -245,6 +259,16 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	name, err := p.resolveChannelName(config, in)
 	if err != nil {
 		return "", err
+	}
+
+	// Reject up front if the URL name is already taken in the target team.
+	// CreateChannel enforces per-team uniqueness (including archived
+	// channels), but without this check the collision only surfaces at
+	// approval time, leaving the request stuck pending. includeDeleted=true so
+	// a name colliding with an archived channel is caught too, matching
+	// CreateChannel's own behavior.
+	if existing, appErr := p.API.GetChannelByName(in.TeamID, name, true); appErr == nil && existing != nil {
+		return "", newFieldError(fieldName, fmt.Sprintf("A channel with the URL name %q already exists in this team. Pick a different URL suffix.", name))
 	}
 
 	req := &channelRequest{

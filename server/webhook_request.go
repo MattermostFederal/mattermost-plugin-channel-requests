@@ -125,6 +125,29 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 // (there is no plugin API for it) as the plugin bot, and returns the full hook
 // URL. The bot is added to the channel first so it may create a hook there.
 func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (string, error) {
+	// The bot must be a member of the channel to own a hook there — and it
+	// can't be added to the channel until it's on the channel's TEAM. Without
+	// team membership the add fails ("no team member found") and the hook
+	// creation is denied (manage_own_incoming_webhooks is a team-scoped
+	// permission), which is the usual cause of a webhook approval that
+	// "does nothing". Join the team first, then the channel.
+	if channel, appErr := p.API.GetChannel(req.ChannelID); appErr != nil {
+		p.API.LogWarn("failed to load channel for webhook creation", "channel_id", req.ChannelID, "error", appErr.Error())
+	} else {
+		if _, appErr := p.API.CreateTeamMember(channel.TeamId, p.botUserID); appErr != nil {
+			p.API.LogWarn("failed to add bot to team for webhook creation", "team_id", channel.TeamId, "error", appErr.Error())
+		}
+		// Promote the bot to Team Admin on this team so it holds
+		// manage_own_incoming_webhooks there. Incoming-webhook creation is a
+		// team-scoped permission that a plain member lacks on servers where
+		// integrations are restricted to admins (the common default) — which
+		// otherwise 403s the REST call and makes the approval "do nothing".
+		// Bounded to teams where a webhook was actually approved.
+		if _, appErr := p.API.UpdateTeamMemberRoles(channel.TeamId, p.botUserID, teamAdminRoleString); appErr != nil {
+			p.API.LogWarn("failed to grant bot team-admin for webhook creation", "team_id", channel.TeamId, "error", appErr.Error())
+		}
+	}
+
 	if _, appErr := p.API.AddChannelMember(req.ChannelID, p.botUserID); appErr != nil {
 		p.API.LogWarn("failed to add bot to channel for webhook creation", "channel_id", req.ChannelID, "error", appErr.Error())
 	}
@@ -208,11 +231,24 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 	}
 }
 
-func (p *Plugin) webhookApprovalActions(requestID, siteURL string, state twoStepState) []*model.PostAction {
+// webhookApprovalAttachmentWithNotice is webhookApprovalAttachment plus a
+// visible warning banner, used to repaint the card when a final-approval
+// attempt failed to create the webhook. Buttons are preserved so an approver
+// can retry or deny.
+func (p *Plugin) webhookApprovalAttachmentWithNotice(req *webhookRequest, requester *model.User, notice string) *model.MessageAttachment {
+	att := p.webhookApprovalAttachment(req, requester)
+	att.Color = "#D24B4E"
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
+}
+
+func (p *Plugin) webhookApprovalActions(requestID, siteURL string, _ twoStepState) []*model.PostAction {
 	return []*model.PostAction{
 		{
 			Id:    "approve",
-			Name:  stepButtonName(state),
+			Name:  approveButtonLabel,
 			Type:  model.PostActionTypeButton,
 			Style: "primary",
 			Integration: &model.PostActionIntegration{

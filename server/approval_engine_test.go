@@ -80,8 +80,8 @@ func TestPlanApproval(t *testing.T) {
 	})
 }
 
-func TestStepButtonName(t *testing.T) {
-	require.Equal(t, "Approve", stepButtonName(twoStepState{}))
-	require.Equal(t, "Approve (system)", stepButtonName(twoStepState{SecurityApproverID: "a"}))
-	require.Equal(t, "Approve (security)", stepButtonName(twoStepState{SystemApproverID: "b"}))
+func TestApproveButtonLabel(t *testing.T) {
+	// The Approve button is always just "Approve" — the per-step status lives
+	// in the card's Approvals field, and the button is shared by all viewers.
+	require.Equal(t, "Approve", approveButtonLabel)
 }

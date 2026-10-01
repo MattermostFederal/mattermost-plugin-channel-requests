@@ -465,7 +465,7 @@ func (p *Plugin) handleDialogSubmit(w http.ResponseWriter, r *http.Request) {
 
 	message, err := p.submitRequest(in)
 	if err != nil {
-		writeJSON(w, model.SubmitDialogResponse{Error: err.Error()})
+		writeJSON(w, dialogErrorResponse(err))
 		return
 	}
 
@@ -640,7 +640,7 @@ func (p *Plugin) handleTeamDialogSubmit(w http.ResponseWriter, r *http.Request) 
 
 	message, err := p.submitTeamRequest(in)
 	if err != nil {
-		writeJSON(w, model.SubmitDialogResponse{Error: err.Error()})
+		writeJSON(w, dialogErrorResponse(err))
 		return
 	}
 
@@ -777,7 +777,19 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
 				return
 			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team: %s. The request is still pending. If this keeps failing, the team name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
+			// Repaint the card with a visible warning banner (keeping the
+			// Approve/Deny buttons) so the failure isn't only an
+			// easy-to-miss ephemeral. The request stays pending: the
+			// approver can retry Approve or Deny it.
+			notice := fmt.Sprintf("Couldn't create the team: %s. The request is still pending — retry **Approve**, or **Deny** it. If this keeps failing, the team URL is likely already taken; ask the requester to resubmit with a different name.", createErr.Error())
+			writeJSON(w, model.PostActionIntegrationResponse{
+				EphemeralText: notice,
+				Update: p.repaintedApprovalPost(
+					request.PostId,
+					"@channel — a team request needs your review (a previous approval attempt failed).",
+					p.teamApprovalAttachmentWithNotice(req, requester, notice),
+				),
+			})
 			return
 		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Team **%s** created.", actingUser.Username, team.DisplayName)
@@ -1174,7 +1186,19 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the webhook (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
 				return
 			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the webhook: %s. The request is still pending — click Approve again to retry, or Deny it.", createErr.Error())})
+			notice := fmt.Sprintf("Couldn't create the webhook: %s. The request is still pending — click **Approve** again to retry, or **Deny** it.", createErr.Error())
+			cardRequester := requester
+			if cardRequester == nil {
+				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
+			}
+			writeJSON(w, model.PostActionIntegrationResponse{
+				EphemeralText: notice,
+				Update: p.repaintedApprovalPost(
+					request.PostId,
+					"@channel — a webhook request needs review (a previous approval attempt failed).",
+					p.webhookApprovalAttachmentWithNotice(req, cardRequester, notice),
+				),
+			})
 			return
 		}
 		p.deliverWebhookURL(req.RequesterID, req.ChannelName, url)
@@ -1401,7 +1425,19 @@ func (p *Plugin) handleBotTokenAction(w http.ResponseWriter, r *http.Request, ap
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the bot/token (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
 				return
 			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the bot/token: %s. The request is still pending — click Approve again to retry, or Deny it. (The username may be taken, or bot/token creation may be disabled server-side.)", createErr.Error())})
+			notice := fmt.Sprintf("Couldn't create the bot/token: %s. The request is still pending — click **Approve** again to retry, or **Deny** it. (The username may be taken, or bot/token creation may be disabled server-side.)", createErr.Error())
+			cardRequester := requester
+			if cardRequester == nil {
+				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
+			}
+			writeJSON(w, model.PostActionIntegrationResponse{
+				EphemeralText: notice,
+				Update: p.repaintedApprovalPost(
+					request.PostId,
+					"@channel — a bot token request needs review (a previous approval attempt failed).",
+					p.botTokenApprovalAttachmentWithNotice(req, cardRequester, notice),
+				),
+			})
 			return
 		}
 		p.deliverBotToken(req.RequesterID, botUsername, token)
@@ -1849,4 +1885,15 @@ func splitIDs(value string) []string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// dialogErrorResponse maps a submit error to an interactive-dialog response.
+// A field-scoped *fieldError is surfaced inline under the offending dialog
+// element (so it appears right below that field, not as detached red text at
+// the bottom); anything else falls back to a dialog-level message.
+func dialogErrorResponse(err error) model.SubmitDialogResponse {
+	if fe, ok := err.(*fieldError); ok && fe.field != "" {
+		return model.SubmitDialogResponse{Errors: map[string]string{fe.field: fe.msg}}
+	}
+	return model.SubmitDialogResponse{Error: err.Error()}
 }

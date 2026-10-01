@@ -126,6 +126,16 @@ func (p *Plugin) submitTeamRequest(in teamRequestInput) (string, error) {
 		return "", err
 	}
 
+	// Reject up front if the URL name is already taken. CreateTeam enforces
+	// team-URL uniqueness, but without this check the collision only surfaces
+	// at approval time: the request sits pending and every Approve click fails
+	// with "A team with this URL already exists", which reads to the approver
+	// as "nothing happened". Catching it here gives the requester immediate,
+	// actionable feedback instead.
+	if existing, appErr := p.API.GetTeamByName(name); appErr == nil && existing != nil {
+		return "", newFieldError(fieldName, fmt.Sprintf("A team with the URL name %q already exists. Pick a different URL name.", name))
+	}
+
 	req := &teamRequest{
 		ID:          model.NewId(),
 		RequesterID: in.RequesterID,
@@ -267,6 +277,20 @@ func (p *Plugin) teamApprovalAttachment(req *teamRequest, requester *model.User)
 		Fields:  fields,
 		Actions: p.teamApprovalActions(req.ID, siteURL),
 	}
+}
+
+// teamApprovalAttachmentWithNotice is teamApprovalAttachment plus a visible
+// warning banner, used to repaint the card when an approval attempt failed
+// (e.g. the team URL was taken between submit and approval). The Approve/Deny
+// buttons are preserved so the approver can retry or deny — the warning is a
+// cue, not a terminal state.
+func (p *Plugin) teamApprovalAttachmentWithNotice(req *teamRequest, requester *model.User, notice string) *model.MessageAttachment {
+	att := p.teamApprovalAttachment(req, requester)
+	att.Color = "#D24B4E" // red, to signal the failed attempt
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
 }
 
 func (p *Plugin) teamApprovalActions(requestID, siteURL string) []*model.PostAction {

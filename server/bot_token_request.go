@@ -205,11 +205,24 @@ func (p *Plugin) botTokenApprovalAttachment(req *botTokenRequest, requester *mod
 	}
 }
 
-func (p *Plugin) botTokenApprovalActions(requestID, siteURL string, state twoStepState) []*model.PostAction {
+// botTokenApprovalAttachmentWithNotice is botTokenApprovalAttachment plus a
+// visible warning banner, used to repaint the card when a final-approval
+// attempt failed to create the bot/token. Buttons are preserved so an approver
+// can retry or deny.
+func (p *Plugin) botTokenApprovalAttachmentWithNotice(req *botTokenRequest, requester *model.User, notice string) *model.MessageAttachment {
+	att := p.botTokenApprovalAttachment(req, requester)
+	att.Color = "#D24B4E"
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
+}
+
+func (p *Plugin) botTokenApprovalActions(requestID, siteURL string, _ twoStepState) []*model.PostAction {
 	return []*model.PostAction{
 		{
 			Id:    "approve",
-			Name:  stepButtonName(state),
+			Name:  approveButtonLabel,
 			Type:  model.PostActionTypeButton,
 			Style: "primary",
 			Integration: &model.PostActionIntegration{

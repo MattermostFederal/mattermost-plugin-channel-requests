@@ -102,15 +102,11 @@ func (p *Plugin) stepStatusLine(state twoStepState, step approverStep) string {
 	return fmt.Sprintf("✅ approved by @%s", username)
 }
 
-// stepButtonName labels the single Approve button with the step(s) still needed,
-// so approvers understand a second sign-off may follow.
-func stepButtonName(state twoStepState) string {
-	switch {
-	case !state.securityDone() && !state.systemDone():
-		return "Approve"
-	case !state.securityDone():
-		return "Approve (security)"
-	default:
-		return "Approve (system)"
-	}
-}
+// approveButtonLabel is the label for the single Approve button on a two-step
+// card. It's deliberately just "Approve" (not "Approve (security)" etc.): the
+// card's "Approvals" status field already shows which step each person filled,
+// and the button is shared by every viewer of the post, so a step-specific
+// label would be misleading for whoever isn't eligible for that step. The
+// server still routes each click to the correct outstanding step via
+// planApproval.
+const approveButtonLabel = "Approve"

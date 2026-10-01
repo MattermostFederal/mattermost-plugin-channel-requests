@@ -82,6 +82,7 @@ func TestSubmitTeamRequest_SysAdminBypassCreatesTeam(t *testing.T) {
 
 	sysadmin := &model.User{Id: "u_admin", Username: "admin", Email: "a@example.com", Roles: model.SystemAdminRoleId}
 	api.On("GetUser", "u_admin").Return(sysadmin, nil)
+	api.On("GetTeamByName", "ops").Return(nil, model.NewAppError("GetTeamByName", "not_found", nil, "", 404))
 	api.On("CreateTeam", mock.Anything).Return(&model.Team{Id: "team1", Name: "ops", DisplayName: "Ops"}, nil)
 	api.On("CreateTeamMember", "team1", "u_admin").Return(&model.TeamMember{}, nil)
 	api.On("UpdateTeamMemberRoles", "team1", "u_admin", teamAdminRoles).Return(&model.TeamMember{}, nil)
@@ -103,6 +104,7 @@ func TestSubmitTeamRequest_PendingStoresAndPosts(t *testing.T) {
 
 	requester := &model.User{Id: "u_req", Username: "req", Email: "req@example.com"}
 	api.On("GetUser", "u_req").Return(requester, nil)
+	api.On("GetTeamByName", "marketing").Return(nil, model.NewAppError("GetTeamByName", "not_found", nil, "", 404))
 	api.On("KVSet", mock.MatchedBy(func(key string) bool {
 		return strings.HasPrefix(key, kvTeamRequestPrefix)
 	}), mock.Anything).Return(nil)
@@ -115,5 +117,46 @@ func TestSubmitTeamRequest_PendingStoresAndPosts(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, msg, "submitted for approval")
 	// A non-admin must NOT trigger team creation.
+	api.AssertNotCalled(t, "CreateTeam", mock.Anything)
+}
+
+func TestTeamApprovalAttachmentWithNotice_PrependsWarningKeepsButtons(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	req := &teamRequest{ID: "r1", RequesterID: "u_req", Name: "ops", DisplayName: "Ops", TeamType: teamTypeOpen}
+	requester := &model.User{Id: "u_req", Username: "req"}
+
+	att := p.teamApprovalAttachmentWithNotice(req, requester, "Couldn't create the team: taken.")
+
+	// The warning is the first field so it reads as a banner above the details.
+	require.NotEmpty(t, att.Fields)
+	require.Contains(t, att.Fields[0].Title, "Action needed")
+	require.Contains(t, att.Fields[0].Value, "Couldn't create the team")
+	// Buttons are preserved so the approver can retry or deny.
+	require.Len(t, att.Actions, 2)
+	// Colored red to signal the failed attempt (vs. the normal blue card).
+	require.Equal(t, "#D24B4E", att.Color)
+}
+
+func TestSubmitTeamRequest_DuplicateURLNameRejected(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowTeamRequests: true})
+
+	requester := &model.User{Id: "u_req", Username: "req", Email: "req@example.com"}
+	api.On("GetUser", "u_req").Return(requester, nil)
+	// A team already owns the slugified URL name "marketing".
+	api.On("GetTeamByName", "marketing").Return(&model.Team{Id: "existing", Name: "marketing"}, nil)
+
+	_, err := p.submitTeamRequest(teamRequestInput{RequesterID: "u_req", DisplayName: "Marketing"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+	// The collision is caught before anything is stored or posted.
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 	api.AssertNotCalled(t, "CreateTeam", mock.Anything)
 }

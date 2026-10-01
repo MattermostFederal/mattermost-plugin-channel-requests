@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -308,6 +309,7 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
+	api.On("GetChannelByName", "team1", "team-marketing", true).Return(nil, model.NewAppError("GetChannelByName", "not_found", nil, "", 404))
 	api.On("CreateChannel", mock.MatchedBy(func(c *model.Channel) bool {
 		return c.TeamId == "team1" && c.Name == "team-marketing"
 	})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
@@ -328,6 +330,44 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 	api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
 }
 
+func TestDialogErrorResponse_FieldScopedVsGeneric(t *testing.T) {
+	// A field-scoped error surfaces inline under that dialog element and
+	// leaves the dialog-level message empty.
+	resp := dialogErrorResponse(newFieldError(fieldName, "URL taken"))
+	require.Empty(t, resp.Error)
+	require.Equal(t, "URL taken", resp.Errors[fieldName])
+
+	// A plain error falls back to the dialog-level message, no field map.
+	resp = dialogErrorResponse(errors.New("something else"))
+	require.Empty(t, resp.Errors)
+	require.Equal(t, "something else", resp.Error)
+}
+
+func TestSubmitRequest_DuplicateURLNameRejected(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
+	// A channel (here an archived one) already owns the resolved URL name.
+	api.On("GetChannelByName", "team1", "team-marketing", true).Return(&model.Channel{Id: "old", Name: "team-marketing"}, nil)
+
+	_, err := p.submitRequest(requestInput{
+		RequesterID: "admin1",
+		TeamID:      "team1",
+		DisplayName: "Marketing",
+		Prefix:      "team-",
+		Name:        "marketing",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+	// The collision is caught before any channel is created or request stored.
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+}
+
 func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
@@ -339,6 +379,7 @@ func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 	})
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("GetChannelByName", "team1", "team-marketing", true).Return(nil, model.NewAppError("GetChannelByName", "not_found", nil, "", 404))
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
