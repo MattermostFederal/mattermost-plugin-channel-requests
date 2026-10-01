@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import {submitTeamRequest} from './client';
@@ -45,6 +45,10 @@ export const RequestTeamModal = () => {
     const dispatch = useDispatch();
     const isOpen = useSelector(isTeamRequestModalOpen);
 
+    // The dialog element: the focus trap and Escape handler scope keyboard
+    // behavior to the modal while it's open.
+    const dialogRef = useRef<HTMLDivElement>(null);
+
     // The member picker scopes autocomplete to the current team (the server's
     // user-search endpoint requires caller membership of the team_id), so the
     // requester can add people they already share a team with to the new team.
@@ -86,6 +90,44 @@ export const RequestTeamModal = () => {
         dispatch(closeTeamRequestModal());
     };
 
+    // Keyboard affordances for the dialog: Escape closes it, and Tab /
+    // Shift+Tab are trapped so focus cycles within the modal instead of
+    // escaping to the page behind the overlay. Skips Tab handling when a
+    // child already consumed the event (the MemberPicker uses Tab to
+    // complete the highlighted candidate and calls preventDefault).
+    const onDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            close();
+            return;
+        }
+        if (e.key !== 'Tab' || e.defaultPrevented) {
+            return;
+        }
+        const root = dialogRef.current;
+        if (!root) {
+            return;
+        }
+        const focusable = Array.from(root.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ));
+        if (focusable.length === 0) {
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey) {
+            if (active === first || !root.contains(active)) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else if (active === last || !root.contains(active)) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     const submit = async () => {
         if (!displayName.trim()) {
             setError('A team name is required.');
@@ -123,16 +165,26 @@ export const RequestTeamModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='tr-title'
+                tabIndex={-1}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={onDialogKeyDown}
             >
-                <h3 style={{marginTop: 0}}>{'Request a Team'}</h3>
+                <h3
+                    id='tr-title'
+                    style={{marginTop: 0}}
+                >{'Request a Team'}</h3>
                 <p style={{opacity: 0.72}}>{'Your request will be sent to an admin for approval.'}</p>
 
                 {success ? (
                     <div>
                         <div
                             className='alert alert-success'
+                            role='status'
                             style={{marginBottom: 16}}
                         >
                             {success}
@@ -156,6 +208,7 @@ export const RequestTeamModal = () => {
                                 value={displayName}
                                 maxLength={64}
                                 placeholder='e.g. Marketing'
+                                autoFocus={true}
                                 onChange={(e) => setDisplayName(e.target.value)}
                             />
                         </div>
@@ -216,6 +269,7 @@ export const RequestTeamModal = () => {
                         {error ? (
                             <div
                                 className='alert alert-danger'
+                                role='alert'
                                 style={{marginBottom: 16}}
                             >
                                 {error}

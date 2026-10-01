@@ -272,6 +272,13 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
     const orderedCandidates = [...assigned, ...available];
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        // Backspace on an empty input removes the last selected user. Handled
+        // first so it works whether or not the autocomplete dropdown is open.
+        if (e.key === 'Backspace' && !query && selected.length > 0) {
+            commit(selected.slice(0, -1));
+            return;
+        }
+
         // With no visible dropdown, Enter still accepts the literal
         // typed name (useful for offline / unknown-user fallback).
         if (!showDropdown || orderedCandidates.length === 0) {
@@ -298,9 +305,6 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             }
         } else if (e.key === 'Escape') {
             setShowDropdown(false);
-        } else if (e.key === 'Backspace' && !query && selected.length > 0) {
-            // Backspace on empty input removes the last selected user.
-            commit(selected.slice(0, -1));
         }
     };
 
@@ -341,6 +345,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                         {'@' + username}
                         <button
                             type='button'
+                            aria-label={`Remove @${username}`}
                             style={{
                                 border: 'none',
                                 background: 'transparent',
@@ -372,6 +377,15 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                     value={query}
                     placeholder={selected.length === 0 ? (placeholder ?? 'Type a name...') : ''}
                     disabled={disabled}
+
+                    // Combobox semantics so screen readers announce the
+                    // autocomplete and its expanded/collapsed state. The
+                    // keyboard behavior (Arrow/Enter/Tab) lives in handleKeyDown.
+                    role='combobox'
+                    aria-label={placeholder ?? 'Add members'}
+                    aria-expanded={showDropdown && candidates.length > 0}
+                    aria-autocomplete='list'
+                    aria-controls='member-picker-listbox'
                     onChange={(e) => {
                         setQuery(e.target.value);
                         setShowDropdown(true);
@@ -383,6 +397,8 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
 
             {showDropdown && candidates.length > 0 && dropdownRect ? (
                 <div
+                    id='member-picker-listbox'
+                    role='listbox'
                     style={{
 
                         // Fixed positioning + explicit top/left/width
@@ -415,6 +431,8 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                             return (
                                 <div
                                     key={u.id}
+                                    role='option'
+                                    aria-selected={flatIndex === highlightIndex}
                                     style={{
                                         padding: '8px 12px',
                                         cursor: 'pointer',
