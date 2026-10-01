@@ -99,6 +99,7 @@ func (p *Plugin) submitBotTokenRequest(in botTokenRequestInput) (string, error) 
 			// privileged credential — remove it and tell the requester to retry.
 			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
 				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
+				return "", errors.Wrap(deliverErr, "bot created but the token could not be delivered to you, and the bot could not be removed automatically — ask an admin to delete it, then try again")
 			}
 			return "", errors.Wrap(deliverErr, "bot created but the token could not be delivered to you; it has been removed — please try again")
 		}

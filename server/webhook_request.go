@@ -108,6 +108,7 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 			// and tell the requester to retry.
 			if delErr := p.deleteIncomingWebhook(hookID); delErr != nil {
 				p.API.LogError("failed to delete webhook after URL delivery failure", "hook_id", hookID, "error", delErr.Error())
+				return "", errors.Wrap(deliverErr, "webhook created but the URL could not be delivered to you, and the webhook could not be removed automatically — ask an admin to delete it, then try again")
 			}
 			return "", errors.Wrap(deliverErr, "webhook created but the URL could not be delivered to you; it has been removed — please try again")
 		}

@@ -1232,12 +1232,21 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			// undelivered hook is an unowned secret endpoint. Delete it and
 			// report the failure instead of a false success.
 			p.API.LogError("failed to deliver webhook URL to requester", "user_id", req.RequesterID, "error", deliverErr.Error())
+			removed := true
 			if delErr := p.deleteIncomingWebhook(hookID); delErr != nil {
 				p.API.LogError("failed to delete webhook after URL delivery failure", "hook_id", hookID, "error", delErr.Error())
+				removed = false
 			}
-			p.logAudit(config, fmt.Sprintf("WEBHOOK DELIVERY FAILED: an incoming webhook for ~%s was created for @%s but the URL could not be delivered; the webhook was removed",
-				req.ChannelName, requesterUsername(requester, req.RequesterID)))
-			outcome := fmt.Sprintf("⚠️ Approved, but the URL could not be delivered to the requester, so the incoming webhook for ~%s was removed. Ask them to submit the request again.", req.ChannelName)
+			var outcome string
+			if removed {
+				p.logAudit(config, fmt.Sprintf("WEBHOOK DELIVERY FAILED: an incoming webhook for ~%s was created for @%s but the URL could not be delivered; the webhook was removed",
+					req.ChannelName, requesterUsername(requester, req.RequesterID)))
+				outcome = fmt.Sprintf("⚠️ Approved, but the URL could not be delivered to the requester, so the incoming webhook for ~%s was removed. Ask them to submit the request again.", req.ChannelName)
+			} else {
+				p.logAudit(config, fmt.Sprintf("WEBHOOK DELIVERY FAILED: an incoming webhook for ~%s was created for @%s but the URL could not be delivered AND the webhook could not be removed — manual cleanup needed",
+					req.ChannelName, requesterUsername(requester, req.RequesterID)))
+				outcome = fmt.Sprintf("⚠️ Approved, but the URL could not be delivered to the requester and the incoming webhook for ~%s could not be removed automatically — an admin should delete it. Ask the requester to submit again.", req.ChannelName)
+			}
 			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 			return
 		}
@@ -1485,12 +1494,21 @@ func (p *Plugin) handleBotTokenAction(w http.ResponseWriter, r *http.Request, ap
 			// the bot to avoid leaving it live, and report the failure instead of
 			// a false success.
 			p.API.LogError("failed to deliver bot token to requester", "user_id", req.RequesterID, "error", deliverErr.Error())
+			removed := true
 			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
 				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
+				removed = false
 			}
-			p.logAudit(config, fmt.Sprintf("BOT TOKEN DELIVERY FAILED: bot @%s was created for @%s but the token could not be delivered; the bot was removed",
-				bot.Username, requesterUsername(requester, req.RequesterID)))
-			outcome := fmt.Sprintf("⚠️ Approved, but the token could not be delivered to the requester, so bot @%s was removed. Ask them to submit the request again.", bot.Username)
+			var outcome string
+			if removed {
+				p.logAudit(config, fmt.Sprintf("BOT TOKEN DELIVERY FAILED: bot @%s was created for @%s but the token could not be delivered; the bot was removed",
+					bot.Username, requesterUsername(requester, req.RequesterID)))
+				outcome = fmt.Sprintf("⚠️ Approved, but the token could not be delivered to the requester, so bot @%s was removed. Ask them to submit the request again.", bot.Username)
+			} else {
+				p.logAudit(config, fmt.Sprintf("BOT TOKEN DELIVERY FAILED: bot @%s was created for @%s but the token could not be delivered AND the bot could not be removed — manual cleanup needed",
+					bot.Username, requesterUsername(requester, req.RequesterID)))
+				outcome = fmt.Sprintf("⚠️ Approved, but the token could not be delivered to the requester and bot @%s could not be removed automatically — an admin should delete it. Ask the requester to submit again.", bot.Username)
+			}
 			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 			return
 		}
