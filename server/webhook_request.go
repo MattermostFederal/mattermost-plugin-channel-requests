@@ -139,11 +139,13 @@ func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (url, hook
 	// creation is denied (manage_own_incoming_webhooks is a team-scoped
 	// permission), which is the usual cause of a webhook approval that
 	// "does nothing". Join the team first, then the channel.
+	var teamID string
 	if channel, appErr := p.API.GetChannel(req.ChannelID); appErr != nil {
 		p.API.LogWarn("failed to load channel for webhook creation", "channel_id", req.ChannelID, "error", appErr.Error())
 	} else {
-		if _, appErr := p.API.CreateTeamMember(channel.TeamId, p.botUserID); appErr != nil {
-			p.API.LogWarn("failed to add bot to team for webhook creation", "team_id", channel.TeamId, "error", appErr.Error())
+		teamID = channel.TeamId
+		if _, appErr := p.API.CreateTeamMember(teamID, p.botUserID); appErr != nil {
+			p.API.LogWarn("failed to add bot to team for webhook creation", "team_id", teamID, "error", appErr.Error())
 		}
 		// Promote the bot to Team Admin on this team so it holds
 		// manage_own_incoming_webhooks there. Incoming-webhook creation is a
@@ -151,8 +153,8 @@ func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (url, hook
 		// integrations are restricted to admins (the common default) — which
 		// otherwise 403s the REST call and makes the approval "do nothing".
 		// Bounded to teams where a webhook was actually approved.
-		if _, appErr := p.API.UpdateTeamMemberRoles(channel.TeamId, p.botUserID, teamAdminRoleString); appErr != nil {
-			p.API.LogWarn("failed to grant bot team-admin for webhook creation", "team_id", channel.TeamId, "error", appErr.Error())
+		if _, appErr := p.API.UpdateTeamMemberRoles(teamID, p.botUserID, teamAdminRoleString); appErr != nil {
+			p.API.LogWarn("failed to grant bot team-admin for webhook creation", "team_id", teamID, "error", appErr.Error())
 		}
 	}
 
@@ -165,16 +167,80 @@ func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (url, hook
 		return "", "", err
 	}
 
+	// Idempotency guard: a prior approval attempt for THIS request may have
+	// created the hook server-side even though the client observed an
+	// error/timeout. Retrying would otherwise create a duplicate hook. A stable
+	// per-request marker is embedded in the hook description so a retry finds and
+	// reuses the existing hook instead of creating another.
+	marker := webhookRequestMarker(req.ID)
+	if teamID != "" {
+		if existing := p.findWebhookByMarker(client, teamID, req.ChannelID, marker); existing != nil {
+			return p.webhookURL(existing.Id), existing.Id, nil
+		}
+	}
+
+	description := marker
+	if req.Description != "" {
+		description = req.Description + " " + marker
+	}
 	hook, _, err := client.CreateIncomingWebhook(context.Background(), &model.IncomingWebhook{
 		ChannelId:   req.ChannelID,
 		DisplayName: req.DisplayName,
-		Description: req.Description,
+		Description: description,
 	})
 	if err != nil {
 		return "", "", errors.Wrap(err, "failed to create incoming webhook (check that incoming webhooks are enabled and the channel-request bot may manage them)")
 	}
 
-	return fmt.Sprintf("%s/hooks/%s", strings.TrimRight(p.siteURL(), "/"), hook.Id), hook.Id, nil
+	return p.webhookURL(hook.Id), hook.Id, nil
+}
+
+// webhookRequestMarker is a stable token embedded in a created hook's
+// description so a retry of the same request can find the hook it already
+// created (idempotency) rather than making a duplicate.
+func webhookRequestMarker(requestID string) string {
+	return fmt.Sprintf("[channel-requests:%s]", requestID)
+}
+
+// webhookMatchesRequest reports whether an existing hook is the one created for
+// this request (same channel + carrying this request's marker). Pure, so the
+// matching rule is unit-testable without a live server.
+func webhookMatchesRequest(hook *model.IncomingWebhook, channelID, marker string) bool {
+	return hook != nil && hook.ChannelId == channelID && strings.Contains(hook.Description, marker)
+}
+
+func (p *Plugin) webhookURL(hookID string) string {
+	return fmt.Sprintf("%s/hooks/%s", strings.TrimRight(p.siteURL(), "/"), hookID)
+}
+
+// findWebhookByMarker scans the team's incoming webhooks for one matching this
+// request's marker. Returns nil if none is found or the listing fails (in which
+// case the caller falls back to creating a new hook). Bounded to a fixed number
+// of pages so a team with a huge number of hooks can't make this unbounded.
+func (p *Plugin) findWebhookByMarker(client *model.Client4, teamID, channelID, marker string) *model.IncomingWebhook {
+	const perPage = 100
+	const maxPages = 20
+	for page := 0; page < maxPages; page++ {
+		hooks, _, err := client.GetIncomingWebhooksForTeam(context.Background(), teamID, page, perPage, "")
+		if err != nil {
+			p.API.LogWarn("failed to list incoming webhooks for idempotency check", "team_id", teamID, "error", err.Error())
+			return nil
+		}
+		for _, h := range hooks {
+			if webhookMatchesRequest(h, channelID, marker) {
+				return h
+			}
+		}
+		if len(hooks) < perPage {
+			return nil // scanned every hook on the team
+		}
+	}
+	// Hit the page cap without scanning all hooks: a prior attempt's hook could
+	// lie beyond the scan window, so a duplicate is possible. Surface it rather
+	// than failing silently.
+	p.API.LogWarn("incoming-webhook idempotency scan hit the page cap; a duplicate hook is possible",
+		"team_id", teamID, "pages_scanned", maxPages)
+	return nil
 }
 
 // deleteIncomingWebhook removes a hook created by createIncomingWebhookForRequest.

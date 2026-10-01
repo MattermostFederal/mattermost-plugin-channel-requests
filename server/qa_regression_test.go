@@ -187,3 +187,24 @@ func TestHandleRequestAdmin_DisabledToggleRejects(t *testing.T) {
 	require.Contains(t, w.Body.String(), "disabled")
 	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 }
+
+// TestWebhookRequestIdempotencyMatching covers Bug 6's matching rule: the
+// per-request marker lets a retry recognize the hook it already created (same
+// channel + same marker) so it reuses it instead of creating a duplicate, while
+// not matching a different request's hook or a same-marker hook in another
+// channel.
+func TestWebhookRequestIdempotencyMatching(t *testing.T) {
+	markerA := webhookRequestMarker("reqA")
+	markerB := webhookRequestMarker("reqB")
+	require.NotEqual(t, markerA, markerB)
+
+	// Same channel + carries this request's marker -> match (the retry case).
+	require.True(t, webhookMatchesRequest(&model.IncomingWebhook{ChannelId: "ch1", Description: "deploy " + markerA}, "ch1", markerA))
+	// A different request's hook -> no match (no cross-request reuse).
+	require.False(t, webhookMatchesRequest(&model.IncomingWebhook{ChannelId: "ch1", Description: "deploy " + markerB}, "ch1", markerA))
+	// Same marker but a different channel -> no match.
+	require.False(t, webhookMatchesRequest(&model.IncomingWebhook{ChannelId: "ch2", Description: "deploy " + markerA}, "ch1", markerA))
+	// Hook with no marker (created outside the plugin) -> no match.
+	require.False(t, webhookMatchesRequest(&model.IncomingWebhook{ChannelId: "ch1", Description: "manual hook"}, "ch1", markerA))
+	require.False(t, webhookMatchesRequest(nil, "ch1", markerA))
+}
