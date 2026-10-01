@@ -90,13 +90,20 @@ func (p *Plugin) submitBotTokenRequest(in botTokenRequestInput) (string, error) 
 	}
 
 	if requester.IsSystemAdmin() {
-		token, botUsername, err := p.createBotTokenForRequest(req)
+		token, bot, err := p.createBotTokenForRequest(req)
 		if err != nil {
 			return "", err
 		}
-		p.deliverBotToken(req.RequesterID, botUsername, token)
+		if deliverErr := p.deliverBotToken(req.RequesterID, bot.Username, token); deliverErr != nil {
+			// The token can't be re-shown, so a bot nobody can use is a dangling
+			// privileged credential — remove it and tell the requester to retry.
+			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
+				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
+			}
+			return "", errors.Wrap(deliverErr, "bot created but the token could not be delivered to you; it has been removed — please try again")
+		}
 		p.logAudit(config, fmt.Sprintf("BOT TOKEN CREATED: @%s created bot @%s directly (System Admin)",
-			requester.Username, botUsername))
+			requester.Username, bot.Username))
 		return "Bot created. The access token has been sent to you in a direct message.", nil
 	}
 
@@ -113,36 +120,47 @@ func (p *Plugin) submitBotTokenRequest(in botTokenRequestInput) (string, error) 
 }
 
 // createBotTokenForRequest creates the bot account and issues an access token,
-// returning the raw token and the created bot's username.
-func (p *Plugin) createBotTokenForRequest(req *botTokenRequest) (token, botUsername string, err error) {
+// returning the raw token and the created bot. If token issuance fails after the
+// bot was created, the orphaned bot is deleted so a retry can re-create it under
+// the same username (otherwise the username is taken forever and the request
+// becomes unrecoverable, leaving a privileged bot with no usable token).
+func (p *Plugin) createBotTokenForRequest(req *botTokenRequest) (token string, bot *model.Bot, err error) {
 	displayName := req.DisplayName
 	if displayName == "" {
 		displayName = req.Username
 	}
-	bot, appErr := p.API.CreateBot(&model.Bot{
+	created, appErr := p.API.CreateBot(&model.Bot{
 		Username:    req.Username,
 		DisplayName: displayName,
 		Description: req.Description,
 	})
 	if appErr != nil {
-		return "", "", errors.Wrap(appErr, "failed to create bot")
+		return "", nil, errors.Wrap(appErr, "failed to create bot")
 	}
 
 	accessToken, appErr := p.API.CreateUserAccessToken(&model.UserAccessToken{
-		UserId:      bot.UserId,
+		UserId:      created.UserId,
 		Description: fmt.Sprintf("Requested via channel-requests by user %s", req.RequesterID),
 	})
 	if appErr != nil {
-		return "", "", errors.Wrap(appErr, "failed to create access token")
+		// Roll back the orphaned bot so the username is freed and a retry is
+		// clean. Best-effort: a cleanup failure is logged but we still report
+		// the original token error.
+		if delErr := p.API.PermanentDeleteBot(created.UserId); delErr != nil {
+			p.API.LogError("failed to delete orphaned bot after token-issuance failure",
+				"bot_user_id", created.UserId, "error", delErr.Error())
+		}
+		return "", nil, errors.Wrap(appErr, "failed to create access token")
 	}
 
-	return accessToken.Token, bot.Username, nil
+	return accessToken.Token, created, nil
 }
 
-// deliverBotToken DMs the freshly-created token to the requester ONLY. The token
-// is never posted to the approval channel.
-func (p *Plugin) deliverBotToken(requesterID, botUsername, token string) {
-	p.notifyRequester(requesterID, fmt.Sprintf(
+// deliverBotToken DMs the freshly-created token to the requester ONLY, returning
+// an error if delivery fails. The token is never posted to the approval channel.
+// The caller MUST handle a delivery failure (the token can't be shown again).
+func (p *Plugin) deliverBotToken(requesterID, botUsername, token string) error {
+	return p.dmRequester(requesterID, fmt.Sprintf(
 		"✅ Your bot token request was approved. Bot **@%s** was created.\n\n**Access token:** `%s`\n\n⚠️ Store this now — it won't be shown again.",
 		botUsername, token,
 	))

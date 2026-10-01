@@ -600,18 +600,30 @@ func (p *Plugin) mentionList(userIDs []string) string {
 	return strings.Join(mentions, ", ")
 }
 
-// notifyRequester sends a DM from the bot to the requester about the outcome of their request.
-func (p *Plugin) notifyRequester(requesterID, message string) {
+// dmRequester sends a DM from the bot to the requester and returns an error if
+// it could not be delivered. Callers that deliver a SECRET (webhook URL, bot
+// token) must check this error — a swallowed delivery failure means the only
+// copy of the secret is lost.
+func (p *Plugin) dmRequester(requesterID, message string) error {
 	channel, appErr := p.API.GetDirectChannel(requesterID, p.botUserID)
 	if appErr != nil {
-		p.API.LogWarn("failed to open DM with requester", "user_id", requesterID, "error", appErr.Error())
-		return
+		return errors.Wrap(appErr, "failed to open DM with requester")
 	}
 	if _, appErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
 		ChannelId: channel.Id,
 		Message:   message,
 	}); appErr != nil {
-		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", appErr.Error())
+		return errors.Wrap(appErr, "failed to post DM to requester")
+	}
+	return nil
+}
+
+// notifyRequester sends a non-critical outcome DM to the requester. Delivery
+// failures are logged and swallowed — fine for status notices, but NOT for
+// secrets (use dmRequester and check the error for those).
+func (p *Plugin) notifyRequester(requesterID, message string) {
+	if err := p.dmRequester(requesterID, message); err != nil {
+		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", err.Error())
 	}
 }

@@ -1178,7 +1178,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			})
 			return
 		}
-		url, createErr := p.createIncomingWebhookForRequest(req)
+		url, hookID, createErr := p.createIncomingWebhookForRequest(req)
 		if createErr != nil {
 			p.API.LogError("failed to create webhook on approval", "error", createErr.Error())
 			if restoreErr := p.API.KVSet(key, rawReq); restoreErr != nil {
@@ -1201,7 +1201,20 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			})
 			return
 		}
-		p.deliverWebhookURL(req.RequesterID, req.ChannelName, url)
+		if deliverErr := p.deliverWebhookURL(req.RequesterID, req.ChannelName, url); deliverErr != nil {
+			// The request is already resolved and the URL is a secret, so an
+			// undelivered hook is an unowned secret endpoint. Delete it and
+			// report the failure instead of a false success.
+			p.API.LogError("failed to deliver webhook URL to requester", "user_id", req.RequesterID, "error", deliverErr.Error())
+			if delErr := p.deleteIncomingWebhook(hookID); delErr != nil {
+				p.API.LogError("failed to delete webhook after URL delivery failure", "hook_id", hookID, "error", delErr.Error())
+			}
+			p.logAudit(config, fmt.Sprintf("WEBHOOK DELIVERY FAILED: an incoming webhook for ~%s was created for @%s but the URL could not be delivered; the webhook was removed",
+				req.ChannelName, requesterUsername(requester, req.RequesterID)))
+			outcome := fmt.Sprintf("⚠️ Approved, but the URL could not be delivered to the requester, so the incoming webhook for ~%s was removed. Ask them to submit the request again.", req.ChannelName)
+			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
+			return
+		}
 		outcome := fmt.Sprintf("✅ Fully approved (security + system). Incoming webhook for ~%s created; the URL was sent privately to the requester.", req.ChannelName)
 		p.logAudit(config, fmt.Sprintf("WEBHOOK APPROVED: @%s gave final approval; incoming webhook for ~%s created for @%s",
 			actingUser.Username, req.ChannelName, requesterUsername(requester, req.RequesterID)))
@@ -1415,7 +1428,7 @@ func (p *Plugin) handleBotTokenAction(w http.ResponseWriter, r *http.Request, ap
 			})
 			return
 		}
-		token, botUsername, createErr := p.createBotTokenForRequest(req)
+		token, bot, createErr := p.createBotTokenForRequest(req)
 		if createErr != nil {
 			p.API.LogError("failed to create bot token on approval", "error", createErr.Error())
 			// Restore the ORIGINAL (pre-final-approval) request so this final
@@ -1440,10 +1453,24 @@ func (p *Plugin) handleBotTokenAction(w http.ResponseWriter, r *http.Request, ap
 			})
 			return
 		}
-		p.deliverBotToken(req.RequesterID, botUsername, token)
-		outcome := fmt.Sprintf("✅ Fully approved (security + system). Bot @%s created; the token was sent privately to the requester.", botUsername)
+		if deliverErr := p.deliverBotToken(req.RequesterID, bot.Username, token); deliverErr != nil {
+			// The token is shown only once and the request is already resolved,
+			// so an undelivered token is a dangling privileged credential. Delete
+			// the bot to avoid leaving it live, and report the failure instead of
+			// a false success.
+			p.API.LogError("failed to deliver bot token to requester", "user_id", req.RequesterID, "error", deliverErr.Error())
+			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
+				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
+			}
+			p.logAudit(config, fmt.Sprintf("BOT TOKEN DELIVERY FAILED: bot @%s was created for @%s but the token could not be delivered; the bot was removed",
+				bot.Username, requesterUsername(requester, req.RequesterID)))
+			outcome := fmt.Sprintf("⚠️ Approved, but the token could not be delivered to the requester, so bot @%s was removed. Ask them to submit the request again.", bot.Username)
+			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
+			return
+		}
+		outcome := fmt.Sprintf("✅ Fully approved (security + system). Bot @%s created; the token was sent privately to the requester.", bot.Username)
 		p.logAudit(config, fmt.Sprintf("BOT TOKEN APPROVED: @%s gave final approval; bot @%s created for @%s",
-			actingUser.Username, botUsername, requesterUsername(requester, req.RequesterID)))
+			actingUser.Username, bot.Username, requesterUsername(requester, req.RequesterID)))
 		writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 		return
 	}

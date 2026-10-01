@@ -99,11 +99,18 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 	}
 
 	if requester.IsSystemAdmin() {
-		url, err := p.createIncomingWebhookForRequest(req)
+		url, hookID, err := p.createIncomingWebhookForRequest(req)
 		if err != nil {
 			return "", err
 		}
-		p.deliverWebhookURL(req.RequesterID, channel.Name, url)
+		if deliverErr := p.deliverWebhookURL(req.RequesterID, channel.Name, url); deliverErr != nil {
+			// An undelivered hook URL is an unowned secret endpoint — remove it
+			// and tell the requester to retry.
+			if delErr := p.deleteIncomingWebhook(hookID); delErr != nil {
+				p.API.LogError("failed to delete webhook after URL delivery failure", "hook_id", hookID, "error", delErr.Error())
+			}
+			return "", errors.Wrap(deliverErr, "webhook created but the URL could not be delivered to you; it has been removed — please try again")
+		}
 		p.logAudit(config, fmt.Sprintf("WEBHOOK CREATED: @%s created an incoming webhook for ~%s directly (System Admin)",
 			requester.Username, channel.Name))
 		return "Incoming webhook created. The URL has been sent to you in a direct message.", nil
@@ -123,8 +130,9 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 
 // createIncomingWebhookForRequest creates the incoming webhook via the REST API
 // (there is no plugin API for it) as the plugin bot, and returns the full hook
-// URL. The bot is added to the channel first so it may create a hook there.
-func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (string, error) {
+// URL and the hook ID (so the caller can delete it if the URL can't be
+// delivered). The bot is added to the channel first so it may create a hook there.
+func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (url, hookID string, err error) {
 	// The bot must be a member of the channel to own a hook there — and it
 	// can't be added to the channel until it's on the channel's TEAM. Without
 	// team membership the add fails ("no team member found") and the hook
@@ -154,7 +162,7 @@ func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (string, e
 
 	client, err := p.restClient()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	hook, _, err := client.CreateIncomingWebhook(context.Background(), &model.IncomingWebhook{
@@ -163,16 +171,31 @@ func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (string, e
 		Description: req.Description,
 	})
 	if err != nil {
-		return "", errors.Wrap(err, "failed to create incoming webhook (check that incoming webhooks are enabled and the channel-request bot may manage them)")
+		return "", "", errors.Wrap(err, "failed to create incoming webhook (check that incoming webhooks are enabled and the channel-request bot may manage them)")
 	}
 
-	return fmt.Sprintf("%s/hooks/%s", strings.TrimRight(p.siteURL(), "/"), hook.Id), nil
+	return fmt.Sprintf("%s/hooks/%s", strings.TrimRight(p.siteURL(), "/"), hook.Id), hook.Id, nil
+}
+
+// deleteIncomingWebhook removes a hook created by createIncomingWebhookForRequest.
+// Used to clean up a hook whose URL could not be delivered to the requester, so
+// no unowned secret endpoint is left live.
+func (p *Plugin) deleteIncomingWebhook(hookID string) error {
+	client, err := p.restClient()
+	if err != nil {
+		return err
+	}
+	if _, err := client.DeleteIncomingWebhook(context.Background(), hookID); err != nil {
+		return errors.Wrap(err, "failed to delete incoming webhook")
+	}
+	return nil
 }
 
 // deliverWebhookURL DMs the webhook URL to the requester ONLY — never to the
-// approval channel.
-func (p *Plugin) deliverWebhookURL(requesterID, channelName, url string) {
-	p.notifyRequester(requesterID, fmt.Sprintf(
+// approval channel — and returns an error if delivery fails. The caller MUST
+// handle a delivery failure (an undelivered URL is an unowned secret endpoint).
+func (p *Plugin) deliverWebhookURL(requesterID, channelName, url string) error {
+	return p.dmRequester(requesterID, fmt.Sprintf(
 		"✅ Your incoming webhook for ~%s was approved.\n\n**Webhook URL:** `%s`\n\n⚠️ Treat this URL like a secret — anyone with it can post to the channel.",
 		channelName, url,
 	))
