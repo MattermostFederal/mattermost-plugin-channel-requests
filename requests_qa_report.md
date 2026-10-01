@@ -40,6 +40,17 @@ Remedy principle for the secret bugs (1, 2): **fail closed on the secret** — i
 
 Still open (lower priority, not yet addressed): the **Low** docs mismatch (`approvals.html` still describes the old "Approve (security)" button label), and the benign `handleConfig` key inconsistency.
 
+## Extended test coverage (follow-up pass)
+
+After the bug fixes, a second pass closed most of the non-browser coverage gaps and added real UI tests:
+
+- **Slash-command routing (live)** via `/api/v4/commands/execute` as a real user: bare `/request`, `help`, unknown subcommand → usage; `channel`/`team`/`bot-token` route to the dialog; `/channel-request` alias; case-insensitive subcommand. Plus Go unit tests for the same (incl. extra-args ignored) and the existing disabled/enabled matrix.
+- **Input-validation matrix (live)** through the endpoints: blank/overlong names, overlong purpose/description, missing team, missing/unknown prefix, >100 members, team URL min-length, Unicode-only name without a URL (correctly rejected — slug is empty), Unicode name *with* an ASCII URL (accepted), no-nominees, unknown nominee, requester-not-on-team, blank webhook name, blank/invalid/overlong bot username. **26/26 pass.**
+- **`handleConfig` toggle matrix (Go)**: asserts the webapp-facing flags for all-on / all-off / channel-admin-off.
+- **Request Team modal (Playwright component tests, real chromium)**: renders when open, renders nothing when closed, blank-name client validation, Cancel closes, live URL-slug preview, successful submit (network mocked) shows success + Close, and a server error is surfaced with the form left open. **8/8 pass** (incl. the pre-existing `HeaderIcon` test).
+
+**New finding from this pass → fixed:** `validateBotTokenInput` used `model.IsValidUsername` (1–64 chars), so bot usernames up to 64 chars passed submit validation even though the dialog/help advertise **3–22**. Tightened to enforce 3–22 (commit `c43181f`), with unit + live tests. Low severity (pre-existing; `CreateBot` would likely have accepted the longer name).
+
 ## Commands Executed
 
 | Command | Result |
@@ -242,13 +253,17 @@ Still worth adding:
 
 ## Remaining Manual QA
 
-Requires a running server/browser (not executed here):
+Now covered by the follow-up pass (no longer purely manual): Team-modal core UX (render/validation/cancel/submit success+error/live preview) via Playwright CT; slash-command routing and the input-validation matrix via live tests; toggle exposure via `handleConfig` tests.
 
-- Webapp Team modal UX (`RequestTeamModal.tsx`): open/close/Escape/cancel, double-submit guard, loading state, state reset on reopen, member autocomplete, keyboard nav, focus trap, a11y labels/screen-reader semantics, long/Unicode values. (Backend endpoints exercised live; UI rendering not.)
-- Playwright component + E2E suites (`webapp test:pw`, `test:pw-ct`).
+Still requires a running server/browser (not executed here):
+
+- Team-modal UX details not in the CT tests: member-autocomplete interaction, keyboard navigation, focus trap, screen-reader/a11y semantics, Escape-to-close.
+- **System Console** admin settings UI (the custom pickers: Team/ApprovalChannel/Prefix/Member/AutoApprove).
+- **Visual rendering** of approval cards, the repaint-on-failure banner, and ephemeral messages in a real client; websocket real-time card updates.
 - True concurrency stress (parallel approve/deny clicks) against a real store.
-- Ambiguous-success network-fault injection for webhook creation (Bug 6).
+- Ambiguous-success network-fault injection for webhook creation (Bug 6) and the webhook delivery-failure path end-to-end.
 - Negative authorization at the action endpoints against a live server (unauthorized user calling `/api/v1/approve_*` directly).
+- In-place-upgrade check that the channel-admin manifest default applies.
 
 ## Production Readiness Checklist
 
