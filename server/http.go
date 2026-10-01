@@ -988,11 +988,27 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 
 	var outcome string
 	if approve {
-		p.promoteTeamAdmins(req)
-		outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Team Admin in %s.", actingUser.Username, nominees, teamRef)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Team Admin in %s was approved.", nominees, teamRef))
-		p.logAudit(config, fmt.Sprintf("TEAM ADMIN APPROVED: @%s promoted %s to Team Admin in %s (requested by @%s)",
-			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)))
+		// Report only who was actually promoted — a privileged grant (and its
+		// audit line) must not claim promotions that failed.
+		promoted, failed := p.promoteTeamAdmins(req)
+		promotedList := p.mentionList(promoted)
+		switch {
+		case len(promoted) == 0:
+			outcome = fmt.Sprintf("⚠️ Approved by @%s, but no one could be promoted to Team Admin in %s (%s). Ask the requester to resubmit.", actingUser.Username, teamRef, p.mentionList(failed))
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your Team Admin request in %s was approved, but %s could not be promoted. Please resubmit.", teamRef, p.mentionList(failed)))
+			p.logAudit(config, fmt.Sprintf("TEAM ADMIN APPROVED (FAILED): @%s approved a Team Admin request in %s but no promotions succeeded (%s); requested by @%s",
+				actingUser.Username, teamRef, p.mentionList(failed), requesterUsername(requester, req.RequesterID)))
+		case len(failed) > 0:
+			outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Team Admin in %s. ⚠️ Could not promote %s.", actingUser.Username, promotedList, teamRef, p.mentionList(failed))
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request made %s Team Admin in %s. %s could not be promoted — check they're active members.", promotedList, teamRef, p.mentionList(failed)))
+			p.logAudit(config, fmt.Sprintf("TEAM ADMIN APPROVED (PARTIAL): @%s promoted %s to Team Admin in %s; failed: %s (requested by @%s)",
+				actingUser.Username, promotedList, teamRef, p.mentionList(failed), requesterUsername(requester, req.RequesterID)))
+		default:
+			outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Team Admin in %s.", actingUser.Username, promotedList, teamRef)
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Team Admin in %s was approved.", promotedList, teamRef))
+			p.logAudit(config, fmt.Sprintf("TEAM ADMIN APPROVED: @%s promoted %s to Team Admin in %s (requested by @%s)",
+				actingUser.Username, promotedList, teamRef, requesterUsername(requester, req.RequesterID)))
+		}
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Team Admin in %s was denied.", nominees, teamRef))

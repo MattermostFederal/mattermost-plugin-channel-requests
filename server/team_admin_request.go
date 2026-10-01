@@ -78,10 +78,17 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	// Bypass approval for System Admins and delegated auto-approve users,
 	// mirroring the channel-admin flow.
 	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
-		p.promoteTeamAdmins(req)
+		promoted, failed := p.promoteTeamAdmins(req)
+		if len(promoted) == 0 {
+			return "", errors.Errorf("could not promote %s to Team Admin in %s", p.mentionList(failed), team.DisplayName)
+		}
 		p.logAudit(config, fmt.Sprintf("TEAM ADMIN: @%s promoted %s to Team Admin in team `%s`",
-			requester.Username, p.mentionList(req.NomineeIDs), team.Name))
-		return fmt.Sprintf("Promoted %s to Team Admin in **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
+			requester.Username, p.mentionList(promoted), team.Name))
+		msg := fmt.Sprintf("Promoted %s to Team Admin in **%s**.", p.mentionList(promoted), team.DisplayName)
+		if len(failed) > 0 {
+			msg += fmt.Sprintf(" Could not promote %s — check they're active members and try again.", p.mentionList(failed))
+		}
+		return msg, nil
 	}
 
 	if err := p.storeTeamAdminRequest(req); err != nil {
@@ -98,8 +105,10 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 
 // promoteTeamAdmins adds each nominee to the team (a no-op for existing members)
 // and grants them the team_admin role. Per-user failures are logged but don't
-// abort the others — a partial promotion is better than none.
-func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) {
+// abort the others — a partial promotion is better than none. It returns the
+// nominees that were actually promoted and those that failed, so callers can
+// report the true outcome instead of claiming everyone succeeded.
+func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) (promoted, failed []string) {
 	for _, userID := range req.NomineeIDs {
 		if userID == "" {
 			continue
@@ -108,11 +117,17 @@ func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) {
 		// on the team. CreateTeamMember is idempotent for existing members.
 		if _, appErr := p.API.CreateTeamMember(req.TeamID, userID); appErr != nil {
 			p.API.LogWarn("failed to add nominee to team", "team_id", req.TeamID, "user_id", userID, "error", appErr.Error())
+			failed = append(failed, userID)
+			continue
 		}
 		if _, appErr := p.API.UpdateTeamMemberRoles(req.TeamID, userID, teamAdminRoleString); appErr != nil {
 			p.API.LogWarn("failed to promote nominee to team admin", "team_id", req.TeamID, "user_id", userID, "error", appErr.Error())
+			failed = append(failed, userID)
+			continue
 		}
+		promoted = append(promoted, userID)
 	}
+	return promoted, failed
 }
 
 func (p *Plugin) storeTeamAdminRequest(req *teamAdminRequest) error {
