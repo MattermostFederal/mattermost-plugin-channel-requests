@@ -205,3 +205,55 @@ func TestExecuteCommand_WebhookEnabledOpensDialog(t *testing.T) {
 	require.NotNil(t, resp)
 	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
 }
+
+func TestExecuteCommand_UnknownSubcommandShowsUsage(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request nonsense", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.Contains(t, resp.Text, "Usage")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_HelpShowsUsage(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request help", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.Contains(t, resp.Text, "Usage")
+	api.AssertNotCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_SubcommandIsCaseInsensitive(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	// "CHANNEL" must route like "channel".
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request CHANNEL", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_ExtraArgsIgnored(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowTeamRequests: true})
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+
+	// Trailing junk after the subcommand is ignored; the team dialog still opens.
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: "/request team extra stuff", TriggerId: "trig", TeamId: "team1"})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}

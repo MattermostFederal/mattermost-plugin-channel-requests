@@ -188,6 +188,53 @@ func TestHandleRequestAdmin_DisabledToggleRejects(t *testing.T) {
 	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 }
 
+// TestHandleConfig_ReflectsToggles verifies the webapp-facing /config endpoint
+// returns the correct per-type flags the webapp uses to show/hide entry points,
+// for several toggle combinations. The webapp hides buttons/menus based purely
+// on these flags, so they must be accurate.
+func TestHandleConfig_ReflectsToggles(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *configuration
+		want map[string]bool
+	}{
+		{
+			name: "all on",
+			cfg:  &configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamRequests: true, AllowWebhookRequests: true},
+			want: map[string]bool{"channel": true, "channel_admin": true, "team": true, "webhook": true},
+		},
+		{
+			name: "all off",
+			cfg:  &configuration{},
+			want: map[string]bool{"channel": false, "channel_admin": false, "team": false, "webhook": false},
+		},
+		{
+			name: "channel-admin off only",
+			cfg:  &configuration{AllowChannelRequests: true, AllowChannelAdminRequests: false, AllowTeamRequests: true, AllowWebhookRequests: true},
+			want: map[string]bool{"channel": true, "channel_admin": false, "team": true, "webhook": true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			p.setConfiguration(tc.cfg)
+
+			r := httptest.NewRequest(http.MethodGet, routeConfig, nil)
+			r.Header.Set(headerUserID, "u1")
+			w := httptest.NewRecorder()
+			p.handleConfig(w, r)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var got map[string]bool
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // TestWebhookRequestIdempotencyMatching covers Bug 6's matching rule: the
 // per-request marker lets a retry recognize the hook it already created (same
 // channel + same marker) so it reuses it instead of creating a duplicate, while
