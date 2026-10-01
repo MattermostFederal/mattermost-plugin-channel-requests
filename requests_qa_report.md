@@ -36,6 +36,8 @@ All six confirmed bugs were fixed on this branch after the initial review, each 
 
 Remedy principle for the secret bugs (1, 2): **fail closed on the secret** — if a bot token or webhook URL cannot be delivered to the right person, the credential is destroyed (`PermanentDeleteBot` / `DeleteIncomingWebhook`) rather than left live and unowned; resubmission is the clean recovery.
 
+**Post-fix live re-verification** (real server, three real users, real action API): after redeploying the fixed build, the full happy-path suite was re-run — channel/team/team-admin/channel-admin + both two-step flows. The two-step delta guards were exact in both approval orders (no creation after one approval; no creation when the same user clicks twice; creation only on the second distinct approval), secrets were DM'd to the requester and not leaked to the approval channel, and the new per-request idempotency marker (`[channel-requests:<id>]`) was confirmed present in every created hook's description. No regression from the fixes. The forced delivery-failure and duplicate-retry edges were not reproduced live (hard to trigger safely) — bot-token delivery failure is covered by a Go test; the webhook delivery-failure and true duplicate-retry reuse paths remain live-untested (see checklist).
+
 Still open (lower priority, not yet addressed): the **Low** docs mismatch (`approvals.html` still describes the old "Approve (security)" button label), and the benign `handleConfig` key inconsistency.
 
 ## Commands Executed
