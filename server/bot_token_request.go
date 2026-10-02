@@ -12,10 +12,10 @@ import (
 
 const (
 	// kvBotTokenRequestPrefix namespaces pending bot-token requests in the KV store.
-	kvBotTokenRequestPrefix = "bot_token_request_"
+	kvBotTokenRequestPrefix = "bot_token_request_" //nolint:gosec // G101 false positive: KV namespace, not a credential
 
 	// botTokenDialogCallbackID identifies submissions from the bot-token dialog.
-	botTokenDialogCallbackID = "bot_token_request"
+	botTokenDialogCallbackID = "bot_token_request" //nolint:gosec // G101 false positive: dialog callback id, not a credential
 
 	// fieldUsername / fieldBotDescription are the bot-token dialog elements.
 	fieldUsername       = "username"

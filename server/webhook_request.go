@@ -227,7 +227,7 @@ func (p *Plugin) webhookURL(hookID string) string {
 func (p *Plugin) findWebhookByMarker(client *model.Client4, teamID, channelID, marker string) *model.IncomingWebhook {
 	const perPage = 100
 	const maxPages = 20
-	for page := 0; page < maxPages; page++ {
+	for page := range maxPages {
 		hooks, _, err := client.GetIncomingWebhooksForTeam(context.Background(), teamID, page, perPage, "")
 		if err != nil {
 			p.API.LogWarn("failed to list incoming webhooks for idempotency check", "team_id", teamID, "error", err.Error())

@@ -55,8 +55,10 @@ func TestHandleBotTokenAction_DeliveryFailureRemovesBotAndReportsFailure(t *test
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{})
 
-	req := &botTokenRequest{ID: "b1", RequesterID: "u_req", Username: "deploy-bot",
-		twoStepState: twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1}}
+	req := &botTokenRequest{
+		ID: "b1", RequesterID: "u_req", Username: "deploy-bot",
+		twoStepState: twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1},
+	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -122,9 +124,9 @@ func TestHandleTeamAdminAction_PartialPromotionReportedTruthfully(t *testing.T) 
 
 	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	require.Contains(t, body, "nom1")                 // promoted
-	require.Contains(t, body, "Could not promote")    // failure surfaced
-	require.Contains(t, body, "nom2")                 // the one that failed
+	require.Contains(t, body, "nom1")              // promoted
+	require.Contains(t, body, "Could not promote") // failure surfaced
+	require.Contains(t, body, "nom2")              // the one that failed
 }
 
 // TestHandleTeamAction_RequesterNotToldTeamAdminWhenPromotionFails covers Bug 4:

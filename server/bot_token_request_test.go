@@ -71,8 +71,10 @@ func TestHandleBotTokenAction_SecondApprovalCompletesAndIssuesToken(t *testing.T
 	// role, and the security step is already done in the stored request.
 	p.setConfiguration(&configuration{})
 
-	req := &botTokenRequest{ID: "b1", RequesterID: "u_req", Username: "deploy-bot",
-		twoStepState: twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1}}
+	req := &botTokenRequest{
+		ID: "b1", RequesterID: "u_req", Username: "deploy-bot",
+		twoStepState: twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1},
+	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 

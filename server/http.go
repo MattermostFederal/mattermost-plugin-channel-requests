@@ -28,10 +28,10 @@ const (
 	routeRequestTeamAdmin = "/api/v1/request_team_admin" // team-admin request (webapp) submissions
 	routeApproveTeamAdmin = "/api/v1/approve_team_admin"
 	routeDenyTeamAdmin    = "/api/v1/deny_team_admin"
-	routeDialogBotToken   = "/api/v1/dialog_bot_token" // bot-token request dialog (slash command)
-	routeApproveBotToken  = "/api/v1/approve_bot_token"
-	routeDenyBotToken     = "/api/v1/deny_bot_token"
-	routeDialogWebhook    = "/api/v1/dialog_webhook" // webhook request dialog (slash command)
+	routeDialogBotToken   = "/api/v1/dialog_bot_token"  //nolint:gosec // G101 false positive: URL route, not a credential
+	routeApproveBotToken  = "/api/v1/approve_bot_token" //nolint:gosec // G101 false positive: URL route, not a credential
+	routeDenyBotToken     = "/api/v1/deny_bot_token"    //nolint:gosec // G101 false positive: URL route, not a credential
+	routeDialogWebhook    = "/api/v1/dialog_webhook"    // webhook request dialog (slash command)
 	routeApproveWebhook   = "/api/v1/approve_webhook"
 	routeDenyWebhook      = "/api/v1/deny_webhook"
 	routePrefixes         = "/api/v1/prefixes"
@@ -58,7 +58,7 @@ const (
 	teamAdminRequestsDisabledMsg = "Team admin requests are currently disabled by an administrator."
 
 	// botTokenRequestsDisabledMsg is the bot-token-request counterpart.
-	botTokenRequestsDisabledMsg = "Bot token requests are currently disabled by an administrator."
+	botTokenRequestsDisabledMsg = "Bot token requests are currently disabled by an administrator." //nolint:gosec // G101 false positive: user-facing message, not a credential
 
 	// webhookRequestsDisabledMsg is the webhook-request counterpart.
 	webhookRequestsDisabledMsg = "Webhook requests are currently disabled by an administrator."
@@ -1190,7 +1190,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		return
 	}
 
-	newState := req.twoStepState.withApproval(step, userID, model.GetMillis())
+	newState := req.withApproval(step, userID, model.GetMillis())
 
 	if newState.complete() {
 		claimed, claimErr := p.API.KVCompareAndDelete(key, rawReq)
@@ -1447,7 +1447,7 @@ func (p *Plugin) handleBotTokenAction(w http.ResponseWriter, r *http.Request, ap
 		return
 	}
 
-	newState := req.twoStepState.withApproval(step, userID, model.GetMillis())
+	newState := req.withApproval(step, userID, model.GetMillis())
 
 	if newState.complete() {
 		// Claim (remove) before creating so two concurrent completing clicks
