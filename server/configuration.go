@@ -11,6 +11,20 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Request type identifiers. Each names a kind of request users can
+// submit and maps to a per-type admin toggle via RequestEnabled. They
+// also (from Phase 2 on) key the /request subcommands and route
+// dispatch. Kept as plain strings so they can travel over the wire to
+// the webapp (see handleConfig) without a translation layer.
+const (
+	requestTypeChannel      = "channel"
+	requestTypeChannelAdmin = "channel_admin"
+	requestTypeTeam         = "team"
+	requestTypeTeamAdmin    = "team_admin"
+	requestTypeWebhook      = "webhook"
+	requestTypeBotToken     = "bot_token"
+)
+
 // channelPrefix is one entry in the admin-configured list of allowed
 // domain prefixes. The requester picks a prefix by ID from a dropdown;
 // the server enforces that the final channel name starts with the
@@ -71,6 +85,42 @@ type configuration struct {
 	// --- 4. Audit ---
 	AuditChannelID string
 
+	// --- 5. Requestable types (per-type feature toggles) ---
+	// Each governs whether users may submit that kind of request — both the
+	// visibility of its entry points (webapp) and whether the server accepts
+	// a submission. AllowChannelRequests defaults to true (the plugin's
+	// original behavior, so an upgrade is behavior-preserving); Team and
+	// Webhook default to false so admins opt into the newer capabilities.
+	// The defaults live in plugin.json's settings_schema.
+	AllowChannelRequests bool
+	AllowTeamRequests    bool
+	AllowWebhookRequests bool
+
+	// AllowChannelAdminRequests governs requests to promote members to Channel
+	// Admin on an existing channel. Defaults to true, matching the plugin's
+	// prior behavior (the feature had no toggle and was always available).
+	AllowChannelAdminRequests bool
+
+	// AllowTeamAdminRequests governs requests to be promoted to Team Admin on
+	// an existing team (the team analogue of channel-admin requests). Defaults
+	// to false — opt-in, like the other newer request types.
+	AllowTeamAdminRequests bool
+
+	// AllowBotTokenRequests governs requests for a bot token. Like webhook
+	// requests, these use the two-step approval engine (security + system).
+	AllowBotTokenRequests bool
+
+	// --- 6. Multi-step approver pools (attribute-based) ---
+	// SecurityApproverAttribute and SystemApproverAttribute name the User
+	// Attributes (custom profile attributes, in the "access_control" property
+	// group) that mark a user as eligible to approve the security step and the
+	// system/admin step, respectively, of a two-step request. The plugin READS
+	// these; their values are managed outside the plugin (System Console /
+	// LDAP / SAML). A user counts as an approver for a pool when their value
+	// for the named attribute is set (non-empty). See approvers.go.
+	SecurityApproverAttribute string
+	SystemApproverAttribute   string
+
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
 	autoApproveUserIDs []string
@@ -96,6 +146,28 @@ func (c *configuration) Prefixes() []channelPrefix {
 // admin-configured auto-approve list.
 func (c *configuration) AutoApproveContains(userID string) bool {
 	return slices.Contains(c.autoApproveUserIDs, userID)
+}
+
+// RequestEnabled reports whether the given request type is currently
+// enabled for users to submit. Unknown types return false so a new entry
+// point can't accidentally bypass the gate before its toggle is wired up.
+func (c *configuration) RequestEnabled(requestType string) bool {
+	switch requestType {
+	case requestTypeChannel:
+		return c.AllowChannelRequests
+	case requestTypeChannelAdmin:
+		return c.AllowChannelAdminRequests
+	case requestTypeTeam:
+		return c.AllowTeamRequests
+	case requestTypeTeamAdmin:
+		return c.AllowTeamAdminRequests
+	case requestTypeWebhook:
+		return c.AllowWebhookRequests
+	case requestTypeBotToken:
+		return c.AllowBotTokenRequests
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) getConfiguration() *configuration {

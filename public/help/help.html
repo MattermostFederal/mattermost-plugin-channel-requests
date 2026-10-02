@@ -99,6 +99,37 @@
                 and a welcome message @-mentions everyone who was added so they know they're in.
             </p>
         </div>
+
+        <h2>Requesting other things — the <code>/request</code> command</h2>
+        <p>
+            Beyond channels, you can request several other things with the <code>/request</code>
+            slash command. Which subcommands work depends on what your admin has enabled.
+            (The old <code>/channel-request</code> still works as an alias for
+            <code>/request channel</code>.)
+        </p>
+        <table class="field-table">
+            <thead>
+                <tr><th>Command</th><th>What it requests</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>/request channel</code></td><td>A new channel (same form as above).</td></tr>
+                <tr><td><code>/request team</code></td><td>A new team. You're made a Team Admin of it on approval.</td></tr>
+                <tr><td><code>/request team-admin</code></td><td>Team Admin rights on the team you run it in. Nominate yourself or others.</td></tr>
+                <tr><td><code>/request webhook</code></td><td>An incoming webhook for the channel you run it in. The URL is DM'd to you privately once approved.</td></tr>
+                <tr><td><code>/request bot-token</code></td><td>A bot account + access token. The token is DM'd to you privately once approved.</td></tr>
+            </tbody>
+        </table>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Two-step approval for webhooks and bot tokens</div>
+            <p>
+                Webhook and bot-token requests need <strong>two</strong> approvals — one from a
+                <strong>security</strong> approver and one from a <strong>system</strong> approver,
+                and they must be two different people. You'll be notified as each approval lands,
+                and the secret (webhook URL or token) is sent to you in a <strong>direct
+                message</strong> only — never posted in the approval channel.
+            </p>
+        </div>
     </main>
 </div>
 </body>

@@ -1,12 +1,12 @@
 {
     "id": "com.mattermostfederal.channel-requests",
-    "name": "Channel Requests",
-    "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
+    "name": "Requests",
+    "description": "Lets non-admins request channels, teams, team-admin rights, incoming webhooks, and bot tokens for approval — with per-type toggles and two-step (security + system) approval for webhooks and bot tokens.",
     "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
     "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.3.0",
-    "min_server_version": "10.5.0",
+    "version": "0.4.0",
+    "min_server_version": "10.9.0",
     "server": {
         "executables": {
             "linux-amd64": "server/dist/plugin-linux-amd64",
@@ -19,9 +19,65 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below; System Admins (and optionally Team Admins) can approve or deny.\n\nPick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically. Requesters see a form with a prefix picker + tab-complete member + Channel Admin selectors.",
+        "header": "## Requests\n\nLets non-admins **request** things instead of creating them directly: channels, teams, Team Admin rights, incoming webhooks, and bot tokens. Use the per-type toggles below to control what users can request. Requests are posted to the approval channel; System Admins (and optionally Team Admins) can approve or deny.\n\nWebhook and bot-token requests use **two-step approval** — one security approver and one system approver, identified by the User Attributes named below. Pick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically.",
         "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
+            {
+                "key": "AllowChannelRequests",
+                "display_name": "Allow channel requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new channels. Turn this off to hide the channel-request entry points and reject channel-request submissions."
+            },
+            {
+                "key": "AllowChannelAdminRequests",
+                "display_name": "Allow channel admin requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, members can request that someone be promoted to Channel Admin on an existing channel. Turn this off to hide the \"Request Channel Admin\" menu item and reject its submissions."
+            },
+            {
+                "key": "AllowTeamRequests",
+                "display_name": "Allow team requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request the creation of new teams for admin approval."
+            },
+            {
+                "key": "AllowWebhookRequests",
+                "display_name": "Allow webhook requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request incoming webhooks for a channel, delivered privately once approved."
+            },
+            {
+                "key": "AllowTeamAdminRequests",
+                "display_name": "Allow team admin requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request Team Admin promotion on a team they belong to, for admin approval."
+            },
+            {
+                "key": "AllowBotTokenRequests",
+                "display_name": "Allow bot token requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request a bot token. Bot token requests require two-step approval (a security approver and a system approver)."
+            },
+            {
+                "key": "SecurityApproverAttribute",
+                "display_name": "Security approver attribute",
+                "type": "text",
+                "default": "security_approver",
+                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a security-step approver for two-step requests. A user with a non-empty value for this attribute may approve the security step. Manage the attribute and its values in System Console → User Management → Attributes."
+            },
+            {
+                "key": "SystemApproverAttribute",
+                "display_name": "System approver attribute",
+                "type": "text",
+                "default": "system_approver",
+                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a system/admin-step approver for two-step requests. A user with a non-empty value for this attribute may approve the system step."
+            },
             {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
