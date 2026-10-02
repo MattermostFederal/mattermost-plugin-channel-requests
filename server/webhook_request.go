@@ -134,6 +134,12 @@ func (p *Plugin) submitWebhookRequest(in webhookRequestInput) (string, error) {
 // URL and the hook ID (so the caller can delete it if the URL can't be
 // delivered). The bot is added to the channel first so it may create a hook there.
 func (p *Plugin) createIncomingWebhookForRequest(req *webhookRequest) (url, hookID string, err error) {
+	// Test seam: lets the delivery-failure cleanup path be unit-tested without
+	// a live REST API. nil in production.
+	if p.createWebhookFn != nil {
+		return p.createWebhookFn(req)
+	}
+
 	// The bot must be a member of the channel to own a hook there — and it
 	// can't be added to the channel until it's on the channel's TEAM. Without
 	// team membership the add fails ("no team member found") and the hook
@@ -248,6 +254,11 @@ func (p *Plugin) findWebhookByMarker(client *model.Client4, teamID, channelID, m
 // Used to clean up a hook whose URL could not be delivered to the requester, so
 // no unowned secret endpoint is left live.
 func (p *Plugin) deleteIncomingWebhook(hookID string) error {
+	// Test seam (see createIncomingWebhookForRequest). nil in production.
+	if p.deleteWebhookFn != nil {
+		return p.deleteWebhookFn(hookID)
+	}
+
 	client, err := p.restClient()
 	if err != nil {
 		return err

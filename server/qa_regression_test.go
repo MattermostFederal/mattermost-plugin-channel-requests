@@ -255,3 +255,102 @@ func TestWebhookRequestIdempotencyMatching(t *testing.T) {
 	require.False(t, webhookMatchesRequest(&model.IncomingWebhook{ChannelId: "ch1", Description: "manual hook"}, "ch1", markerA))
 	require.False(t, webhookMatchesRequest(nil, "ch1", markerA))
 }
+
+// webhookDeliveryFailureHookID is the hook id the create seam hands back in the
+// delivery-failure fixture, so tests can assert the right hook is cleaned up.
+const webhookDeliveryFailureHookID = "hook-abc"
+
+// setupWebhookDeliveryFailure brings a webhook request to the point of final
+// (system) approval and makes the secret-delivery DM fail. The acting user is a
+// System Admin (fills the system step; the security step is already recorded),
+// and the created webhook is faked via the createWebhookFn test seam so the
+// Client4 path isn't needed. The caller sets deleteWebhookFn to control whether
+// removal succeeds, then calls handleWebhookAction with acting user "admin1"
+// and request id "w1".
+func setupWebhookDeliveryFailure(t *testing.T, api *plugintest.API, p *Plugin) {
+	t.Helper()
+
+	req := &webhookRequest{
+		ID: "w1", RequesterID: "u_req", ChannelID: "chan1", ChannelName: "town", DisplayName: "Deploy Hook",
+		twoStepState: twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1},
+	}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: model.SystemAdminRoleId}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("KVGet", kvWebhookRequestPrefix+"w1").Return(raw, nil)
+	api.On("KVCompareAndDelete", kvWebhookRequestPrefix+"w1", raw).Return(true, nil)
+	// DM delivery of the secret URL fails.
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(nil, testAppErr("dm blocked"))
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	// Fake the REST-backed hook creation so the delivery-failure branch runs
+	// with a real url+hookID without a live server.
+	p.createWebhookFn = func(_ *webhookRequest) (string, string, error) {
+		return "https://mm.example.com/hooks/abc", webhookDeliveryFailureHookID, nil
+	}
+}
+
+func approveWebhookRequest(t *testing.T, p *Plugin) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, routeApproveWebhook, strings.NewReader(actionBody(t, "w1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleWebhookAction(w, r, true)
+	return w
+}
+
+// TestHandleWebhookAction_DeliveryFailureRemovesHookAndReportsFailure covers the
+// webhook mirror of the bot-token secret-delivery failure: the hook is created
+// on final approval but the URL DM to the requester fails. An undelivered hook
+// URL is an unowned secret endpoint, so the handler must delete the hook and
+// report the failure — never claim a clean success.
+func TestHandleWebhookAction_DeliveryFailureRemovesHookAndReportsFailure(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	setupWebhookDeliveryFailure(t, api, p)
+
+	deleted := ""
+	p.deleteWebhookFn = func(id string) error {
+		deleted = id
+		return nil
+	}
+
+	w := approveWebhookRequest(t, p)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, webhookDeliveryFailureHookID, deleted, "the undeliverable hook must be deleted")
+	body := w.Body.String()
+	require.Contains(t, body, "removed")
+	require.NotContains(t, body, "sent privately")
+}
+
+// TestHandleWebhookAction_DeliveryFailureWhenRemovalAlsoFails covers the worse
+// case: delivery fails AND the hook can't be removed. The card must say the
+// hook could not be removed automatically (so an admin cleans it up), not that
+// it was removed.
+func TestHandleWebhookAction_DeliveryFailureWhenRemovalAlsoFails(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	setupWebhookDeliveryFailure(t, api, p)
+
+	p.deleteWebhookFn = func(_ string) error {
+		return testAppErr("delete failed")
+	}
+
+	w := approveWebhookRequest(t, p)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(t, body, "could not be removed automatically")
+	require.NotContains(t, body, "sent privately")
+}
