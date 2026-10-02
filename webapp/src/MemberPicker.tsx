@@ -29,11 +29,21 @@ type User = {
     last_name?: string;
 };
 
+// pickerSeq gives each MemberPicker instance a unique listbox id. A modal can
+// render more than one picker (channel requests have both a Members and a
+// Channel Admins picker), so a hardcoded id would collide and make the
+// input's aria-controls ambiguous for assistive tech.
+let pickerSeq = 0;
+
 type Props = {
     value: string; // comma-separated usernames
     disabled?: boolean;
     onChange: (value: string) => void;
     placeholder?: string;
+
+    // autoFocus focuses the input on mount. Set it on the picker that should
+    // receive focus when a modal opens (e.g. the only field in a modal).
+    autoFocus?: boolean;
 
     // teamId, when set, scopes autocomplete to members of that team.
     teamId?: string;
@@ -125,7 +135,7 @@ const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) =>
     );
 };
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges, autoFocus}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -133,6 +143,10 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
     const [highlightIndex, setHighlightIndex] = useState(0);
     const [dropdownRect, setDropdownRect] = useState<{top: number; left: number; width: number} | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Stable per-instance listbox id so the input's aria-controls points at
+    // this picker's own dropdown, not a sibling picker's.
+    const [listboxId] = useState(() => `member-picker-listbox-${++pickerSeq}`);
 
     // Track the input container's screen position so the dropdown can
     // render via position:fixed OUTSIDE the parent modal — the modal
@@ -385,7 +399,8 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                     aria-label={placeholder ?? 'Add members'}
                     aria-expanded={showDropdown && candidates.length > 0}
                     aria-autocomplete='list'
-                    aria-controls='member-picker-listbox'
+                    aria-controls={listboxId}
+                    autoFocus={autoFocus}
                     onChange={(e) => {
                         setQuery(e.target.value);
                         setShowDropdown(true);
@@ -397,7 +412,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
 
             {showDropdown && candidates.length > 0 && dropdownRect ? (
                 <div
-                    id='member-picker-listbox'
+                    id={listboxId}
                     role='listbox'
                     style={{
 
