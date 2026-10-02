@@ -1,6 +1,6 @@
 {
     "id": "com.mattermostfederal.channel-requests",
-    "name": "Channel Requests",
+    "name": "Requests",
     "description": "Lets non-admins request channels, teams, team-admin rights, incoming webhooks, and bot tokens for approval — with per-type toggles and two-step (security + system) approval for webhooks and bot tokens.",
     "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
     "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
@@ -19,7 +19,7 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nLets non-admins **request** things instead of creating them directly: channels, teams, Team Admin rights, incoming webhooks, and bot tokens. Use the per-type toggles below to control what users can request. Requests are posted to the approval channel; System Admins (and optionally Team Admins) can approve or deny.\n\nWebhook and bot-token requests use **two-step approval** — one security approver and one system approver, identified by the User Attributes named below. Pick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically.",
+        "header": "## Requests\n\nLets non-admins **request** things instead of creating them directly: channels, teams, Team Admin rights, incoming webhooks, and bot tokens. Use the per-type toggles below to control what users can request. Requests are posted to the approval channel; System Admins (and optionally Team Admins) can approve or deny.\n\nWebhook and bot-token requests use **two-step approval** — one security approver and one system approver, identified by the User Attributes named below. Pick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically.",
         "footer": "---\n*Plugin version: __PLUGIN_VERSION__ — [release notes](__PLUGIN_RELEASE_URL__)*",
         "settings": [
             {
