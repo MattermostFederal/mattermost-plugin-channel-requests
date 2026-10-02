@@ -47,7 +47,9 @@ After the bug fixes, a second pass closed most of the non-browser coverage gaps 
 - **Slash-command routing (live)** via `/api/v4/commands/execute` as a real user: bare `/request`, `help`, unknown subcommand → usage; `channel`/`team`/`bot-token` route to the dialog; `/channel-request` alias; case-insensitive subcommand. Plus Go unit tests for the same (incl. extra-args ignored) and the existing disabled/enabled matrix.
 - **Input-validation matrix (live)** through the endpoints: blank/overlong names, overlong purpose/description, missing team, missing/unknown prefix, >100 members, team URL min-length, Unicode-only name without a URL (correctly rejected — slug is empty), Unicode name *with* an ASCII URL (accepted), no-nominees, unknown nominee, requester-not-on-team, blank webhook name, blank/invalid/overlong bot username. **26/26 pass.**
 - **`handleConfig` toggle matrix (Go)**: asserts the webapp-facing flags for all-on / all-off / channel-admin-off.
-- **Request Team modal (Playwright component tests, real chromium)**: renders when open, renders nothing when closed, blank-name client validation, Cancel closes, live URL-slug preview, successful submit (network mocked) shows success + Close, and a server error is surfaced with the form left open. Plus a new **accessibility + keyboard** block: dialog semantics (`role=dialog`/`aria-modal`/`aria-labelledby`), autofocus of the first field, Escape-to-close, Tab/Shift+Tab focus-trap wrap in both directions, `role=alert` error announcement, and member-picker keyboard interaction (named combobox, Arrow/Enter/Tab selection, Backspace-to-remove-last, accessible pill removal). **20/20 pass** (incl. the pre-existing `HeaderIcon` test).
+- **Request Team modal (Playwright component tests, real chromium)**: renders when open, renders nothing when closed, blank-name client validation, Cancel closes, live URL-slug preview, successful submit (network mocked) shows success + Close, and a server error is surfaced with the form left open. Plus a new **accessibility + keyboard** block: dialog semantics (`role=dialog`/`aria-modal`/`aria-labelledby`), autofocus of the first field, Escape-to-close, Tab/Shift+Tab focus-trap wrap in both directions, `role=alert` error announcement, and member-picker keyboard interaction (named combobox, Arrow/Enter/Tab selection, Backspace-to-remove-last, accessible pill removal).
+- **Request Channel + Request Channel Admin modals (Playwright component tests)**: the same a11y/keyboard block applied to both sibling modals — dialog semantics, autofocus, Escape, Tab/Shift+Tab focus-trap wrap, `role=alert` validation announcement — plus modal-specific core UX (Channel: configured form renders, not-configured notice, prefix-fetch load-error + Retry, blank-name validation; Channel Admin: renders with the channel name, empty-nominee validation). Both modals were hardened to pass, sharing the `useDialogFocusTrap` hook with the Team modal.
+- **Full CT suite: 40/40 pass** (the three request modals plus the pre-existing `HeaderIcon` test).
 
 **New finding from this pass → fixed:** `validateBotTokenInput` used `model.IsValidUsername` (1–64 chars), so bot usernames up to 64 chars passed submit validation even though the dialog/help advertise **3–22**. Tightened to enforce 3–22 (commit `c43181f`), with unit + live tests. Low severity (pre-existing; `CreateBot` would likely have accepted the longer name).
 
@@ -244,9 +246,10 @@ Added during the fix pass (all in `server/qa_regression_test.go`, passing):
 5. ✅ **Channel-admin toggle** — `TestHandleRequestAdmin_DisabledToggleRejects`.
 6. ✅ **Webhook idempotency match rule** — `TestWebhookRequestIdempotencyMatching`.
 
+7. ✅ **Secret-delivery failure (webhook)** — `TestHandleWebhookAction_DeliveryFailureRemovesHookAndReportsFailure` and `..._WhenRemovalAlsoFails`. The hook create/delete now go through `createWebhookFn`/`deleteWebhookFn` test seams on the `Plugin` struct (nil in production), so the Client4-backed cleanup decision tree is unit-testable without a live server.
+
 Still worth adding:
 
-7. **Secret-delivery failure (webhook)** — the webhook completion path mirrors bot-token but calls Client4 REST (`restClient`), which isn't mockable via `plugintest.API`; cover with a live/integration test.
 8. **Cross-type request id** — POST a team request id to `approve_webhook` → assert "already handled", no mutation.
 9. **Stale CAS** — `KVCompareAndSet`/`KVCompareAndDelete` returns false → assert "already handled/try again", no side effect, no duplicate notification. (Partially covered for bot-token partial path.)
 10. **Malformed stored JSON** — `load*Request` on corrupt bytes → assert graceful ephemeral, no panic.
@@ -257,11 +260,11 @@ Now covered by the follow-up pass (no longer purely manual): Team-modal core UX 
 
 Still requires a running server/browser (not executed here):
 
-- Team-modal member-autocomplete keyboard/focus-trap/a11y semantics and Escape-to-close are now covered by CT tests (and the modal was hardened accordingly). What remains unexercised there: a full screen-reader read-through in a real AT (VoiceOver/NVDA) and the equivalent a11y pass on the *other* modals (Request Channel / Channel Admin) and the slash-command-only flows.
+- All three modals (Request Team, Request Channel, Request Channel Admin) now share dialog a11y/keyboard semantics (role=dialog, aria-modal, aria-labelledby, autofocus, Escape-to-close, Tab focus trap, alert/status announcements) via the `useDialogFocusTrap` hook, and member-autocomplete keyboard nav is covered — all exercised by CT. What remains unexercised there: a full screen-reader read-through in a real AT (VoiceOver/NVDA) and the slash-command-only flows.
 - **System Console** admin settings UI (the custom pickers: Team/ApprovalChannel/Prefix/Member/AutoApprove).
 - **Visual rendering** of approval cards, the repaint-on-failure banner, and ephemeral messages in a real client; websocket real-time card updates.
 - True concurrency stress (parallel approve/deny clicks) against a real store.
-- Ambiguous-success network-fault injection for webhook creation (Bug 6) and the webhook delivery-failure path end-to-end.
+- Ambiguous-success network-fault injection for webhook creation (Bug 6): the match rule is unit-tested and the webhook delivery-failure cleanup is now unit-tested via the create/delete seams; only a *true lost-response retry* (forcing the reuse-the-existing-hook branch end-to-end) still needs live fault injection.
 - Negative authorization at the action endpoints against a live server (unauthorized user calling `/api/v1/approve_*` directly).
 - In-place-upgrade check that the channel-admin manifest default applies.
 
@@ -275,7 +278,7 @@ Still requires a running server/browser (not executed here):
 - Feature toggles enforced on every submission path (incl. channel-admin): **VERIFIED** (code + regression test; channel-admin gate added in `bf8dcce`)
 - Go unit suite / webapp tsc / lint / build: **VERIFIED** (executed, including after all fixes)
 - Bot-token recoverable after token-issuance failure: **VERIFIED** (regression test; orphan bot deleted — `fec6f56`)
-- Secret guaranteed-or-flagged on delivery failure: **VERIFIED** for bot-token (regression test — `fec6f56`); webhook path mirrors it but is **NOT TESTED** in Go (needs live/integration — Client4 not mockable)
+- Secret guaranteed-or-flagged on delivery failure: **VERIFIED** for bot-token (regression test — `fec6f56`) and now for webhook (regression tests via `createWebhookFn`/`deleteWebhookFn` seams — `fd2173a`): on delivery failure the hook is deleted and the failure reported, and when removal also fails the card tells approvers to clean up manually)
 - Team Admin promotion status/audit accurate on partial failure: **VERIFIED** (regression test — `6f8282d`)
 - Team creation status accurate on partial failure: **VERIFIED** (regression test — `fe6cba8`)
 - Channel-admin request can be disabled by admins: **VERIFIED** (regression test — `bf8dcce`)
@@ -284,9 +287,9 @@ Still requires a running server/browser (not executed here):
 - Concurrency: no regression to pending, no duplicate side effect under races: **VERIFIED** (live — 5× concurrent completing approvals produced exactly one webhook, one marker, and the pending KV entry consumed once; CAS claim-before-execute holds).
 - Negative authorization at action endpoints (live): **VERIFIED** (live — requester cannot approve or deny own webhook/bot-token request; the same approver cannot fill both steps; no side effect on blocked attempts).
 - Full two-step webhook flow end-to-end (live): **VERIFIED** (partial→complete, secret DM'd to requester only, not in approvals channel, and posting to the delivered URL returns 200).
-- Webhook delivery-failure live (undeliverable secret → cleanup + flag): **NOT TESTED** (needs DM-send fault injection; bot-token equivalent is regression-tested and the webhook path mirrors it).
-- Webapp Team modal a11y / keyboard: **VERIFIED** via Playwright CT (dialog semantics, autofocus, Escape, focus-trap, alert announcement, member-picker keyboard nav); the modal was hardened to pass. Remaining: a real-AT screen-reader pass and the same treatment on the other modals.
-- Playwright component suite: **VERIFIED** (20/20 for the Request Team modal, incl. the a11y/keyboard block); broader cross-modal E2E/a11y **NOT TESTED**.
+- Webhook delivery-failure (undeliverable secret → cleanup + flag): **VERIFIED** (Go regression tests via the create/delete seams — `fd2173a`). A live DM-send fault-injection run would still add end-to-end confidence but is no longer the only coverage.
+- Webapp modal a11y / keyboard (all three modals): **VERIFIED** via Playwright CT (dialog semantics, autofocus, Escape, focus-trap in both directions, alert/status announcements, member-picker keyboard nav); the modals were hardened to pass and share a `useDialogFocusTrap` hook. Remaining: a real-AT screen-reader read-through.
+- Playwright component suite: **VERIFIED** (40/40 across the Request Team, Request Channel, and Request Channel Admin modals, incl. the a11y/keyboard blocks); broader full-page E2E **NOT TESTED**.
 
 ## Overall verdict
 
@@ -294,4 +297,6 @@ Still requires a running server/browser (not executed here):
 
 **After the fix pass: the six confirmed bugs are resolved**, each with a regression test, and the Go suite + webapp build are green. The design and concurrency/secret-confidentiality fundamentals remain sound.
 
-**After the live verification pass (2026-10-01):** the two-step webhook flow is confirmed end-to-end against a running server (partial→complete, secret DM-only, delivered URL usable), negative authorization at the action endpoints holds, the CAS survives a 5× concurrent completion with a single side effect, the idempotency marker is embedded in the created hook, and the channel-admin default correctly applies on in-place upgrade. The remaining gaps are narrow and require fault injection or a real assistive-technology pass: forcing an undeliverable-secret cleanup (webhook path mirrors the regression-tested bot-token path) and forcing a true ambiguous-success reuse. The webapp modal a11y/keyboard review is now done for the Request Team modal — it was hardened (dialog semantics, Escape, focus trap, autofocus, alert announcements, accessible member picker) and locked in with 20 CT tests — leaving only a real screen-reader read-through and the same pass on the sibling modals. **For an internal or limited rollout this is ship-ready; the remaining items are fast-follow confidence checks rather than known defects.**
+**After the live verification pass (2026-10-01):** the two-step webhook flow is confirmed end-to-end against a running server (partial→complete, secret DM-only, delivered URL usable), negative authorization at the action endpoints holds, the CAS survives a 5× concurrent completion with a single side effect, the idempotency marker is embedded in the created hook, and the channel-admin default correctly applies on in-place upgrade.
+
+**After the full-rollout hardening pass (2026-10-02):** the two remaining user-facing and safety gaps that didn't need a live server are now closed. (1) The webapp a11y/keyboard pass was extended from the Request Team modal to the Request Channel and Request Channel Admin modals — all three now share a `useDialogFocusTrap` hook and the same dialog semantics (role=dialog, aria-modal, aria-labelledby, autofocus, Escape, focus trap, alert/status announcements), MemberPicker got a per-instance listbox id so the dual-picker Channel modal doesn't collide on `aria-controls`, and the CT suite grew to 40/40. (2) The webhook secret-delivery-failure cleanup is now unit-tested via `createWebhookFn`/`deleteWebhookFn` seams, closing the one privileged failure path that was previously Go-untestable. What genuinely still needs a human or a live environment: a real assistive-technology (VoiceOver/NVDA) screen-reader read-through, the System Console admin-settings UI, and a true lost-response retry to drive the webhook idempotency *reuse* branch end-to-end. **This is ship-ready for a full rollout; the residual items are confidence checks against a live/AT environment, not known defects.**
