@@ -1,332 +1,78 @@
 ---
 name: create-code
-description: Implement code from an approved plan. Supports TDD workflow. Runs linters and tests before completion.
+description: Implements an approved plan from its saved file in implementation-plans/, task by task, then runs the project's linters and tests before reporting.
+user-invocable: true
 ---
 
 # Create Code
 
-Implement code from an approved plan. Ensures quality through structured workflow with linting and testing.
-
-> **Taxonomy**:
-> - `/create-plan` → `/create-code` → `/review-code`
-> - Plan first, then implement, then review
-
-**Related**:
-- `/create-plan` - Create and validate a plan first
-- `/review-code` - Review implementation after coding
-- `/tdd-workflow` - TDD-specific methodology (absorbed into this skill)
-
-## CRITICAL: Plan File is Source of Truth
-
-**ALWAYS read from the saved plan file - NEVER use inline/conversation context.**
-
-```
-✅ CORRECT:
-/create-code implementation-plans/page-reordering.md
-→ Reads plan from file
-→ "Implementing from implementation-plans/page-reordering.md"
-
-❌ WRONG:
-User: "Implement the plan we discussed"
-Claude: [Uses plan from conversation memory]
-```
-
-**Why this matters:**
-- Plan file is version-controlled and reviewable
-- Conversation context may drift from saved plan
-- User can edit plan file before implementation
-- Multiple sessions can reference the same plan
-- Prevents implementing stale/modified plans
+Implement an approved plan, working from the saved plan file rather than from memory of a conversation.
 
 ## Usage
 
 ```
-/create-code <plan-file>                  # Implement from plan
-/create-code <plan-file> --tdd            # Use TDD (write tests first)
-/create-code <plan-file> --no-tests       # Skip test writing (not recommended)
-/create-code <plan-file> --task <n>       # Implement specific task from plan
-/create-code                              # Find most recent plan in implementation-plans/
+/create-code <plan-file>           # Implement the plan
+/create-code <plan-file> --tdd     # Write each failing test before the code that passes it
+/create-code                       # No file given: list the plans and ask
 ```
 
-### When No File Specified
+## Workflow
 
-If invoked without a plan file:
-1. **List plans** in `implementation-plans/` directory
-2. **Show most recent** plan (by modification time)
-3. **Ask user** to confirm which plan to implement
+### 1. Read the plan from its file (MANDATORY)
 
-```bash
-# Example discovery
-ls -lt implementation-plans/*.md | head -5
+`Read` the plan file, then say "Implementing from `implementation-plans/<file>`".
 
-# Ask user
-"Found these plans:
-1. page-reordering.md (modified today)
-2. oauth-support.md (modified yesterday)
-Which plan should I implement?"
-```
+Never implement from the conversation. The file is the source of truth: the user may have edited it since it was discussed, and the session that wrote it may not be this one.
 
-**Never guess or assume** - always confirm with user.
+If no file was given, list `implementation-plans/` newest first, show the most recent few, and ask the user which one with `AskUserQuestion`. Do not guess.
 
-## What It Does
+If the plan is unclear, contradicts itself, or contradicts the code as it now stands, stop and ask before writing anything.
 
-```
-/create-code implementation-plans/feature.md
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 1: READ PLAN                      │
-│  - Parse tasks from plan                │
-│  - Identify files to modify             │
-│  - Understand acceptance criteria       │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 2: IMPLEMENT (per task)           │
-│                                         │
-│  Standard mode:                         │
-│  - Implement code                       │
-│  - Write/update tests                   │
-│  - Run tests to verify                  │
-│                                         │
-│  TDD mode (--tdd):                      │
-│  - Write failing test first             │
-│  - Implement minimal code to pass       │
-│  - Refactor                             │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 3: QUALITY CHECKS                 │
-│  - Run linters (go vet, eslint)         │
-│  - Run type checks (tsc)                │
-│  - Fix any issues                       │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 4: TEST VERIFICATION              │
-│  - Run all tests                        │
-│  - Ensure no regressions                │
-│  - Report coverage (if applicable)      │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  OUTPUT: Working Code                   │
-│  - All tasks implemented                │
-│  - Tests passing                        │
-│  - Linters clean                        │
-│  - Ready for /review-code               │
-└─────────────────────────────────────────┘
-```
+### 2. Read the project's rules
 
-## Workflow Details
+Read the project's root `CLAUDE.md`, and any design notes it points at for the area the plan touches. Its conventions (comments, naming, formatting, error handling, dependencies) bind the code you write, and a linter checks only some of them.
 
-### Step 1: Read Plan
+### 3. Implement task by task
 
-Parse the plan file to extract:
-- Tasks list (ordered)
-- Files to modify
-- Acceptance criteria
-- Technical approach
+Take the plan's tasks in order. For each:
 
-```bash
-# Read the plan
-Read(plan_file)
+1. Read the existing code it touches.
+2. Make the change, following the patterns the plan references.
+3. Write or update the tests for it.
+4. Run those tests, and leave them passing before moving on.
 
-# Extract tasks
-tasks = parse_tasks(plan)
-files = parse_files_to_modify(plan)
-criteria = parse_acceptance_criteria(plan)
-```
+With `--tdd`, swap steps 2 and 3: write the test, run it and watch it fail, write the least code that passes it, then tidy with the test still green.
 
-### Step 2: Implement Each Task
+Stay inside the plan. If a task turns out to need something the plan did not foresee, tell the user what and why instead of quietly widening the change. If the plan lists documentation, help pages or design notes to update, those are tasks too.
 
-For each task in the plan:
+### 4. Lint and test
 
-**Standard Mode:**
-```
-1. Read relevant existing code
-2. Implement the change
-3. Write/update tests for the change
-4. Run tests to verify
-5. Move to next task
-```
+Use the project's own commands. Find them, in this order, in its `CLAUDE.md`, its `Makefile`, then `package.json` scripts or the language's standard tooling (for example `make check-style` and `make test`). Do not invent a command the project does not define.
 
-**TDD Mode (`--tdd`):**
-```
-1. Write a failing test for the expected behavior
-2. Run test - confirm it fails (RED)
-3. Write minimal code to make test pass
-4. Run test - confirm it passes (GREEN)
-5. Refactor if needed (REFACTOR)
-6. Move to next task
-```
+Run the full test target, not only the new tests, and fix what fails in the code you touched. If something fails that you cannot fix, report it with its output. Do not call a task complete while its tests fail.
 
-### Step 3: Quality Checks
-
-Run all relevant linters:
-
-**Go (server/):**
-```bash
-cd server && make check-style
-# or: golangci-lint run ./...
-```
-
-**TypeScript (webapp/):**
-```bash
-cd webapp/channels && npm run check-types
-cd webapp/channels && npm run check  # ESLint + Stylelint
-```
-
-**Auto-fix when possible:**
-```bash
-cd server && gofmt -s -w .
-cd webapp/channels && npm run fix
-```
-
-### Step 4: Test Verification
-
-Run all tests to ensure no regressions:
-
-**Go tests:**
-```bash
-cd server && go test ./channels/app/... -v
-# or specific: go test ./channels/app -run TestFeatureName -v
-```
-
-**TypeScript tests:**
-```bash
-cd webapp/channels && npm test -- --testPathPattern="feature"
-```
-
-## TDD Workflow (`--tdd` flag)
-
-When using TDD mode, follow the RED-GREEN-REFACTOR cycle:
-
-```
-┌─────────────────────────────────────────┐
-│                 RED                      │
-│  Write a test that fails                │
-│  - Test expected behavior               │
-│  - Run test, see it fail                │
-│  - Confirms test is valid               │
-└─────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│                GREEN                     │
-│  Write minimal code to pass             │
-│  - Just enough to pass the test         │
-│  - No premature optimization            │
-│  - Run test, see it pass                │
-└─────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│              REFACTOR                    │
-│  Improve code quality                   │
-│  - Remove duplication                   │
-│  - Improve naming                       │
-│  - Tests still pass                     │
-└─────────────────────────────────────────┘
-```
-
-## Output Format
+### 5. Report
 
 ```markdown
 ## Implementation Summary
 
-### Status: COMPLETE / PARTIAL / BLOCKED
+Plan: `implementation-plans/<file>`
+Status: COMPLETE / PARTIAL / BLOCKED
 
-### Tasks Completed
-- [x] Task 1: [description]
-- [x] Task 2: [description]
-- [ ] Task 3: [blocked - reason]
+### Tasks
+- [x] Task 1
+- [ ] Task 3: blocked, [reason]
 
-### Files Modified
-| File | Changes |
-|------|---------|
-| `path/to/file.go` | Added X function |
-| `path/to/file.ts` | Updated Y component |
-
-### Tests
-- **Added**: 5 new tests
-- **Modified**: 2 existing tests
-- **All passing**: ✅
-
-### Linting
-- **Go**: ✅ Clean
-- **TypeScript**: ✅ Clean
-
-### Ready for Review
-Use `/review-code` to review these changes before committing.
-```
-
-## Flags
-
-| Flag | Effect |
+### Files Changed
+| File | Change |
 |------|--------|
-| `--tdd` | Use TDD workflow (write tests first) |
-| `--no-tests` | Skip test writing (use sparingly) |
-| `--task <n>` | Implement only task N from plan |
-| `--continue` | Resume from last incomplete task |
-| `--dry-run` | Show what would be done without doing it |
 
-## Examples
+### Checks
+- Lint: [command], [result]
+- Tests: [command], [result]
 
-```bash
-# Implement all tasks from plan
-/create-code implementation-plans/oauth-support.md
-
-# Use TDD workflow
-/create-code implementation-plans/oauth-support.md --tdd
-
-# Implement specific task
-/create-code implementation-plans/oauth-support.md --task 3
-
-# Resume interrupted implementation
-/create-code implementation-plans/oauth-support.md --continue
+### Departures from the plan
+- [anything done differently, and why]
 ```
 
-## When to Use
-
-| Scenario | Use `/create-code` | Just implement |
-|----------|--------------------|-----------------------|
-| Have an approved plan | ✅ | |
-| Multi-task implementation | ✅ | |
-| Want structured workflow | ✅ | |
-| Need TDD enforcement | ✅ | |
-| Quick one-off fix | | ✅ |
-| Exploratory coding | | ✅ |
-
-## Integration with Workflow
-
-```
-User request
-    │
-    ▼
-/create-plan "feature"     # Create and validate plan
-    │
-    ▼
-User approves plan
-    │
-    ▼
-/create-code plan.md       # Implement from plan  ← THIS SKILL
-    │
-    ▼
-/review-code               # Review implementation
-    │
-    ▼
-/commit (if approved)
-```
-
-## Tips
-
-- **Always have a plan first** - Don't use this for ad-hoc coding
-- **Use `--tdd` for complex logic** - TDD catches bugs early
-- **Don't skip tests** - `--no-tests` is for rare exceptions only
-- **Run linters early** - Catch style issues before they accumulate
-- **Check tests before moving on** - Each task should leave tests green
+Do not commit unless the user asks. If the project has `/review-code`, suggest it as the next step.
