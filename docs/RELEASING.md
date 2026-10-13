@@ -88,7 +88,7 @@ first.
   `security/` SARIF embedded inside it)
 - `.sha256` checksum sidecar
 - `.sig` detached GPG signature (only if a signing key is configured — see
-  [SECURITY.md](SECURITY.md))
+  [SECURITY.md](../SECURITY.md))
 - `server-sbom.json` / `webapp-sbom.json` — CycloneDX SBOMs
 - `codeql-go.sarif` / `codeql-js.sarif` — static-analysis results
 
