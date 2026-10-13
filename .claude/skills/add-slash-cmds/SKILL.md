@@ -1,11 +1,21 @@
 ---
 name: add-slash-cmds
-description: Use when the plugin's REST endpoints in server/api.go (or equivalent) have grown out of sync with its slash commands in server/command.go. Surveys both files, identifies API operations that lack a corresponding slash command, and suggests new subcommands to add. Trigger after adding new REST endpoints, during periodic audits, or before cutting a release.
+description: Use when the plugin's REST endpoints in server/http.go have grown out of sync with the /channel-request slash command in server/command.go. Surveys both files, identifies API operations that lack a corresponding slash command, and suggests new subcommands to add. Trigger after adding new REST endpoints, during periodic audits, or before cutting a release.
+user-invocable: true
 ---
 
 # Add Slash Commands
 
-Find API endpoints in `server/api.go` (or wherever routes are registered) that have no corresponding slash command in `server/command.go`, then suggest and implement new subcommands to close the gap. Plugins generally follow a dual-interface pattern where most user-facing operations should be accessible via both the REST API and slash commands.
+Find API endpoints in `server/http.go` that have no corresponding slash command in `server/command.go`, then suggest and implement new subcommands to close the gap. Plugins generally follow a dual-interface pattern where most user-facing operations should be accessible via both the REST API and slash commands.
+
+## How this plugin is wired today
+
+- **Routes** are `route*` constants at the top of `server/http.go`, dispatched by a `switch r.URL.Path` in `ServeHTTP`. There is no router and no `HandleFunc`.
+- **The slash command** is `/channel-request` (`commandTrigger` in `server/command.go`). It has **no subcommands**: `ExecuteCommand` checks that at least one prefix is configured, then opens the request dialog with `p.openRequestDialog`. `getAutocompleteData` registers a single leaf.
+- **Identity** comes from `requireUserID` in HTTP handlers and from `args.UserId` in the command. Never trust a user id from a request body.
+- **Most routes are internal**: `/api/v1/dialog` is the dialog callback, `/approve`, `/deny`, `/approve_admin` and `/deny_admin` are interactive-button callbacks, and `/teams`, `/channels` and `/user_autocomplete` feed admin-console and modal pickers. Expect few genuine candidates.
+
+Adding the first subcommand means introducing a dispatcher. The bare `/channel-request` must keep opening the request form, and the no-prefix guard must still run before it does.
 
 ## When to Use
 
@@ -39,12 +49,13 @@ This workflow is driven by the harness task list. Do not work without a task.
 
 Read both files and build two inventories:
 
-**API endpoints** (from `server/api.go` or equivalent):
+**API endpoints** (from `server/http.go`):
 ```bash
-grep -E 'HandleFunc\(' server/*.go
+grep -nE '^\s+route[A-Za-z]+\s+=' server/http.go
+grep -nE '^\s+case route' server/http.go
 ```
 
-**Slash command subcommands** (from `server/command.go`):
+**Slash command subcommands** (from `server/command.go`). An empty result means the command still has none:
 ```bash
 grep -E '^\s+case\s+"' server/command.go
 ```
@@ -72,7 +83,7 @@ Silently exclude these categories from the output:
 - **API-only internal** endpoints (action button handlers, dialog callbacks, browser fallback pages, webapp-only fetches)
 - **Command-only** commands (no API equivalent, no action needed)
 
-Review `server/api.go` carefully each time: new endpoints may have been added since the last audit.
+Review `server/http.go` carefully each time: new endpoints may have been added since the last audit.
 
 For each "API-only (user-facing)" endpoint, draft a slash command suggestion:
 - **Subcommand name**: follow existing naming conventions (lowercase, hyphenated)
@@ -90,7 +101,7 @@ Present **only the candidates** as a **numbered list** so the user can pick by n
 Format each candidate as:
 
 ```
-N. `/<trigger> subcommand <args>` -- One-line description. Permission: <level>.
+N. `/channel-request subcommand <args>` -- One-line description. Permission: <level>.
 ```
 
 After presenting the list, ask the user which numbers they want to implement. Accept responses like "all", "1,3,5", "1-4", etc. Wait for user confirmation before proceeding.
@@ -99,11 +110,12 @@ After presenting the list, ask the user which numbers they want to implement. Ac
 
 For each approved new command, follow this pattern:
 
-1. **Add a case** to the command dispatcher switch statement in `command.go`:
+1. **Add a case** to the command dispatcher switch statement in `command.go`. If there is no dispatcher yet, add one: split `args.Command` with `strings.Fields`, keep the bare command (no subcommand) on the existing open-the-form path, and send unknown subcommands to a usage message:
    ```go
    case "new-command":
        return p.executeNewCommand(args, fields[2:])
    ```
+   Match the dispatcher's existing shape rather than this sketch: its return types, how it names handlers, and how it recovers the argument text. Where an argument is free text whose spacing matters, use the project's own helper for it instead of re-joining `fields`.
 
 2. **Implement the handler** following the pattern of the most similar existing command. Two handler signatures are common:
 
@@ -115,7 +127,7 @@ For each approved new command, follow this pattern:
        if len(params) < 1 {
            return &model.CommandResponse{
                ResponseType: model.CommandResponseTypeEphemeral,
-               Text:         "Usage: `/<trigger> new-command <arg>`",
+               Text:         "Usage: `/channel-request new-command <arg>`",
            }, nil
        }
 
@@ -140,6 +152,7 @@ For each approved new command, follow this pattern:
 
    In both cases:
    - Check permissions before doing any work.
+   - Log and word failures the way the existing handlers do: `p.API.LogError("...", "error", err.Error())` and a short ephemeral message via `ephemeralResponse`.
    - Return `model.CommandResponseTypeEphemeral` for all responses.
    - Call the same shared business logic that the API handler already uses. Do not reimplement business logic in the command handler.
    - For async operations, return an immediate ephemeral response and do the work in a goroutine with a `defer recover()`.
@@ -149,7 +162,7 @@ For each approved new command, follow this pattern:
 In the command registration function:
 
 1. Create a `model.NewAutocompleteData` entry for each new subcommand.
-2. Add text arguments with `.AddTextArgument()` or static list arguments with `.AddStaticListArgument()`.
+2. Turn the single leaf in `getAutocompleteData` into a parent with `AddCommand` children. Add text arguments with `.AddTextArgument()` or static list arguments with `.AddStaticListArgument()`.
 3. Add the entry to the parent autocomplete.
 4. Update any help text to include the new subcommand.
 
@@ -157,7 +170,7 @@ In the command registration function:
 
 - Run `make check-style` to ensure Go formatting and lint pass
 - Run `make test` to confirm existing tests still pass
-- Verify the new switch cases and autocomplete entries are consistent:
+- Verify the new switch cases and autocomplete entries are consistent (the counts should match, `default` aside), and that any help text or subcommand list constant names the new command:
   ```bash
   grep -cE '^\s+case\s+"' server/command.go
   grep -c 'autocomplete.AddCommand' server/command.go
@@ -176,8 +189,10 @@ Remind the user to run `/add-help-docs` if new commands were added, since user-f
 ## Critical Files
 
 - `server/command.go`: slash command registration, autocomplete, dispatcher, and handlers
-- `server/api.go`: REST endpoint registration and handlers (source of truth for operations)
-- `server/plugin.go`: Plugin struct and shared helpers used by both API and command handlers
+- `server/http.go`: REST route constants, `ServeHTTP` dispatch, and handlers (source of truth for operations)
+- `server/request.go`, `server/admin_request.go`: the shared business logic (`submitRequest`, `submitAdminRequest`) both entry points must call
+- `server/command_test.go`: command tests; extend them for each new subcommand
+- `server/plugin.go`: Plugin struct and `OnActivate`, where the command is registered
 
 ## Common Mistakes
 
@@ -186,6 +201,5 @@ Remind the user to run `/add-help-docs` if new commands were added, since user-f
 - Not following the existing permission model. Check what the API handler requires and match it.
 - Implementing business logic directly in the command handler instead of calling the shared function that the API handler already uses.
 - Classifying an internal/UI-driven endpoint as needing a slash command.
-- Using em dashes in descriptions or comments. The repo convention forbids them.
 - Not running `make check-style` after editing Go files.
 - Forgetting the async pattern for long-running operations. If the API handler runs async, the command should too.
