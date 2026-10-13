@@ -264,8 +264,8 @@ dist: apply server webapp bundle
 ## Install go tools
 install-go-tools:
 	@echo Installing go tools
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
-	$(GO) install gotest.tools/gotestsum@v1.13.0
+	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) install gotest.tools/gotestsum@v1.13.0
 
 ## Runs eslint and golangci-lint
 .PHONY: check-style
