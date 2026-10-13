@@ -4,7 +4,8 @@
 # schema, embed directives pointing at deleted files, etc.
 #
 # Bundle artifact is uploaded so reviewers can grab the tarball from
-# a PR run without rebuilding locally.
+# a PR run without rebuilding locally. preview.yml also deploys it, so
+# keep it a single dist/*.tar.gz named plugin-bundle.
 name: Build
 
 on:
