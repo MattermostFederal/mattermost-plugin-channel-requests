@@ -11,7 +11,12 @@
 # Each ignore SHOULD include a `reason` string so reviewers understand why the
 # finding was suppressed.
 
-ignore: []
+ignore:
+  - vulnerability: GO-2026-5932
+    package:
+      name: golang.org/x/crypto
+      type: go-module
+    reason: "Flags the deprecated golang.org/x/crypto/openpgp packages, which have no fix. The plugin links none of them (go list -deps ./server/... on every shipped GOOS/GOARCH); it only reaches pbkdf2 and scrypt through mattermost/server/public/model."
   # Example:
   # - vulnerability: GHSA-xxxx-yyyy-zzzz
   #   package:
