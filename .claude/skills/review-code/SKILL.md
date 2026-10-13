@@ -1,289 +1,240 @@
 ---
 name: review-code
-description: Comprehensive code review via specialized agents + multi-LLM review. Works on local changes or GitHub PRs.
+description: Comprehensive code review through parallel read-only review lenses (concurrency, error handling, simplicity, security, backend, frontend, testing). Works on local branch changes, uncommitted changes, a path, or a GitHub PR.
+user-invocable: true
 ---
 
 # Review Code
 
-Comprehensive code review using **specialized agents** AND **multi-LLM review**. Catches bugs, security issues, and pattern violations.
+Comprehensive code review using **parallel read-only review lenses**. Catches bugs, security issues, and pattern violations.
 
 Works on:
-- **Branch changes since last PR** (default) - commits on the current branch vs `master`, plus uncommitted working-tree changes
-- **Uncommitted only** (with `--uncommitted` flag) - working-tree changes only
-- **GitHub PRs** (with `--pr` flag)
+- **Branch changes** (default): commits on the current branch against the trunk, plus uncommitted working-tree changes
+- **Uncommitted only** (`--uncommitted`): working-tree changes only
+- **A path**: a specific file or directory
+- **GitHub PRs** (`--pr`)
 
-> **Taxonomy**:
-> - `/create-plan` → `/create-code` → `/review-code`
-> - This is the final quality gate before committing
-
-**Run `/lint` after** - This skill finds semantic issues; lint afterward to clean up formatting.
-
-**Related**:
-- `/review-plan` - Review plans (different agents, different LLM models)
-- `/create-code` - Implement code from plan
-- `/lint` - Linting and formatting (run first)
-
-## Two-Phase Review
-
-This skill combines:
-1. **Specialized Code Agents** - Claude agents for pattern-specific checks
-2. **Multi-LLM Review** - External models for diverse perspectives
-
-| Phase | Models/Agents | Strength |
-|-------|---------------|----------|
-| **Phase 1: Agents** | Claude agents (race-condition-finder, etc.) | Pattern detection, domain-specific |
-| **Phase 2: Multi-LLM** | Codex, Gemini, seq-server (see `multi-llm-review.md`) | Code quality, diverse perspectives |
+It needs nothing beyond the built-in tools, `git`, and `gh` for `--pr`. It finds semantic issues; run the project's own lint target afterwards for formatting.
 
 ## Usage
 
 ```
-/review-code                              # All changes on current branch since master (default)
+/review-code                              # All changes on the current branch since the trunk (default)
 /review-code --uncommitted                # Uncommitted working-tree changes only
-/review-code <file-or-directory>          # Review specific path
+/review-code <file-or-directory>          # Review a specific path
 /review-code --pr 123                     # Review GitHub PR #123
-/review-code --pr 123 --quick             # Quick PR review (Tier 1 only)
-/review-code --quick                      # Tier 1 agents only (no multi-LLM)
-/review-code --security                   # Security-focused review
-/review-code --full                       # All tiers + multi-LLM (most thorough)
-/review-code --agents-only                # Skip multi-LLM review
-/review-code --llm-only                   # Skip agents, multi-LLM only
+/review-code --quick                      # Core lenses only (fastest)
+/review-code --security                   # Core plus the security lenses
+/review-code --full                       # Every lens group, including maintenance
 ```
-
-## Multi-LLM Models (Code Review)
-
-See `.claude/docs/multi-llm-review.md` for model selection, CLI commands, quota limits, and fallback logic. All three tools (Codex, Gemini, seq-server) MUST be used.
 
 ## What It Does
 
 ```
 /review-code [--pr <number>]
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 1: IDENTIFY CHANGES               │
-│  - Default: git diff master...HEAD +    │
-│    working tree (branch since last PR)  │
-│  - On master: falls back to working     │
-│    tree (uncommitted) only              │
-│  - --uncommitted: git diff (working     │
-│    tree only)                           │
-│  - --pr: gh pr diff <number>            │
-│  - Detect languages (Go, TS, etc.)      │
-│  - Identify domains (API, store, UI)    │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 2: RUN CODE AGENTS (Claude)       │
-│                                         │
-│  Tier 1 (always):                       │
-│  - race-condition-finder                │
-│  - simplicity-reviewer                  │
-│  - pattern-reviewer                     │
-│  - error-handling-reviewer              │
-│                                         │
-│  Tier 2 (security):                     │
-│  - xss-reviewer                         │
-│  - validation-reviewer                  │
-│  - permission-auditor                   │
-│                                         │
-│  Tier 3+ (domain-specific):             │
-│  - Based on files changed               │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 3: MULTI-LLM REVIEW (in parallel) │
-│                                         │
-│  All models from multi-llm-review.md    │
-│  (Codex + Gemini + seq-server)          │
-│                                         │
-│  Focus: Code quality, edge cases,       │
-│  security, performance                  │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 4: SYNTHESIZE FINDINGS            │
-│  - Merge agent + LLM findings           │
-│  - Prioritize by severity               │
-│  - Apply 80/20 filter                   │
-│  - Only 2+ model agreement = MUST FIX   │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  OUTPUT: Review Report                  │
-│  - MUST FIX (blockers)                  │
-│  - SHOULD FIX (quality)                 │
-│  - Passed checks                        │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│  Step 5: OFFER TO FIX                   │
-│  Ask user via AskUserQuestion:          │
-│  - "Fix all" (MUST FIX + SHOULD FIX)   │
-│  - "MUST FIX only"                      │
-│  - "No, just the review"               │
-│  Then apply chosen fixes to the code.   │
-└─────────────────────────────────────────┘
+         |
+         v
+  Step 1: IDENTIFY CHANGES
+    Default: git diff <trunk>...HEAD plus the working tree
+    On the trunk itself: working tree only
+    --uncommitted: working tree only
+    --pr: gh pr diff <number>
+    Detect languages and domains from the changed files
+         |
+         v
+  Step 2: RECORD THE TREE
+    git status --porcelain, kept for comparison
+         |
+         v
+  Step 3: RUN THE LENSES (parallel, read-only)
+    Core always; the other groups by what changed
+         |
+         v
+  Step 4: CHECK THE TREE
+    git status --porcelain must match Step 2
+         |
+         v
+  Step 5: VERIFY AND SYNTHESIZE
+    Confirm each claimed blocker against the code
+    Prioritize by severity, apply the 80/20 filter
+         |
+         v
+  OUTPUT: Review Report (MUST FIX, SHOULD FIX, passed checks)
+         |
+         v
+  Step 6: OFFER TO FIX
 ```
 
-## Multi-LLM Review Commands
+## Step 1: Identify the Changes
 
-Run **all models from `.claude/docs/multi-llm-review.md`** in parallel (single message, multiple tool calls). This includes Codex, Gemini, AND seq-server — do NOT skip any.
+Find the trunk rather than assuming its name:
 
-## Code Review Prompt Template
+```bash
+trunk=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+trunk=${trunk:-main}
+```
+
+| Mode | Diff |
+|------|------|
+| Default | `git diff "$trunk"...HEAD` plus `git diff HEAD` and untracked files |
+| On the trunk | `git diff HEAD` and untracked files |
+| `--uncommitted` | `git diff HEAD` and untracked files |
+| Path | The files under the path, whole |
+| `--pr <n>` | `gh pr diff <n>` |
+
+Read the project's root `CLAUDE.md` before reviewing. Its conventions and invariants are what "follows established patterns" means here, and every lens prompt should be given the ones relevant to the changed area.
+
+## Reviewers Are Read-Only
+
+**A review reads; it does not edit.** Every lens runs as the built-in `Explore` subagent, which has no `Write` or `Edit` tool. Do not run a lens on a write-capable agent type, however well suited it seems.
+
+The reason is not tidiness. Once a reviewer can write, its output is indistinguishable from everybody else's work in the tree, and a dirty `git status` stops being evidence of anything. `Explore` can still run shell commands, and a shell can write a file, so the tool list is not the whole guard. The tree check is:
+
+1. Before dispatching, record `git status --porcelain`.
+2. After every lens has reported, run it again. It must be identical.
+3. If it differs, **establish what wrote the difference before touching it**. A dirty tree is not proof a reviewer did it: another session or the user may be editing the same tree, and reverting unstaged work is not undoable. Only if a reviewer is clearly the writer, revert that change, say so in the report, and name the lens.
+4. Never fold a reviewer's edits into the review as though they were findings.
+
+End every lens prompt with: *"Report findings only. Do not edit, create or delete any file."* That line is advisory. The tree check is the enforcement.
+
+If a write-capable specialist is ever truly the right tool, dispatch it with `isolation: "worktree"` so anything it writes lands in a throwaway copy. A worktree is checked out at `HEAD`, so uncommitted changes are invisible there and `--uncommitted` reviews cannot use it.
+
+## Review Lenses
+
+A **lens** is one narrow question asked of the diff by a fresh reviewer. Launch every selected lens in parallel, in a single message, one `Agent` call each with `subagent_type="Explore"`.
+
+### Core (always run)
+
+| Lens | Catches |
+|------|---------|
+| Concurrency | Data races, TOCTOU, deadlocks, leaked goroutines or promises, unsynchronized shared state |
+| Simplicity | Over-engineering, YAGNI violations, abstractions nothing needs yet |
+| Error handling | Ignored or swallowed errors, missing context when wrapping, failure paths that crash |
+
+### Security (any non-test change)
+
+| Lens | Run when | Catches |
+|------|----------|---------|
+| Input validation | Always | Empty, oversized, malformed or cross-referenced input accepted unchecked |
+| Hardcoded values | Always | Secrets, magic numbers, config that belongs in a constant or setting |
+| XSS and output escaping | Frontend files, or anything that renders HTML | Unescaped author-controlled text reaching markup, unsafe URL schemes |
+| Authorization | Code touching sessions, permissions, routes or handlers | Missing or bypassable checks, data returned to the wrong caller |
+
+### Backend (server-side files changed)
+
+| Lens | Run when | Catches |
+|------|----------|---------|
+| Nil and null safety | Always | Dereferences of values that can be absent |
+| Data access | Database or storage calls changed | N+1 queries, unbounded reads, multi-step writes without a transaction |
+| Layering | The project documents layers | Calls that skip a layer or put logic in the wrong one |
+| Multi-node correctness | Caches, cluster events, shared state | Behavior that only works on a single node |
+
+### Frontend (client-side files changed)
+
+| Lens | Catches |
+|------|---------|
+| Component patterns | Hook misuse, effects without cleanup, state that belongs elsewhere |
+| Type design | Types that fail to express their invariants, `any` hiding a contract |
+| Null handling | Optional values used as though present |
+| Accessibility and i18n | Missing keyboard support or labels, untranslated or concatenated strings |
+
+### Testing (test files changed, or new code without tests)
+
+| Lens | Catches |
+|------|---------|
+| Test coverage | New behavior with no test, untested failure paths |
+| Test quality | Flaky patterns, assertions that cannot fail, tests coupled to implementation |
+
+### Maintenance (`--full` only)
+
+| Lens | Catches |
+|------|---------|
+| Duplication | New code that repeats an existing utility |
+| Comments and docs | Comments the project's conventions forbid, stale or misleading documentation |
+| Backwards compatibility | Removed fields, changed behavior, wire or storage formats that moved alone |
+| File structure | Files that do not match the project's layout conventions |
+
+### Lens selection
+
+```python
+lenses = ["concurrency", "simplicity", "error-handling"]          # core
+
+if flag == "--quick":
+    return lenses
+
+if not test_files_only:
+    lenses += ["input-validation", "hardcoded-values"]
+    if has_frontend_files or renders_html:
+        lenses.append("xss-and-escaping")
+    if touches_auth_or_routes:
+        lenses.append("authorization")
+
+if flag == "--security":
+    return lenses
+
+if has_backend_files:
+    lenses.append("nil-safety")
+    if has_data_access_changes: lenses.append("data-access")
+    if project_documents_layers: lenses.append("layering")
+    if touches_caches_or_cluster: lenses.append("multi-node")
+
+if has_frontend_files:
+    lenses += ["component-patterns", "type-design", "null-handling", "a11y-and-i18n"]
+
+if has_test_files or new_code_without_tests:
+    lenses += ["test-coverage", "test-quality"]
+
+if flag == "--full":
+    lenses += ["duplication", "comments-and-docs", "backwards-compatibility", "file-structure"]
+```
+
+## Lens Prompt Template
 
 ```
-Review this code for bugs, security issues, and quality.
+Review these code changes through one lens only: [lens name].
+[The lens's "Catches" text.]
+
+You may read the rest of the repository to understand the changed code.
+
+## Project conventions that apply
+[the relevant invariants and conventions from the project's CLAUDE.md]
 
 ## Code Changes
 <code>
-[paste git diff or file contents]
+[the diff, or the file contents]
 </code>
 
 ## CRITICAL: Apply 80/20 Thinking
 
 **A MUST FIX blocker is ONLY:**
-- Bug that will cause runtime failure
-- Security vulnerability (injection, auth bypass, XSS)
-- Data integrity risk (corruption, loss)
-- Race condition / concurrency bug
+- A bug that will cause a runtime failure
+- A security vulnerability (injection, auth bypass, XSS)
+- A data integrity risk (corruption, loss)
+- A race condition or concurrency bug
 - Missing error handling that crashes
+- A violation of a documented project invariant
 
 **NOT a blocker (SHOULD FIX or SKIP):**
 - Style issues, naming preferences
 - Minor optimizations
-- Missing comments/docs
-- "Best practices" that don't affect correctness
-
-## Evaluate
-
-1. **Correctness**: Will this code work as intended?
-2. **Security**: Any vulnerabilities?
-3. **Edge Cases**: Null checks, error handling, boundary conditions?
-4. **Performance**: Any obvious inefficiencies?
-5. **Patterns**: Does it follow established codebase patterns?
-6. **Diagnostics**: For Go handler changes — do user-initiated actions and error paths call `PostDiagnostic`? (See `server/CLAUDE.md` → Diagnostics Channel)
+- "Best practices" that do not affect correctness
 
 ## Output
 
 1. **MUST FIX** (0-3 max): What breaks? File:line? Fix?
 2. **SHOULD FIX** (0-5): Quality improvements
-3. **VERDICT**: APPROVED / NEEDS WORK
+3. **VERDICT**: PASS / ISSUES
+
+Report findings only. Do not edit, create or delete any file.
 ```
 
-## Agent Tiers
+## Step 5: Verify and Synthesize
 
-### Tier 1: Core (Always Run)
+A lens is a fresh reader, not an authority. **Open the file and confirm every claimed MUST FIX yourself** before it goes in the report. A finding you cannot reproduce from the code is dropped or downgraded, and the report says which.
 
-| Agent | Catches |
-|-------|---------|
-| `race-condition-finder` | Concurrency bugs, TOCTOU, data races |
-| `simplicity-reviewer` | Over-engineering, YAGNI violations |
-| `error-handling-reviewer` | Missing error checks, swallowed errors |
-
-### Tier 2: Security
-
-| Agent | Catches |
-|-------|---------|
-| `xss-reviewer` | XSS vulnerabilities in frontend |
-| `validation-reviewer` | Missing input validation |
-| `hardcoded-values-reviewer` | Secrets, magic numbers, config in code |
-
-### Tier 3: Backend (Go files)
-
-| Agent | Catches |
-|-------|---------|
-| `go-pro` | Go patterns, error handling, concurrency |
-| `concurrent-go-reviewer` | Go concurrency safety |
-| `postgres-expert` | Database query optimization |
-
-### Tier 4: Frontend (TS/TSX files)
-
-| Agent | Catches |
-|-------|---------|
-| `react-pro` | React patterns, hooks, performance |
-| `typescript-pro` | TypeScript patterns, type safety |
-
-### Tier 5: Testing
-
-| Agent | Catches |
-|-------|---------|
-| `test-coverage-reviewer` | Missing test coverage for new code |
-| `test-unit-expert` | Test quality, assertions, mocking |
-| `playwright-patterns-reviewer` | E2E test patterns, flaky tests |
-| `production-validator` | Mock/stub code that should be real implementations |
-
-### Tier 6: Advanced/Expert (Optional)
-
-| Agent | When |
-|-------|------|
-| `websocket-expert` | WebSocket patterns |
-| `owasp-security` | OWASP vulnerability checks |
-| `accessibility-guardian` | Accessibility compliance |
-
-### Tier 7: Quality/Maintenance (Optional)
-
-| Agent | When |
-|-------|------|
-| `duplication-reviewer` | Code duplication detection |
-| `comment-analyzer` | Comment quality analysis |
-
-### DO NOT Use for Code Review
-
-These are **PLAN agents** - use them in `/create-plan` and `/review-plan`:
-- `design-flaw-finder` - Reviews design, not implementation
-- `api-contract-reviewer` - Reviews API design, not handler code
-- `database-architecture-reviewer` - Reviews schema design, not queries
-- `ux-design-reviewer` - Reviews UX design, not components
-- `system-design-reviewer` - Reviews architecture, not code
-
-## Full Agent Reference
-
-For complete agent listing (~140 agents), see `.claude/agents/AGENT_REGISTRY.md`.
-
-## Agent Selection Logic
-
-```python
-# Pseudo-logic for agent selection
-agents = []
-
-# Tier 1: Always run (MUST RUN)
-agents.extend([
-    "race-condition-finder",
-    "simplicity-reviewer",
-    "error-handling-reviewer"
-])
-
-# Tier 2: Security (always for production code)
-if not test_files_only:
-    agents.extend([
-        "hardcoded-values-reviewer",
-        "owasp-security"
-    ])
-
-# Tier 3: Backend (Go files)
-if has_go_files:
-    agents.append("go-pro")
-    agents.append("concurrent-go-reviewer")
-    if has_db_changes:
-        agents.append("postgres-expert")
-
-# Tier 4: Frontend (TS/TSX files)
-if has_ts_files:
-    agents.append("react-pro")
-    agents.append("typescript-pro")
-
-# Tier 5: Testing
-if has_test_files:
-    if has_go_tests:
-        agents.append("test-unit-expert")
-    if has_e2e_tests:
-        agents.append("playwright-patterns-reviewer")
-```
+- Merge duplicates reported by more than one lens, and credit each
+- A finding two lenses reached independently deserves more weight, not automatic acceptance
+- Apply the 80/20 filter: most findings are SHOULD FIX
 
 ## Output Format
 
@@ -291,146 +242,94 @@ if has_test_files:
 ## Code Review: [files reviewed]
 
 ### MUST FIX (Blockers)
-| Issue | File:Line | Agent | Fix |
-|-------|-----------|-------|-----|
-| Race condition in cache access | `cache.go:45` | race-condition-finder | Add mutex |
-| Missing permission check | `api.go:123` | permission-auditor | Add HasPermission call |
+| Issue | File:Line | Lens | Fix |
+|-------|-----------|------|-----|
+| Race in cache access | `cache.go:45` | Concurrency | Guard with the existing mutex |
 
 ### SHOULD FIX (Quality)
-| Issue | File:Line | Agent | Recommendation |
-|-------|-----------|-------|----------------|
-| Overly complex function | `utils.go:89` | simplicity-reviewer | Extract helper |
+| Issue | File:Line | Lens | Recommendation |
+|-------|-----------|------|----------------|
+| Overly complex function | `utils.go:89` | Simplicity | Extract a helper |
 
 ### Passed Checks
-- ✅ No XSS vulnerabilities
-- ✅ Input validation present
-- ✅ Error handling complete
-- ✅ Tests cover new code
+- No XSS vulnerabilities
+- Input validation present
+- Error handling complete
 
-### Agent Summary
-| Agent | Verdict | Findings |
-|-------|---------|----------|
-| race-condition-finder | ⚠️ ISSUES | 1 race condition |
-| simplicity-reviewer | ✅ PASS | - |
-| xss-reviewer | ✅ PASS | - |
-| permission-auditor | ⚠️ ISSUES | 1 missing check |
+### Lens Summary
+| Lens | Verdict | Findings |
+|------|---------|----------|
+| Concurrency | ISSUES | 1 race |
+| Simplicity | PASS | - |
+
+### Working tree
+Unchanged by the review. (Or: what changed, what wrote it, what was done.)
 
 ---
 
 ### Verdict: NEEDS WORK / APPROVED
-
-Fix MUST FIX items before committing.
 ```
 
-## Offer to Fix
+## Step 6: Offer to Fix
 
-After presenting the review report, **always ask the user if they would like the findings fixed**. Use `AskUserQuestion` to prompt:
+After presenting the report, **always ask the user whether to fix the findings**. Use `AskUserQuestion`:
 
 > "Would you like me to fix the issues found in the review?"
 
 Options:
-- **Fix all** — Apply MUST FIX and SHOULD FIX changes to the code
-- **MUST FIX only** — Apply only blocker fixes
-- **No, just the review** — Leave the code unchanged
+- **Fix all**: apply MUST FIX and SHOULD FIX changes
+- **MUST FIX only**: apply only the blocker fixes
+- **No, just the review**: leave the code unchanged
 
-If the user chooses to fix, apply the changes directly to the affected files using `Edit`, preserving existing code structure. After applying fixes, run `make check-style` to ensure formatting is correct.
+If the user chooses to fix, apply the changes with `Edit`, preserving the existing structure, and follow the project's conventions while doing it. Then run the project's lint and test targets (find them in its CLAUDE.md, Makefile or package.json) and report the result.
 
-**Note**: This step is skipped in `--pr` mode since you cannot edit PR code directly. Instead, suggest fixes as PR comments.
+**Note**: This step is skipped in `--pr` mode when the PR is not the checked-out branch. Suggest the fixes as review comments instead.
 
 ## Flags
 
 | Flag | Effect |
 |------|--------|
-| `--pr <number>` | Review GitHub PR instead of local branch changes |
-| `--uncommitted` | Review only uncommitted working-tree changes (old default) |
-| `--quick` | Tier 1 agents only, no multi-LLM (fastest) |
-| `--security` | Focus on Tier 2 security agents + LLM security review |
-| `--full` | All tiers + multi-LLM (most thorough) |
-| `--agents-only` | Skip multi-LLM review (Claude agents only) |
-| `--llm-only` | Skip agents, run multi-LLM review only |
+| `--pr <number>` | Review a GitHub PR instead of local changes |
+| `--uncommitted` | Review only uncommitted working-tree changes |
+| `--quick` | Core lenses only |
+| `--security` | Core plus the security lenses |
+| `--full` | Every group, including maintenance |
 
 ## Examples
 
 ```bash
-# Full review of branch changes since last PR (agents + multi-LLM) - RECOMMENDED
+# Full review of branch changes (recommended before a PR)
 /review-code
 
-# Review only uncommitted working-tree changes
+# Only what is uncommitted
 /review-code --uncommitted
 
-# Review specific file
-/review-code server/app/item_core.go
+# A specific file
+/review-code server/http.go
 
-# Review a GitHub PR
-/review-code --pr 123
-
-# Quick PR review (Tier 1 agents only)
+# A GitHub PR, quickly
 /review-code --pr 123 --quick
 
-# Security-focused PR review
-/review-code --pr 123 --security
-
-# Quick review (Tier 1 agents only, no LLM)
-/review-code --quick
-
-# Security-focused review
+# Security-focused
 /review-code --security
-
-# Full review (all tiers + multi-LLM)
-/review-code --full
-
-# Agents only (skip external LLMs)
-/review-code --agents-only
-
-# Multi-LLM only (skip agents)
-/review-code --llm-only
 ```
-
-## CLI Reference
-
-See `.claude/docs/multi-llm-review.md` for CLI commands and quota fallback logic.
 
 ## When to Use
 
 | Scenario | Command | Skip review |
 |----------|---------|-------------|
-| After `/create-code` | `/review-code` | |
+| After implementing a plan | `/review-code` | |
 | Before opening a PR | `/review-code` | |
-| Before committing WIP | `/review-code --uncommitted` | |
+| Before committing WIP | `/review-code --uncommitted --quick` | |
 | Reviewing a PR | `/review-code --pr 123` | |
 | Security-sensitive code | `/review-code --security` | |
-| Quick PR check | `/review-code --pr 123 --quick` | |
-| Tiny typo fix | | ✅ |
-| Documentation only | | ✅ |
-
-## Integration with Workflow
-
-```
-/create-plan "feature"     # Create plan
-    │
-    ▼
-/create-code plan.md       # Implement
-    │
-    ▼
-/review-code               # Agent review  ← THIS SKILL
-    │
-    ▼
-Fix MUST FIX items
-    │
-    ▼
-/lint                      # Final formatting
-    │
-    ▼
-Commit changes
-```
+| Tiny typo fix | | Yes |
+| Documentation only | | Yes |
 
 ## Tips
 
-- **Run before every commit** - Catch issues early
-- **Use `--quick` for WIP** - Full review before PR
-- **Fix MUST FIX immediately** - They're blockers for a reason
-- **SHOULD FIX can wait** - Address in follow-up if time-constrained
-- **Trust multi-model consensus** - 2+ models agreeing = real issue
-- **Parallel execution** - Run all LLM calls in single message
-- **Use `--agents-only` for speed** - When external LLMs are slow/unavailable
-- **Be skeptical of single-model findings** - Could be false positive
+- **Use `--quick` for WIP**, the default before a PR.
+- **Fix MUST FIX immediately.** They are blockers for a reason.
+- **SHOULD FIX can wait** for a follow-up if time is short.
+- **Verify before believing.** A single lens's finding may be a false positive.
+- **Parallel execution.** Launch all lenses in a single message.
