@@ -261,10 +261,40 @@ dist: apply server webapp bundle
 # Quality Targets
 # ====================================================================================
 
+## golangci-lint release binary, checked against its published SHA-256.
+GOLANGCI_LINT_VERSION := 2.14.0
+GOLANGCI_LINT_SHA256_linux_amd64 := ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
+GOLANGCI_LINT_SHA256_linux_arm64 := ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae
+GOLANGCI_LINT_SHA256_darwin_amd64 := a5667c1c3536be1740133213e1e822bfb8f0d98ea12903174d6d5f635e4ed68d
+GOLANGCI_LINT_SHA256_darwin_arm64 := 5ef5f36a7147e91dc58ef9ef4d11bb7bad5ead0c76eb6c01327a73c641d1dcc3
+
 ## Install go tools
 install-go-tools:
 	@echo Installing go tools
-	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.8.0
+	@set -e; \
+	if "$(GOBIN)/golangci-lint" version 2>/dev/null | grep -q "version $(GOLANGCI_LINT_VERSION) "; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) already installed"; \
+	else \
+		os=$$($(GO) env GOHOSTOS); arch=$$($(GO) env GOHOSTARCH); \
+		case "$$os-$$arch" in \
+			linux-amd64) sum=$(GOLANGCI_LINT_SHA256_linux_amd64) ;; \
+			linux-arm64) sum=$(GOLANGCI_LINT_SHA256_linux_arm64) ;; \
+			darwin-amd64) sum=$(GOLANGCI_LINT_SHA256_darwin_amd64) ;; \
+			darwin-arm64) sum=$(GOLANGCI_LINT_SHA256_darwin_arm64) ;; \
+			*) echo "no golangci-lint checksum for $$os-$$arch" >&2; exit 1 ;; \
+		esac; \
+		name=golangci-lint-$(GOLANGCI_LINT_VERSION)-$$os-$$arch; \
+		tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		curl -sSfL -o "$$tmp/$$name.tar.gz" https://github.com/golangci/golangci-lint/releases/download/v$(GOLANGCI_LINT_VERSION)/$$name.tar.gz; \
+		if command -v sha256sum >/dev/null; then \
+			echo "$$sum  $$tmp/$$name.tar.gz" | sha256sum -c -; \
+		else \
+			echo "$$sum  $$tmp/$$name.tar.gz" | shasum -a 256 -c -; \
+		fi; \
+		tar -xzf "$$tmp/$$name.tar.gz" -C "$$tmp"; \
+		mkdir -p "$(GOBIN)"; \
+		install -m 0755 "$$tmp/$$name/golangci-lint" "$(GOBIN)/golangci-lint"; \
+	fi
 	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) install gotest.tools/gotestsum@v1.13.0
 
 ## Runs eslint and golangci-lint
