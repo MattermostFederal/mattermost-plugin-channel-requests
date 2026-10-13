@@ -1,0 +1,270 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/pkg/errors"
+)
+
+const (
+	// kvBotTokenRequestPrefix namespaces pending bot-token requests in the KV store.
+	kvBotTokenRequestPrefix = "bot_token_request_" //nolint:gosec // G101 false positive: KV namespace, not a credential
+
+	// botTokenDialogCallbackID identifies submissions from the bot-token dialog.
+	botTokenDialogCallbackID = "bot_token_request" //nolint:gosec // G101 false positive: dialog callback id, not a credential
+
+	// fieldUsername / fieldBotDescription are the bot-token dialog elements.
+	fieldUsername       = "username"
+	fieldBotDescription = "bot_description"
+
+	// maxBotDescriptionLen bounds the description server-side (bots allow 1024).
+	maxBotDescriptionLen = 1024
+)
+
+// botTokenRequest is a pending request for a bot account + access token. It uses
+// the two-step approval engine (security + system) — the token is only issued
+// once both pools sign off, and is DM'd privately to the requester, never posted
+// in the approval channel.
+type botTokenRequest struct {
+	ID          string `json:"id"`
+	RequesterID string `json:"requester_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	twoStepState
+}
+
+// botTokenRequestInput is the normalized input from either entry point.
+type botTokenRequestInput struct {
+	RequesterID string
+	Username    string
+	DisplayName string
+	Description string
+}
+
+// validateBotTokenInput checks the caller-supplied fields (no API calls).
+func validateBotTokenInput(in botTokenRequestInput) error {
+	username := strings.ToLower(strings.TrimSpace(in.Username))
+	if username == "" {
+		return newFieldError(fieldUsername, "A bot username is required.")
+	}
+	// model.IsValidUsername permits 1-64 characters, but the dialog + help
+	// advertise 3-22 (the usual Mattermost username range). Enforce that here so
+	// the server matches what the user was told, rather than accepting a name
+	// the UI never offered.
+	if len(username) < 3 || len(username) > 22 {
+		return newFieldError(fieldUsername, "Bot username must be 3-22 characters.")
+	}
+	if !model.IsValidUsername(username) {
+		return newFieldError(fieldUsername, "Bot username must be lowercase letters, numbers, and . - _ (3-22 characters).")
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
+		return newFieldError(fieldDisplayName, fmt.Sprintf("Display name must be %d characters or fewer.", maxDisplayNameLen))
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.Description)) > maxBotDescriptionLen {
+		return newFieldError(fieldBotDescription, fmt.Sprintf("Description must be %d characters or fewer.", maxBotDescriptionLen))
+	}
+	return nil
+}
+
+// submitBotTokenRequest validates and either issues the bot+token immediately
+// (System Admins only — they can create bots directly anyway, so gating them
+// adds no security) or stores a pending two-step request and posts it for
+// approval. The auto-approve list is deliberately NOT honored here: two-step
+// requests must always get a real security sign-off.
+func (p *Plugin) submitBotTokenRequest(in botTokenRequestInput) (string, error) {
+	config := p.getConfiguration()
+
+	if err := validateBotTokenInput(in); err != nil {
+		return "", err
+	}
+
+	requester, appErr := p.API.GetUser(in.RequesterID)
+	if appErr != nil {
+		return "", errors.Wrap(appErr, "failed to load requesting user")
+	}
+
+	req := &botTokenRequest{
+		ID:          model.NewId(),
+		RequesterID: in.RequesterID,
+		Username:    strings.ToLower(strings.TrimSpace(in.Username)),
+		DisplayName: strings.TrimSpace(in.DisplayName),
+		Description: strings.TrimSpace(in.Description),
+	}
+
+	if requester.IsSystemAdmin() {
+		token, bot, err := p.createBotTokenForRequest(req)
+		if err != nil {
+			return "", err
+		}
+		if deliverErr := p.deliverBotToken(req.RequesterID, bot.Username, token); deliverErr != nil {
+			// The token can't be re-shown, so a bot nobody can use is a dangling
+			// privileged credential — remove it and tell the requester to retry.
+			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
+				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
+				return "", errors.Wrap(deliverErr, "bot created but the token could not be delivered to you, and the bot could not be removed automatically — ask an admin to delete it, then try again")
+			}
+			return "", errors.Wrap(deliverErr, "bot created but the token could not be delivered to you; it has been removed — please try again")
+		}
+		p.logAudit(config, fmt.Sprintf("BOT TOKEN CREATED: @%s created bot @%s directly (System Admin)",
+			requester.Username, bot.Username))
+		return "Bot created. The access token has been sent to you in a direct message.", nil
+	}
+
+	if err := p.storeBotTokenRequest(req); err != nil {
+		return "", err
+	}
+
+	if err := p.postBotTokenApprovalRequest(req, requester); err != nil {
+		_ = p.API.KVDelete(kvBotTokenRequestPrefix + req.ID)
+		return "", err
+	}
+
+	return "Your bot token request has been submitted. It requires approval from a security approver and a system approver; you'll be notified once it's issued.", nil
+}
+
+// createBotTokenForRequest creates the bot account and issues an access token,
+// returning the raw token and the created bot. If token issuance fails after the
+// bot was created, the orphaned bot is deleted so a retry can re-create it under
+// the same username (otherwise the username is taken forever and the request
+// becomes unrecoverable, leaving a privileged bot with no usable token).
+func (p *Plugin) createBotTokenForRequest(req *botTokenRequest) (token string, bot *model.Bot, err error) {
+	displayName := req.DisplayName
+	if displayName == "" {
+		displayName = req.Username
+	}
+	created, appErr := p.API.CreateBot(&model.Bot{
+		Username:    req.Username,
+		DisplayName: displayName,
+		Description: req.Description,
+	})
+	if appErr != nil {
+		return "", nil, errors.Wrap(appErr, "failed to create bot")
+	}
+
+	accessToken, appErr := p.API.CreateUserAccessToken(&model.UserAccessToken{
+		UserId:      created.UserId,
+		Description: fmt.Sprintf("Requested via channel-requests by user %s", req.RequesterID),
+	})
+	if appErr != nil {
+		// Roll back the orphaned bot so the username is freed and a retry is
+		// clean. Best-effort: a cleanup failure is logged but we still report
+		// the original token error.
+		if delErr := p.API.PermanentDeleteBot(created.UserId); delErr != nil {
+			p.API.LogError("failed to delete orphaned bot after token-issuance failure",
+				"bot_user_id", created.UserId, "error", delErr.Error())
+		}
+		return "", nil, errors.Wrap(appErr, "failed to create access token")
+	}
+
+	return accessToken.Token, created, nil
+}
+
+// deliverBotToken DMs the freshly-created token to the requester ONLY, returning
+// an error if delivery fails. The token is never posted to the approval channel.
+// The caller MUST handle a delivery failure (the token can't be shown again).
+func (p *Plugin) deliverBotToken(requesterID, botUsername, token string) error {
+	return p.dmRequester(requesterID, fmt.Sprintf(
+		"✅ Your bot token request was approved. Bot **@%s** was created.\n\n**Access token:** `%s`\n\n⚠️ Store this now — it won't be shown again.",
+		botUsername, token,
+	))
+}
+
+func (p *Plugin) storeBotTokenRequest(req *botTokenRequest) error {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal bot-token request")
+	}
+	if appErr := p.API.KVSet(kvBotTokenRequestPrefix+req.ID, data); appErr != nil {
+		return errors.Wrap(appErr, "failed to store bot-token request")
+	}
+	return nil
+}
+
+func (p *Plugin) loadBotTokenRequest(id string) (*botTokenRequest, []byte, error) {
+	data, appErr := p.API.KVGet(kvBotTokenRequestPrefix + id)
+	if appErr != nil {
+		return nil, nil, errors.Wrap(appErr, "failed to load bot-token request")
+	}
+	if data == nil {
+		return nil, nil, nil
+	}
+	var req botTokenRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, nil, errors.Wrap(err, "failed to unmarshal bot-token request")
+	}
+	return &req, data, nil
+}
+
+func (p *Plugin) postBotTokenApprovalRequest(req *botTokenRequest, requester *model.User) error {
+	return p.postApprovalAttachment(
+		p.botTokenApprovalAttachment(req, requester),
+		"@channel — a bot token request needs review (requires a security approval and a system approval).",
+	)
+}
+
+// botTokenApprovalAttachment builds the approval card, including the two-step
+// status and a single Approve button labeled with the step still needed.
+func (p *Plugin) botTokenApprovalAttachment(req *botTokenRequest, requester *model.User) *model.MessageAttachment {
+	fields := []*model.MessageAttachmentField{
+		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
+		{Title: "Bot username", Value: "@" + req.Username, Short: true},
+	}
+	if req.DisplayName != "" {
+		fields = append(fields, &model.MessageAttachmentField{Title: "Display name", Value: req.DisplayName, Short: true})
+	}
+	if req.Description != "" {
+		fields = append(fields, &model.MessageAttachmentField{Title: "Description", Value: req.Description, Short: false})
+	}
+	fields = append(fields, &model.MessageAttachmentField{Title: "Approvals", Value: p.twoStepStatusValue(req.twoStepState), Short: false})
+
+	siteURL := "/plugins/" + manifest.Id
+	return &model.MessageAttachment{
+		Title:   "Bot token request",
+		Color:   "#0058CC",
+		Fields:  fields,
+		Actions: p.botTokenApprovalActions(req.ID, siteURL, req.twoStepState),
+	}
+}
+
+// botTokenApprovalAttachmentWithNotice is botTokenApprovalAttachment plus a
+// visible warning banner, used to repaint the card when a final-approval
+// attempt failed to create the bot/token. Buttons are preserved so an approver
+// can retry or deny.
+func (p *Plugin) botTokenApprovalAttachmentWithNotice(req *botTokenRequest, requester *model.User, notice string) *model.MessageAttachment {
+	att := p.botTokenApprovalAttachment(req, requester)
+	att.Color = "#D24B4E"
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
+}
+
+func (p *Plugin) botTokenApprovalActions(requestID, siteURL string, _ twoStepState) []*model.PostAction {
+	return []*model.PostAction{
+		{
+			Id:    "approve",
+			Name:  approveButtonLabel,
+			Type:  model.PostActionTypeButton,
+			Style: "primary",
+			Integration: &model.PostActionIntegration{
+				URL:     siteURL + routeApproveBotToken,
+				Context: map[string]any{actionContextRequestID: requestID},
+			},
+		},
+		{
+			Id:    "deny",
+			Name:  "Deny",
+			Type:  model.PostActionTypeButton,
+			Style: "danger",
+			Integration: &model.PostActionIntegration{
+				URL:     siteURL + routeDenyBotToken,
+				Context: map[string]any{actionContextRequestID: requestID},
+			},
+		},
+	}
+}

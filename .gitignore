@@ -47,3 +47,4 @@ webapp/coverage-merged/
 webapp/.v8-ct-coverage/
 webapp/.v8-unit-coverage/
 webapp/.v8-merged-coverage/
+requests_branch_changes.txt

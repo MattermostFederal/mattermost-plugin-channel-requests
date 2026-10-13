@@ -40,14 +40,41 @@
                 <tr><th>Setting</th><th>Purpose</th></tr>
             </thead>
             <tbody>
+                <tr><td><code>Allow channel / team / team-admin / webhook / bot-token requests</code></td><td>Per-type toggles for what users may request. Channel defaults on; the rest default off. Turning one off hides its entry points and rejects submissions.</td></tr>
                 <tr><td><code>Approval team</code></td><td>The team whose channel receives requests. <strong>Required.</strong></td></tr>
                 <tr><td><code>Approval channel</code></td><td>The channel where Approve/Deny cards are posted. <strong>Required.</strong></td></tr>
                 <tr><td><code>Channel domain prefixes</code></td><td>The prefix list requesters pick from (see below). Leave empty for free-form URLs.</td></tr>
                 <tr><td><code>Team Admins can approve requests</code></td><td>When on, Team Admins of the approval team can approve/deny, not just System Admins.</td></tr>
-                <tr><td><code>Auto-approve requests from these users</code></td><td>Requests from these users skip approval.</td></tr>
+                <tr><td><code>Security / System approver attribute</code></td><td>Names of the <strong>User Attributes</strong> that mark the two approver pools for webhook and bot-token requests (see below).</td></tr>
+                <tr><td><code>Auto-approve requests from these users</code></td><td>Requests from these users skip approval. Does <strong>not</strong> apply to two-step (webhook / bot-token) requests.</td></tr>
                 <tr><td><code>Audit channel ID</code></td><td>Optional. Posts an audit line for every approve/deny.</td></tr>
             </tbody>
         </table>
+
+        <h2>Two-step approval (webhooks &amp; bot tokens)</h2>
+        <p>
+            Webhook and bot-token requests require <strong>two</strong> approvals — one from a
+            <strong>security</strong> approver and one from a <strong>system</strong> approver, by
+            two different people. Approver eligibility comes from
+            <strong>User Attributes</strong> (System Console → User Management → Attributes), so
+            you manage <em>who</em> can approve outside this plugin.
+        </p>
+        <ul>
+            <li>Create a User Attribute (e.g. a yes/no <em>select</em>) for each pool and set its value for your approvers. Admin-managed or LDAP/SAML-synced attributes are ideal so users can't self-promote.</li>
+            <li>Enter each attribute's <strong>name</strong> in the <em>Security approver attribute</em> and <em>System approver attribute</em> settings. A user counts as an approver for a pool when their value is set (non-empty).</li>
+            <li>System Admins can always fill the <strong>system</strong> step; the <strong>security</strong> step always requires the attribute (no admin bypass).</li>
+        </ul>
+
+        <div class="alert alert-warning">
+            <div class="alert-title">Webhook requests need server settings</div>
+            <p>
+                Creating incoming webhooks goes through the REST API as the plugin bot, so it
+                requires: a <strong>Site URL</strong> set, <strong>personal access tokens</strong>
+                enabled, <strong>incoming webhooks</strong> enabled, and the plugin bot permitted to
+                manage incoming webhooks. If any is missing, the approver sees a clear error and the
+                request stays pending.
+            </p>
+        </div>
 
         <div class="alert alert-warning">
             <div class="alert-title">Approval team and channel are required</div>

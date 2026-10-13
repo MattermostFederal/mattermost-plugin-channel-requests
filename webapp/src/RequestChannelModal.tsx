@@ -4,6 +4,7 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import {fetchPrefixes, submitChannelRequest} from './client';
 import type {ChannelPrefix} from './client';
+import {useDialogFocusTrap} from './dialogA11y';
 import {MemberPicker, parseUsernames} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
@@ -116,10 +117,6 @@ export const RequestChannelModal = () => {
         return selectedPrefix + (slug || 'suffix');
     }, [urlName, displayName, selectedPrefix]);
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setDisplayName('');
         setUrlName('');
@@ -143,6 +140,14 @@ export const RequestChannelModal = () => {
         reset();
         dispatch(closeRequestModal());
     };
+
+    // Escape-to-close + Tab focus trap. Called before the open check so the
+    // hook order stays stable across renders.
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!displayName.trim()) {
@@ -189,10 +194,19 @@ export const RequestChannelModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='cr-title'
+                tabIndex={-1}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={onDialogKeyDown}
             >
-                <h3 style={{marginTop: 0}}>{'Request a Channel'}</h3>
+                <h3
+                    id='cr-title'
+                    style={{marginTop: 0}}
+                >{'Request a Channel'}</h3>
                 <p style={{opacity: 0.72}}>
                     {'Your request will be sent to an admin for approval. '}
                     <a
@@ -210,6 +224,7 @@ export const RequestChannelModal = () => {
                             <div>
                                 <div
                                     className='alert alert-success'
+                                    role='status'
                                     style={{marginBottom: 16}}
                                 >
                                     {success}
@@ -233,6 +248,7 @@ export const RequestChannelModal = () => {
                             <div>
                                 <div
                                     className='alert alert-danger'
+                                    role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {'Could not load channel request settings. Please try again.'}
@@ -260,6 +276,7 @@ export const RequestChannelModal = () => {
                             <div>
                                 <div
                                     className='alert alert-warning'
+                                    role='status'
                                     style={{marginBottom: 16}}
                                 >
                                     {'Channel requests aren’t configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests.'}
@@ -305,6 +322,7 @@ export const RequestChannelModal = () => {
                                     value={displayName}
                                     maxLength={64}
                                     placeholder='e.g. Marketing Team'
+                                    autoFocus={true}
                                     onChange={(e) => setDisplayName(e.target.value)}
                                 />
                             </div>
@@ -428,6 +446,7 @@ export const RequestChannelModal = () => {
                             {error ? (
                                 <div
                                     className='alert alert-danger'
+                                    role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {error}

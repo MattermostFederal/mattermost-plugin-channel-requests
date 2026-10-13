@@ -51,6 +51,20 @@ const (
 	channelAdminRoleString = "channel_user channel_admin"
 )
 
+// fieldError is an input error tied to a specific dialog field. The
+// interactive-dialog handlers surface it inline under that field (via
+// SubmitDialogResponse.Errors) instead of as a detached message at the bottom
+// of the dialog. Plain-string callers (the webapp modals) still get a sensible
+// message through Error(), so the same error works for both entry points.
+type fieldError struct {
+	field string
+	msg   string
+}
+
+func (e *fieldError) Error() string { return e.msg }
+
+func newFieldError(field, msg string) *fieldError { return &fieldError{field: field, msg: msg} }
+
 // channelRequest is a pending request to create a channel, persisted in the KV store until a System
 // Admin approves or denies it.
 type channelRequest struct {
@@ -120,7 +134,7 @@ func slugify(s string) string {
 // channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
 	if !config.UsesPrefixList() {
-		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
+		return "", errors.New("Plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests.")
 	}
 	return resolvePrefixedName(config.Prefixes(), in)
 }
@@ -131,7 +145,7 @@ func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (str
 func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, error) {
 	selected := strings.TrimSpace(in.Prefix)
 	if selected == "" {
-		return "", errors.New("please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown")
+		return "", errors.New("Please pick a channel prefix (e.g., team-, project-, ops-) from the dropdown.")
 	}
 	var entry *channelPrefix
 	for i := range prefixes {
@@ -141,7 +155,7 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 		}
 	}
 	if entry == nil {
-		return "", errors.Errorf("prefix %q is not in the list of allowed prefixes", selected)
+		return "", errors.Errorf("Prefix %q is not in the list of allowed prefixes.", selected)
 	}
 
 	suffix := strings.TrimSpace(in.Name)
@@ -157,19 +171,19 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	suffix = strings.Trim(suffix, "-")
 
 	if suffix == "" {
-		return "", errors.New("channel name suffix is required (letters/numbers, becomes the part after the prefix)")
+		return "", errors.New("Channel name suffix is required (letters/numbers, becomes the part after the prefix).")
 	}
 
 	// The compiled pattern is anchored (^(?:...)$) so it must match the
 	// whole suffix. Error messages surface the raw pattern text so users
 	// see what the admin wrote, not our anchored rewrite.
 	if entry.SuffixPattern != nil && !entry.SuffixPattern.MatchString(suffix) {
-		return "", errors.Errorf("suffix %q doesn't match the required pattern for prefix %q (%s)", suffix, entry.Prefix, entry.SuffixPatternRaw)
+		return "", errors.Errorf("Suffix %q doesn't match the required pattern for prefix %q (%s).", suffix, entry.Prefix, entry.SuffixPatternRaw)
 	}
 
 	name := entry.Prefix + suffix
 	if !model.IsValidChannelIdentifier(name) {
-		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens", name)
+		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens.", name)
 	}
 	return name, nil
 }
@@ -181,22 +195,22 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 // config) — happen in submitRequest after this passes.
 func validateRequestInput(in requestInput) error {
 	if strings.TrimSpace(in.DisplayName) == "" {
-		return errors.New("a channel name is required")
+		return errors.New("A channel name is required.")
 	}
 	// Count runes on the trimmed value to match the dialog's MaxLength
 	// (which counts characters), so a multibyte name the UI accepts isn't
 	// rejected server-side by a byte-length check.
 	if utf8.RuneCountInString(strings.TrimSpace(in.DisplayName)) > maxDisplayNameLen {
-		return errors.Errorf("channel name must be %d characters or fewer", maxDisplayNameLen)
+		return errors.Errorf("Channel name must be %d characters or fewer.", maxDisplayNameLen)
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(in.Purpose)) > maxPurposeLen {
-		return errors.Errorf("purpose must be %d characters or fewer", maxPurposeLen)
+		return errors.Errorf("Purpose must be %d characters or fewer.", maxPurposeLen)
 	}
 	if len(in.MemberIDs) > maxMembersPerList || len(in.AdminMemberIDs) > maxMembersPerList {
-		return errors.Errorf("too many members: at most %d members and %d channel admins per request", maxMembersPerList, maxMembersPerList)
+		return errors.Errorf("Too many members: at most %d members and %d channel admins per request.", maxMembersPerList, maxMembersPerList)
 	}
 	if strings.TrimSpace(in.TeamID) == "" {
-		return errors.New("a team is required")
+		return errors.New("A team is required.")
 	}
 	return nil
 }
@@ -226,7 +240,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		// enough — require an active membership.
 		member, appErr := p.API.GetTeamMember(in.TeamID, in.RequesterID)
 		if appErr != nil || member == nil || member.DeleteAt != 0 {
-			return "", errors.New("you must be a member of the team to request a channel in it")
+			return "", errors.New("You must be a member of the team to request a channel in it.")
 		}
 	}
 
@@ -245,6 +259,16 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	name, err := p.resolveChannelName(config, in)
 	if err != nil {
 		return "", err
+	}
+
+	// Reject up front if the URL name is already taken in the target team.
+	// CreateChannel enforces per-team uniqueness (including archived
+	// channels), but without this check the collision only surfaces at
+	// approval time, leaving the request stuck pending. includeDeleted=true so
+	// a name colliding with an archived channel is caught too, matching
+	// CreateChannel's own behavior.
+	if existing, appErr := p.API.GetChannelByName(in.TeamID, name, true); appErr == nil && existing != nil {
+		return "", newFieldError(fieldName, fmt.Sprintf("A channel with the URL name %q already exists in this team. Pick a different URL suffix.", name))
 	}
 
 	req := &channelRequest{
@@ -499,7 +523,7 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 	}
 
 	if posted == 0 {
-		return errors.New("no System Admins are available to receive the approval request")
+		return errors.New("No System Admins are available to receive the approval request.")
 	}
 	return nil
 }
@@ -576,18 +600,30 @@ func (p *Plugin) mentionList(userIDs []string) string {
 	return strings.Join(mentions, ", ")
 }
 
-// notifyRequester sends a DM from the bot to the requester about the outcome of their request.
-func (p *Plugin) notifyRequester(requesterID, message string) {
+// dmRequester sends a DM from the bot to the requester and returns an error if
+// it could not be delivered. Callers that deliver a SECRET (webhook URL, bot
+// token) must check this error — a swallowed delivery failure means the only
+// copy of the secret is lost.
+func (p *Plugin) dmRequester(requesterID, message string) error {
 	channel, appErr := p.API.GetDirectChannel(requesterID, p.botUserID)
 	if appErr != nil {
-		p.API.LogWarn("failed to open DM with requester", "user_id", requesterID, "error", appErr.Error())
-		return
+		return errors.Wrap(appErr, "failed to open DM with requester")
 	}
 	if _, appErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
 		ChannelId: channel.Id,
 		Message:   message,
 	}); appErr != nil {
-		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", appErr.Error())
+		return errors.Wrap(appErr, "failed to post DM to requester")
+	}
+	return nil
+}
+
+// notifyRequester sends a non-critical outcome DM to the requester. Delivery
+// failures are logged and swallowed — fine for status notices, but NOT for
+// secrets (use dmRequester and check the error for those).
+func (p *Plugin) notifyRequester(requesterID, message string) {
+	if err := p.dmRequester(requesterID, message); err != nil {
+		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", err.Error())
 	}
 }

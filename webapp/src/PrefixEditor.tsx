@@ -130,6 +130,15 @@ function serializeRows(rows: PrefixRow[]): string {
         join('\n');
 }
 
+// prefixNeedsSeparator reports whether a prefix would run together with the
+// suffix. MM channel URLs allow only [a-z0-9-], so "-" is the only possible
+// separator — a non-empty prefix that doesn't end in one yields URLs like
+// "teammarketing". Non-blocking: the admin can keep it, but we flag it.
+function prefixNeedsSeparator(prefix: string): boolean {
+    const p = prefix.trim();
+    return p !== '' && !p.endsWith('-');
+}
+
 function clampLength(n: number): number {
     if (Number.isNaN(n) || n < MIN_MAX_LENGTH) {
         return MIN_MAX_LENGTH;
@@ -288,6 +297,20 @@ export const PrefixEditor: React.FC<Props> = ({id, value, disabled, onChange, se
                                         disabled={disabled}
                                         onChange={(e) => updateRow(idx, {prefix: e.target.value})}
                                     />
+                                    {prefixNeedsSeparator(row.prefix) ? (
+                                        <div style={{marginTop: 4, fontSize: 12, color: 'rgba(210, 75, 78, 0.95)'}}>
+                                            {`⚠ No separator — URLs run together (${row.prefix.trim()}suffix). `}
+                                            <button
+                                                type='button'
+                                                className='btn btn-link btn-sm'
+                                                style={{padding: 0, fontSize: 12, verticalAlign: 'baseline'}}
+                                                disabled={disabled}
+                                                onClick={() => updateRow(idx, {prefix: row.prefix.trim() + '-'})}
+                                            >
+                                                {'Add “-”'}
+                                            </button>
+                                        </div>
+                                    ) : null}
                                 </td>
                                 <td style={{padding: 6}}>
                                     <input

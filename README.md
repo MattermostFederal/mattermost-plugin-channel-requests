@@ -1,30 +1,37 @@
 # Mattermost Plugin: Channel Requests
 
-A Mattermost plugin that lets non-admins **request** new channels for System Admin approval instead of creating them directly. On approval, the plugin creates the channel and adds the requester plus any designated members. Admins bypass approval and create channels immediately.
+A Mattermost plugin that lets non-admins **request** things for approval instead of creating them directly — channels, teams, Team Admin rights, incoming webhooks, and bot tokens. Each request type has an admin on/off toggle. On approval the plugin performs the action and notifies the requester; System Admins bypass approval. Webhooks and bot tokens require **two-step approval** (a security approver and a system approver).
+
+Requires Mattermost server **v10.9+** (uses User Attributes for approver pools).
 
 ## Features
 
-- **Request workflow**: Non-admins submit a channel request via the `/channel-request` slash command (native dialog with a member picker), a "Request Channel" channel-header button, or the sidebar "+" menu (relabeled "Request new channel" for non-admins).
-- **Admin approval**: Requests are posted to a configured approval channel with Approve / Deny buttons. Only System Admins can act. Approving creates the channel and adds the requester + designated members; denying notifies the requester. Either way the requester gets a DM.
-- **Admin bypass**: System Admins' requests create the channel immediately.
-- **Configurable naming**: Optionally force a standard channel URL via a template (`team-{{name}}`) and/or enforce a regex pattern on the final URL.
-- **Channel Admin requests**: On an existing channel, a non-admin member can request that someone be made a Channel Admin — via a "Request Admin" button in the Members panel or the channel-name menu. The request is posted to the approval channel, @-mentioning the System Admins and the channel's Team Admins, who Approve / Deny.
+- **`/request` command**: Non-admins request things via `/request <type>` — `channel`, `team`, `team-admin`, `webhook`, or `bot-token`. `/channel-request` remains as an alias for `/request channel`. Channel and team requests also have webapp modals + channel-header buttons; the rest are slash-command-only.
+- **Per-type toggles**: Admins enable/disable each request type independently (channel defaults on; the rest default off). Disabled types are hidden and their submissions rejected server-side.
+- **Channels & teams**: Approving creates the channel/team, adds the requested members, promotes admins, and (for teams) makes the requester a Team Admin.
+- **Team Admin & Channel Admin requests**: Request that people be promoted to Team Admin (on a team) or Channel Admin (on a channel). Routed to the relevant admins.
+- **Webhooks & bot tokens (two-step)**: Require one **security** and one **system** approval, by two different people, identified by configurable **User Attributes**. The resulting webhook URL / bot token is DM'd privately to the requester — never posted in the approval channel.
+- **Admin approval**: Requests are posted to a configured approval channel with Approve / Deny buttons; the requester is notified by DM either way. An optional audit channel records every decision.
 
 ## Documentation
 
-- [Channel Requests — User Guide](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**.
-- [Channel Admin Requests — User Guide](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**.
+In-app help ships under **`public/help/`** (linked from the request modals): overview & requesting, approving requests, and admin setup.
 
 ## Configuration
 
 In **System Console → Plugins → Channel Requests**, set:
 
-- **Approval Team** — URL name of the team containing the approval channel (e.g. `myteam`).
-- **Approval Channel** — URL name of the channel where requests are posted (e.g. `channel-requests`).
-- **Channel URL Template** — optional; `{{name}}` is replaced with the requester's slugified name.
-- **Channel URL Pattern (regex)** — optional; the final channel URL must match this.
+- **Allow … requests** — per-type toggles (channel / team / team-admin / webhook / bot-token).
+- **Approval Team / Approval Channel** — where Approve/Deny cards are posted. **Required.**
+- **Channel domain prefixes** — the prefix list requesters pick from for channel URLs.
+- **Team Admins can approve requests** — let approval-team Team Admins act, not just System Admins.
+- **Security / System approver attribute** — names of the User Attributes marking the two approver pools for webhook and bot-token requests (managed in User Management → Attributes).
+- **Auto-approve users** — requests from these users skip approval (does not apply to two-step requests).
+- **Audit channel ID** — optional; posts an audit line per decision.
 
 > To fully funnel non-admins through the request flow, remove the built-in **Create Public/Private Channel** permission from the System User role (System Console → User Management → Permissions). Mattermost's plugin API cannot veto native channel creation.
+>
+> **Webhook requests** additionally require: a Site URL set, personal access tokens enabled, incoming webhooks enabled, and the plugin bot permitted to manage incoming webhooks.
 
 ## Build and deploy
 
