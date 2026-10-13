@@ -14,6 +14,7 @@ A Mattermost plugin that lets non-admins **request** new channels for System Adm
 
 - [Channel Requests — User Guide](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**.
 - [Channel Admin Requests — User Guide](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**.
+- [Releasing](docs/RELEASING.md) — how to cut a release.
 
 ## Configuration
 
