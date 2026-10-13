@@ -96,7 +96,7 @@ jobs:
           if grep -qE '(^/|(^|/)\.\.(/|$))' "$intake/members"; then
             fail "bundle contains an absolute path or a parent directory reference"
           fi
-          topdir="$(printf '%s\n' "$listing" | awk '{print $NF}' | cut -d/ -f1 | sort -u)"
+          topdir="$(cut -d/ -f1 "$intake/members" | sort -u)"
           [ "$(wc -l <<<"$topdir")" -eq 1 ] || fail "bundle must have exactly one top-level directory"
           [[ "$topdir" =~ ^[A-Za-z0-9._-]{3,190}$ ]] || fail "bundle top-level directory is not a valid plugin id"
           manifest="$(timeout 60 tar -xzOf "$intake/bundle.tar.gz" --occurrence=1 "${topdir}/plugin.json" | head -c 65536)"
@@ -139,6 +139,7 @@ jobs:
           private-key: ${{ secrets.PREVIEW_CHECKOUT_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: pr-preview
+          permission-contents: read
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
