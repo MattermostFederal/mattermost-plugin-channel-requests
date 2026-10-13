@@ -66,6 +66,9 @@ func main() {
 	case "version":
 		dumpPluginVersion(manifest)
 
+	case "name":
+		fmt.Print(manifest.Name)
+
 	case "has_server":
 		if manifest.HasServer() {
 			fmt.Printf("true")

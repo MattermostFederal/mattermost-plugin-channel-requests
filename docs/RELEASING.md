@@ -21,7 +21,8 @@ commit to main (feat:/fix:/...) ──► release-please.yml opens/updates a "Re
    `plugin.json`'s `version` and updates `CHANGELOG.md`.
 3. **You merge the Release PR** when you're ready to ship. That creates the
    `v*` git tag.
-4. **`release.yml`** fires on the tag. Its `build` job refuses a tag that is
+4. **`release-please.yml`** then calls **`release.yml`** for that tag (a tag
+   you push by hand triggers `release.yml` directly). Its `build` job refuses a tag that is
    not on `main`, then runs the full security-gated `make release` with no
    signing key. Its `publish` job runs in the `release` environment, runs no
    repository code, signs (if configured) and checksums the bundle, and
