@@ -41,6 +41,18 @@ make deploy  # build and deploy to a running Mattermost server
 - `make test` - run tests
 - `make deploy` - deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
 
+## PR preview environments
+
+Add the `preview` label to a pull request to stand up a throwaway Mattermost server with that PR's bundle installed. The URL is posted on the PR. Removing the label or closing the PR tears it down.
+
+`.github/workflows/preview.yml` is a thin copy of the shared workflow in the private `MattermostFederal/pr-preview` repo, checked out at its protected `v1` tag. It never checks out or runs PR code: it waits for `build.yml` to pass on the PR's head commit and deploys the `plugin-bundle` artifact that run uploaded. A fork PR deploys only the commit that was labeled; a later push tears the preview down until a maintainer re-applies the label.
+
+One-time setup:
+
+- create the label: `gh label create preview`
+- make sure the org variables `PREVIEW_CHECKOUT_APP_ID` and `PREVIEW_AWS_ROLE_ARN` and the org secrets `PREVIEW_CHECKOUT_APP_PRIVATE_KEY` and `PREVIEW_ADMIN_SECRET` are visible to this repo
+- optionally set `PREVIEW_APP` (hostname prefix, default is the repo name without `mattermost-plugin-`) or `PREVIEW_MM_IMAGE_TAG` in the workflow's `env:` block
+
 ## Vulnerability scanning
 
 This plugin ships with a CycloneDX SBOM and grype-based vulnerability audit:
