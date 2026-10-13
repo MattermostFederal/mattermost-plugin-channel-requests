@@ -29,6 +29,8 @@ In **System Console → Plugins → Channel Requests**, set:
 
 ## Build and deploy
 
+<!-- preview smoke test -->
+
 ```sh
 make dist    # build the plugin bundle
 make deploy  # build and deploy to a running Mattermost server
