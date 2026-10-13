@@ -1,6 +1,7 @@
 ---
 name: add-frontend-tests
 description: Systematically find frontend test coverage gaps and add exhaustive Playwright unit and component tests. Use when you want to improve React/TypeScript test coverage, add missing tests, or harden existing test suites.
+user-invocable: true
 ---
 
 # Add Frontend Tests
@@ -20,18 +21,20 @@ This skill uses a plan-then-execute workflow:
 
 ## Step 1: Measure Current Coverage (in plan mode)
 
-Run the frontend coverage target (typically `make coverage-frontend`) and capture the output. A typical setup has three coverage reports: unit test coverage, component test (CT) coverage, and a merged report combining both.
+`make coverage-frontend` calls three npm scripts, `test:coverage`, `test:pw-ct-coverage` and `test:coverage-merged`, that **do not exist yet** in `webapp/package.json`, so the target fails today. Do not report coverage numbers you did not measure.
+
+Pick one, and say which in the plan:
+
+1. **Add the coverage scripts** (unit coverage with C8, component coverage with V8 browser coverage, and a merged report) as the first task of the plan, then measure. This changes `package.json` and may add dev dependencies, so it needs the user's approval like any other task.
+2. **Measure by inventory** when the user does not want tooling changes: list every module under `webapp/src/` and whether it has a `.spec.ts` or `.pw.tsx` beside it, and read the existing tests to see which branches they reach. Treat a module with no test as 0%.
 
 ```bash
-make coverage-frontend 2>&1
+cd webapp
+find src -name '*.ts' -o -name '*.tsx' | grep -v -e '\.spec\.ts$' -e '\.pw\.tsx$' -e '/types/' -e 'manifest.ts$' | sort
+find src -name '*.spec.ts' -o -name '*.pw.tsx' | sort
 ```
 
-Typical commands this runs:
-- `npm run test:coverage`: unit tests (`.spec.ts`) with C8 line coverage
-- `npm run test:pw-ct-coverage`: component tests (`.pw.tsx`) with V8 browser coverage
-- `npm run test:coverage-merged`: combines both into a single authoritative report
-
-**CI environment warning.** Component test coverage collection may be skipped when `CI=true`. If you see the merged report showing very low coverage, check whether CT coverage was actually collected. If it was skipped, warn the user that the merged numbers only reflect unit test coverage.
+Today only `src/manifest.spec.ts` and `src/HeaderIcon.pw.tsx` exist, so nearly every module starts in Tier 1.
 
 ### Coverage Threshold Check
 
@@ -83,54 +86,46 @@ Exit plan mode and wait for user approval before proceeding to Step 3.
 
 ### Two Test Types
 
-Projects typically use two distinct test approaches:
-
-**Unit Tests (`.spec.ts`)**, run in Node.js via Playwright Test:
-- For pure logic, utility functions, state management, API clients
+**Unit Tests (`.spec.ts`)**, run in Node.js via Playwright Test (`webapp/playwright.config.ts`):
+- For pure logic: the reducer and action creators in `src/store.ts`, the fetch wrappers in `src/client.ts`, and helpers in `src/channelCreationOverride.ts` and `src/membersPanelButton.ts`
 - File pattern: `src/<module>.spec.ts`
-- Run: `npm run test:pw`
+- The config resolves the `manifest` import to `src/manifest.ts`, which `make apply` generates from `plugin.json`
+- Run: `cd webapp && npm run test:pw`
 
-**Component Tests (`.pw.tsx`)**, run in browser via Playwright Component Testing:
-- For React components with real DOM rendering
-- File pattern: `src/components/<Component>.pw.tsx`
-- Run: `npm run test:pw-ct`
+**Component Tests (`.pw.tsx`)**, run in a browser via Playwright Component Testing (`webapp/playwright-ct.config.ts`, setup in `webapp/playwright/index.tsx`):
+- For React components with real DOM rendering: `RequestChannelModal`, `RequestChannelAdminModal`, `MemberPicker`, `PrefixEditor`, `ApprovalChannelPicker`, `AutoApprovePicker`, `HeaderIcon`
+- File pattern: beside the component, `src/<Component>.pw.tsx`
+- Run: `cd webapp && npm run test:pw-ct`
+
+`npm run test` runs both. `make test` runs it after the Go tests.
 
 ### Test Infrastructure
 
-**Store reset for test isolation:**
+**Redux state.** `src/store.ts` holds a plain reducer and action creators with no module-level state, so there is nothing to reset between tests. Test the reducer as a pure function. For a component that reads the store, mount it inside a `Provider` with a store built from a minimal `GlobalState` for that test.
+
+**Route mocking for API calls.** The plugin id is `com.mattermostfederal.channel-requests`, and `src/client.ts` calls `/plugins/<id>/api/v1/...`:
 ```typescript
-import {myStore} from '../store/my_store';
-
-test.beforeEach(() => {
-    myStore._resetForTesting();
-});
-```
-
-If a store lacks a `_resetForTesting()` export, add one. Each store should clear its module-level state and listener arrays.
-
-**Route mocking for API calls:**
-```typescript
-await page.route('**/plugins/<plugin-id>/api/**', (route) => {
+await page.route('**/plugins/com.mattermostfederal.channel-requests/api/v1/prefixes', (route) => {
     route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(responseData),
+        body: JSON.stringify([{prefix: 'team-', description: 'Team channels', suffix_regex: ''}]),
     });
 });
 ```
 
 **Error route mocking:**
 ```typescript
-await page.route('**/plugins/<plugin-id>/api/**', (route) => {
+await page.route('**/plugins/com.mattermostfederal.channel-requests/api/v1/create', (route) => {
     route.fulfill({
-        status: 500,
+        status: 400,
         contentType: 'application/json',
-        body: JSON.stringify({error: 'Internal server error'}),
+        body: JSON.stringify({error: 'Channel name is already taken'}),
     });
 });
 
 // Network failure simulation
-await page.route('**/plugins/<plugin-id>/api/**', (route) => {
+await page.route('**/plugins/com.mattermostfederal.channel-requests/api/**', (route) => {
     route.abort('connectionrefused');
 });
 ```
@@ -202,7 +197,7 @@ await expect(page.locator('a')).toHaveAttribute('href', '/test');
 - **Descriptive names**: `'shows error message when API returns 500'` not `'test error 1'`
 - **Isolated**: each test mounts its own component, no shared state between tests
 - **No flaky selectors**: prefer `getByRole`, `getByText`, `getByTestId` over CSS selectors
-- **Proper cleanup**: restore mocked globals in `test.afterEach()`, call `_resetForTesting()` in `test.beforeEach()`
+- **Proper cleanup**: restore mocked globals in `test.afterEach()`
 - **No synthetic data to fix failures**: if a test fails, fix the code or the test logic
 
 ### What to Test in Each Component
@@ -228,26 +223,24 @@ For utility modules:
 
 Add tests to existing test files or create new ones following the pattern:
 - Unit tests: `src/foo.ts` to `src/foo.spec.ts`
-- Component tests: `src/components/Foo.tsx` to `src/components/Foo.pw.tsx`
+- Component tests: `src/<area>/Foo.tsx` to `src/<area>/Foo.pw.tsx`, in the same directory as the component
 
 ## Step 4: Implement in Phases (after plan approval)
 
 Work through tiers in order. Mark each task complete using TaskUpdate as you finish it. After each phase, validate before moving on.
 
 **Phase 1, Quick wins (0% coverage, simple modules):**
-Utility functions, formatters, and stores with no tests at all. Start with the simplest ones to build momentum.
+The reducer and action creators in `store.ts`, the `client.ts` fetch wrappers, and other pure helpers. Start with the simplest ones to build momentum.
 
 **Phase 2, Component tests (low coverage components):**
 Components that have some tests but miss important states (error, loading, empty).
 
 **Phase 3, Interaction and integration tests:**
-Complex user flows, admin settings changes, form validation, multi-step interactions, API call chains.
+The request form end to end: prefix selection, suffix validation against `suffix_regex`, member and Channel Admin pickers, submit success and error. The admin-console editors (`PrefixEditor`, `ApprovalChannelPicker`, `AutoApprovePicker`) reading and writing their setting value.
 
 **Phase 4, Edge cases and error resilience:**
 Malformed JSON inputs, network failures, rapid user interactions, concurrent state updates, cleanup during unmount.
 
-**Phase 5, Store isolation improvements (if needed):**
-If a store lacks a `_resetForTesting()` export, add one following the existing pattern.
 
 ## Step 5: Validate After Each Phase
 
@@ -279,17 +272,17 @@ make check-style
 make coverage-frontend 2>&1
 ```
 
-Report the before/after coverage delta per file and overall from the merged coverage report.
+Report the before/after coverage delta per file and overall from the merged coverage report, or, if you measured by inventory, which modules gained tests and which branches they cover.
 
 ## Common Pitfalls
 
 - **Not restoring mocked globals**: if you mock `globalThis.fetch` or `console.warn`, always restore in `test.afterEach()`. Leaked mocks cause cascading test failures.
-- **Forgetting `_resetForTesting()` in `beforeEach`**: store state leaks between tests and causes nondeterministic failures.
 - **Not reading existing tests first**: you'll write duplicates or miss established helper functions.
 - **Flaky async assertions**: use `await expect(locator).toBeVisible()` (auto-retrying) instead of checking once.
 - **Forgetting route mocks**: component tests that make API calls will fail or hang without `page.route()` setup.
-- **Using wrong plugin ID in route mocks**: match the plugin ID from `plugin.json`. API calls will not be intercepted with the wrong path.
+- **Using the wrong plugin ID in route mocks**: it is `com.mattermostfederal.channel-requests`, from `plugin.json`. API calls will not be intercepted with the wrong path.
 - **CSS selector fragility**: prefer semantic locators (`getByRole`, `getByText`, `getByTestId`) over CSS class selectors.
 - **Missing cleanup in afterEach**: tracked state must be cleaned up to prevent test pollution.
+- **Running tests before `make apply`**: `src/manifest.ts` is generated and gitignored, so a fresh checkout cannot resolve `manifest` until it runs.
 - **Testing implementation details**: don't assert on internal state or React hooks. Test what the user sees and what callbacks fire.
 - **Locator scoping mistakes**: when a component returns a bare element, use `page.locator()` not `component.locator()` to find the root element itself.
