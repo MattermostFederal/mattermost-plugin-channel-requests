@@ -74,6 +74,10 @@ updates:
     #   - eslint 10: no eslint-plugin-react release supports it.
     #   - @babel/* 8 + babel-loader 10: ESM-only @babel/core breaks
     #     babel-loader's require().
+    #   - @playwright/test past 1.62: @playwright/experimental-ct-react
+    #     stopped publishing at 1.62.1 and pins playwright to that exact
+    #     version, so the two must move together or the component tests
+    #     fail with "did not expect test() to be called here".
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
@@ -83,6 +87,8 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "babel-loader"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@playwright/test"
+        update-types: ["version-update:semver-minor"]
     groups:
       npm-minor-patch:
         update-types:
