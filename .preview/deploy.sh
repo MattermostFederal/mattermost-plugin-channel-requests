@@ -17,13 +17,28 @@ mm_api() {
     -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
 
-mmctl channel create --team "$APPROVAL_TEAM" --name "$APPROVAL_CHANNEL" \
-  --display-name "Channel Requests" >/dev/null 2>&1 || true
+# The channel survives redeploys with the database, so create it only when
+# it's missing and fail the deploy if it still isn't there.
+channel_path="/teams/name/${APPROVAL_TEAM}/channels/name/${APPROVAL_CHANNEL}"
+if ! mm_api GET "$channel_path" >/dev/null; then
+  mmctl channel create --team "$APPROVAL_TEAM" --name "$APPROVAL_CHANNEL" \
+    --display-name "Channel Requests" >/dev/null
+  mm_api GET "$channel_path" >/dev/null || { echo "approval channel ~${APPROVAL_CHANNEL} is missing"; exit 1; }
+fi
 
 # Channel creation is a team permission, held by team_user in the default
 # scheme; system_user is cleared too in case a server version keeps it there.
+CREATE_PERMS='["create_public_channel","create_private_channel"]'
+role_create_perms() {
+  mm_api GET "/roles/name/$1" | jq -r --argjson p "$CREATE_PERMS" '.permissions[] | select(IN($p[]))'
+}
 for role in team_user system_user; do
-  mmctl permissions remove "$role" create_public_channel create_private_channel >/dev/null 2>&1 || true
+  held="$(role_create_perms "$role")"
+  [ -z "$held" ] && continue
+  # shellcheck disable=SC2086
+  mmctl permissions remove "$role" $held >/dev/null
+  held="$(role_create_perms "$role")"
+  [ -z "$held" ] || { echo "${role} still holds ${held//$'\n'/ }"; exit 1; }
 done
 
 config="$(mm_api GET /config | jq -c --arg id "$id" --arg team "$APPROVAL_TEAM" --arg channel "$APPROVAL_CHANNEL" \
