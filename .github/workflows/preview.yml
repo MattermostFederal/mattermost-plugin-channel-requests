@@ -5,6 +5,9 @@
 # for build.yml to pass on the PR head and deploys the plugin-bundle artifact
 # that run uploaded, so build.yml must keep uploading exactly one
 # dist/*.tar.gz under that name.
+#
+# It also packs .preview/ from the PR's base commit (never the head) as the
+# deploy hook, matching mattermost-plugin-opscenter.
 name: PR Preview
 
 on:
@@ -25,6 +28,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       actions: read
+      contents: read
       pull-requests: read
     outputs:
       have_bundle: ${{ steps.intake.outputs.have_bundle }}
@@ -110,6 +114,30 @@ jobs:
           mv "$intake/bundle.tar.gz" "$out/bundle.tar.gz"
           printf 'PLUGIN_ID=%s\nPLUGIN_VERSION=%s\nBUNDLE_SHA=%s\n' "$id" "$version" "$sha" > "$out/manifest.env"
           echo "have_bundle=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.intake.outputs.have_bundle == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          sparse-checkout: .preview
+          persist-credentials: false
+
+      - name: Add the base branch's preview hook
+        if: steps.intake.outputs.have_bundle == 'true'
+        run: |
+          set -euo pipefail
+          hook=base/.preview
+          [ -d "$hook" ] || exit 0
+          if find "$hook" -mindepth 1 ! -type f ! -type d | grep -q .; then
+            echo "::warning::.preview holds something other than regular files and directories; deploying without the hook"
+            exit 0
+          fi
+          if [ "$(du -sk "$hook" | cut -f1)" -gt 1024 ]; then
+            echo "::warning::.preview is over 1 MB; deploying without the hook"
+            exit 0
+          fi
+          cp -R "$hook" "$RUNNER_TEMP/preview-bundle/hook"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.intake.outputs.have_bundle == 'true'

@@ -47,6 +47,8 @@ Add the `preview` label to a pull request to stand up a throwaway Mattermost ser
 
 `.github/workflows/preview.yml` is a thin copy of the shared workflow in the private `MattermostFederal/pr-preview` repo, checked out at its protected `v1` tag. It never checks out or runs PR code: it waits for `build.yml` to pass on the PR's head commit and deploys the `plugin-bundle` artifact that run uploaded. A fork PR deploys only the commit that was labeled; a later push tears the preview down until a maintainer re-applies the label.
 
+What the preview does beyond installing the bundle lives in `.preview/`, which pr-preview reads from the PR's base branch, so a change to it reaches previews only after it merges. `deploy.sh` runs after the bundle is installed: it creates `~channel-requests` in team `test` and points the plugin's approval settings at it. Keep it in step with `make docker-setup` and `make deploy`. A `mattermost.env` file there would add `MM_*` settings to the server; none are needed today.
+
 One-time setup:
 
 - create the label: `gh label create preview`
