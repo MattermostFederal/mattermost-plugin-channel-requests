@@ -23,7 +23,8 @@ commit to main (feat:/fix:/...) ──► release-please.yml opens/updates a "Re
    `v*` git tag.
 4. **`release-please.yml`** then calls **`release.yml`** for that tag (a tag
    you push by hand triggers `release.yml` directly). Its `build` job refuses a tag that is
-   not on `main`, then runs the full security-gated `make release` with no
+   not on `main`, then runs the full security-gated `make release` (Grype,
+   govulncheck, CodeQL) with no
    signing key. Its `publish` job runs in the `release` environment, runs no
    repository code, signs (if configured) and checksums the bundle, and
    publishes a GitHub Release with the bundle, checksum, SBOMs, CodeQL SARIF,

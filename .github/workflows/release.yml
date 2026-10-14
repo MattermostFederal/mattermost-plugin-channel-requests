@@ -1,7 +1,7 @@
 # Fires on a v* tag push (normally created when the release-please PR is
 # merged). Runs the full security-gated release pipeline via `make
 # release`, which chains:
-#   release-check -> clean -> all -> sbom-audit -> codeql-analyze
+#   release-check -> clean -> all -> sbom-audit -> govulncheck -> codeql-analyze
 #   -> security-gate -> release-bundle -> virus-scan -> release-sign
 #   -> release-checksum
 #
