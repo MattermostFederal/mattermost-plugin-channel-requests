@@ -155,9 +155,9 @@ release-tag:
 	git tag -a "v$(PLUGIN_VERSION)" -m "Release v$(PLUGIN_VERSION)"
 	@echo "Tag v$(PLUGIN_VERSION) created. Push with: git push origin v$(PLUGIN_VERSION)"
 
-## Full release build: clean, checks, style, tests, build, SBOM audit, CodeQL, bundle with SBOMs, sign, and checksum.
+## Full release build: clean, checks, style, tests, build, SBOM audit, govulncheck, CodeQL, bundle with SBOMs, sign, and checksum.
 .PHONY: release
-release: release-check clean all sbom-audit codeql-analyze security-gate release-bundle virus-scan release-sign release-checksum
+release: release-check clean all sbom-audit govulncheck codeql-analyze security-gate release-bundle virus-scan release-sign release-checksum
 	@echo ""
 	@echo "=========================================="
 	@echo "Release build complete!"
@@ -575,6 +575,17 @@ endif
 ## Generate SBOMs and scan for vulnerabilities
 .PHONY: sbom-audit
 sbom-audit: sbom sbom-scan
+
+GOVULNCHECK_VERSION ?= v1.9.0
+
+## Scan Go code for known vulnerabilities it actually calls (fails on any finding)
+.PHONY: govulncheck
+govulncheck: apply
+ifneq ($(HAS_SERVER),)
+	@echo "Running govulncheck..."
+	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	GOTOOLCHAIN=$$($(GO) env GOVERSION) $(GOBIN)/govulncheck ./...
+endif
 
 # ====================================================================================
 # CodeQL Security Analysis

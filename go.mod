@@ -1,6 +1,6 @@
 module github.com/MattermostFederal/mattermost-plugin-channel-requests
 
-go 1.26.7
+go 1.26.9
 
 require (
 	github.com/mattermost/mattermost/server/public v0.4.4

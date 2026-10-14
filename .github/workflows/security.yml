@@ -5,6 +5,7 @@
 # Build is gated:
 #   - Grype: --fail-on high blocks HIGH/CRITICAL CVEs
 #   - CodeQL: make security-gate fails on error-level SARIF findings
+#   - govulncheck: fails on known vulnerabilities in code the plugin calls
 #   - SARIF upload to Code Scanning: required, no bypass
 #
 # REQUIREMENT: GitHub Code Scanning must be enabled on the repo.
@@ -160,3 +161,21 @@ jobs:
           name: codeql-sarif
           path: codeql-results/
           retention-days: 30
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Same check `make release` gates on, so a finding shows up on the PR
+      # rather than at release time.
+      - name: Run govulncheck
+        run: make govulncheck
