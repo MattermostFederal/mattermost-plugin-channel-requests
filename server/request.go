@@ -102,6 +102,24 @@ func promoteSoleMember(memberIDs, adminIDs []string) (members, admins []string) 
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
 
+// markdownSpecial matches characters that start Markdown syntax in a
+// Mattermost post: emphasis, code, links, images, headings, quotes, tables,
+// strikethrough, lists, HTML-ish brackets and the backslash itself. "." is
+// included so bare domains aren't auto-linked. ":" is deliberately not: the
+// emoticon parser ignores the escape, so "\:/" renders as a stray backslash
+// and an emoji. escapeMarkdown breaks up bare URLs instead.
+var markdownSpecial = regexp.MustCompile("([\\\\`*_\\[\\]()#~>|!<{}+\\-.])")
+
+// escapeMarkdown makes requester-supplied text (display names, purposes,
+// team names) render as typed in bot posts and approval cards: Markdown
+// characters are backslash-escaped, a zero-width space inside "://" keeps
+// bare URLs as text, and one after each @ keeps mentions as text.
+func escapeMarkdown(s string) string {
+	s = markdownSpecial.ReplaceAllString(s, `\$1`)
+	s = strings.ReplaceAll(s, "://", ":\u200b//")
+	return strings.ReplaceAll(s, "@", "@\u200b")
+}
+
 // slugify converts a free-form string into a valid channel URL name.
 func slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -168,8 +186,18 @@ func resolvePrefixedName(prefixes []channelPrefix, in requestInput) (string, err
 	}
 
 	name := entry.Prefix + suffix
-	if !model.IsValidChannelIdentifier(name) {
+	// IsValidChannelIdentifier doesn't check the upper bound, and a name the
+	// database can't hold would only fail at approval time.
+	if len(name) > model.ChannelNameMaxLength || !model.IsValidChannelIdentifier(name) {
 		return "", errors.Errorf("%q is not a valid channel URL name; combined prefix + suffix must be 2-64 lowercase letters, numbers, or hyphens", name)
+	}
+	// With nested prefixes ("team-" and "team-ops-"), require the most
+	// specific one so its suffix rule applies.
+	for i := range prefixes {
+		other := prefixes[i].Prefix
+		if len(other) > len(entry.Prefix) && strings.HasPrefix(name, other) {
+			return "", errors.Errorf("%q starts with the prefix %q; pick that prefix instead", name, other)
+		}
 	}
 	return name, nil
 }
@@ -195,6 +223,12 @@ func validateRequestInput(in requestInput) error {
 	if len(in.MemberIDs) > maxMembersPerList || len(in.AdminMemberIDs) > maxMembersPerList {
 		return errors.Errorf("too many members: at most %d members and %d channel admins per request", maxMembersPerList, maxMembersPerList)
 	}
+	// The dialog submits raw IDs; reject anything that isn't one.
+	for _, id := range append(append([]string{}, in.MemberIDs...), in.AdminMemberIDs...) {
+		if !model.IsValidId(id) {
+			return errors.New("members and channel admins must be valid users")
+		}
+	}
 	if strings.TrimSpace(in.TeamID) == "" {
 		return errors.New("a team is required")
 	}
@@ -213,7 +247,8 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 
 	requester, appErr := p.API.GetUser(in.RequesterID)
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load requesting user")
+		p.API.LogError("failed to load requesting user", "user_id", in.RequesterID, "error", appErr.Error())
+		return "", errors.New("could not load your account; try again")
 	}
 
 	// System Admins can create channels in any team (they administer all
@@ -233,6 +268,10 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	if in.ChannelType != channelTypeOpen && in.ChannelType != channelTypePrivate {
 		in.ChannelType = channelTypeOpen
 	}
+	// Display names are single-line.
+	in.DisplayName = strings.Join(strings.Fields(in.DisplayName), " ")
+	in.MemberIDs = dedupeNonEmpty(in.MemberIDs)
+	in.AdminMemberIDs = dedupeNonEmpty(in.AdminMemberIDs)
 
 	// Guard against orphaned channels: when the requester adds exactly one
 	// member and names no Channel Admins, that lone member is promoted to
@@ -271,19 +310,21 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		// Audit the bypass-path creations too — these are the
 		// highest-privilege (System Admin / delegated auto-approve)
 		// creations and the ones an audit trail most needs to record.
-		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin or auto-approve)",
-			requester.Username, req.DisplayName, channel.Name))
+		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel \"%s\" (~%s) directly (System Admin or auto-approve)",
+			requester.Username, escapeMarkdown(req.DisplayName), channel.Name))
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
 	if err := p.storeRequest(req); err != nil {
-		return "", err
+		p.API.LogError("failed to store channel request", "error", err.Error())
+		return "", errors.New("could not save your request; try again")
 	}
 
 	if err := p.postApprovalRequest(req, requester); err != nil {
 		// Roll back the stored request so it isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
-		return "", err
+		p.API.LogError("failed to post channel request for approval", "error", err.Error())
+		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
@@ -444,6 +485,28 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 	)
 }
 
+// approvalChannel returns the configured approval channel, or an error when
+// it isn't configured, no longer exists, is archived, or isn't in the
+// configured approval team. Both settings hold IDs (see configuration).
+func (p *Plugin) approvalChannel(config *configuration) (*model.Channel, error) {
+	teamID := strings.TrimSpace(config.ApprovalTeam)
+	channelID := strings.TrimSpace(config.ApprovalChannel)
+	if teamID == "" || channelID == "" {
+		return nil, errors.New("approval channel is not configured")
+	}
+	channel, appErr := p.API.GetChannel(channelID)
+	if appErr != nil {
+		return nil, errors.Wrap(appErr, "failed to load approval channel")
+	}
+	if channel.DeleteAt != 0 {
+		return nil, errors.New("approval channel is archived")
+	}
+	if channel.TeamId != teamID {
+		return nil, errors.New("approval channel is not in the approval team")
+	}
+	return channel, nil
+}
+
 // postApprovalAttachment delivers an approval attachment to the reviewers. It prefers the configured
 // approval channel, but when that isn't configured (or can't be found) it falls back to DMing every
 // System Admin so requests are never silently dropped. Shared by the channel-creation and
@@ -451,9 +514,9 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) error {
 	config := p.getConfiguration()
 
-	if strings.TrimSpace(config.ApprovalTeam) != "" && strings.TrimSpace(config.ApprovalChannel) != "" {
-		channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
-		if appErr == nil {
+	if strings.TrimSpace(config.ApprovalTeam) != "" || strings.TrimSpace(config.ApprovalChannel) != "" {
+		channel, err := p.approvalChannel(config)
+		if err == nil {
 			post := &model.Post{
 				UserId:    p.botUserID,
 				ChannelId: channel.Id,
@@ -465,7 +528,7 @@ func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, hea
 			}
 			return nil
 		}
-		p.API.LogWarn("configured approval channel not found; falling back to System Admins", "team", config.ApprovalTeam, "channel", config.ApprovalChannel, "error", appErr.Error())
+		p.API.LogWarn("configured approval channel unavailable; falling back to System Admins", "team_id", config.ApprovalTeam, "channel_id", config.ApprovalChannel, "error", err.Error())
 	}
 
 	return p.postApprovalToSystemAdmins(attachment)
@@ -511,14 +574,17 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		visibility = "Private"
 	}
 
+	// Name the target team explicitly: a ~name link resolves in the
+	// viewer's team, which may not be where the channel will be created.
 	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
+		{Title: "Team", Value: p.teamLabel(req.TeamID), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
-		{Title: "Channel name", Value: req.DisplayName, Short: true},
-		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
+		{Title: "Channel name", Value: escapeMarkdown(req.DisplayName), Short: true},
+		{Title: "URL", Value: req.Name, Short: true},
 	}
 	if req.Purpose != "" {
-		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
+		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: escapeMarkdown(req.Purpose), Short: false})
 	}
 	if len(req.MemberIDs) > 0 {
 		fields = append(fields, &model.MessageAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
@@ -563,6 +629,16 @@ func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction 
 			},
 		},
 	}
+}
+
+// teamLabel renders a team for approval cards as "Display Name (slug)",
+// escaped. Falls back to the raw ID if the team can't be loaded.
+func (p *Plugin) teamLabel(teamID string) string {
+	team, appErr := p.API.GetTeam(teamID)
+	if appErr != nil || team == nil {
+		return teamID
+	}
+	return escapeMarkdown(fmt.Sprintf("%s (%s)", team.DisplayName, team.Name))
 }
 
 // mentionList renders a list of user IDs as @mentions for display.

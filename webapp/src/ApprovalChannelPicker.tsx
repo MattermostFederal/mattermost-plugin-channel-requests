@@ -2,7 +2,7 @@ import manifest from 'manifest';
 import React, {useEffect, useRef, useState} from 'react';
 
 // ApprovalChannelPicker: TWO coordinated custom admin-console settings
-// that replace the plain text slug fields for ApprovalTeam +
+// that store the IDs (never names) for ApprovalTeam +
 // ApprovalChannel. The team picker is a dropdown of teams the current
 // admin is a member of. The channel picker is a dropdown of channels
 // in whichever team is currently selected — updates reactively when
@@ -100,8 +100,8 @@ async function fetchChannels(teamID: string): Promise<Channel[]> {
     }
 }
 
-// TeamPicker: dropdown of teams. Writes the team NAME (slug) to
-// ApprovalTeam, matching what the plugin's server-side code expects.
+// TeamPicker: dropdown of teams. Writes the team ID to ApprovalTeam, so
+// renaming the team doesn't change where requests go.
 export const TeamPicker: React.FC<Props> = (props) => {
     const {id, value, disabled, onChange, setSaveNeeded} = props;
     const [teams, setTeams] = useState<Team[]>([]);
@@ -129,7 +129,7 @@ export const TeamPicker: React.FC<Props> = (props) => {
                 {teams.map((t) => (
                     <option
                         key={t.id}
-                        value={t.name}
+                        value={t.id}
                     >
                         {`${t.display_name || t.name}  (/${t.name})`}
                     </option>
@@ -141,15 +141,15 @@ export const TeamPicker: React.FC<Props> = (props) => {
 };
 
 // ChannelPicker: dropdown of channels in the currently-selected team.
-// Reads sibling ApprovalTeam via currentState so it updates the
-// moment the admin picks a team, without a page reload.
+// Writes the channel ID to ApprovalChannel. Reads sibling ApprovalTeam (a
+// team ID) via currentState so it updates the moment the admin picks a
+// team, without a page reload.
 export const ChannelPicker: React.FC<Props> = (props) => {
     const {id, value, disabled, onChange, setSaveNeeded} = props;
-    const teamSlug = readSiblingSetting(props, 'ApprovalTeam');
+    const teamID = readSiblingSetting(props, 'ApprovalTeam');
 
     const [channels, setChannels] = useState<Channel[]>([]);
     const [loading, setLoading] = useState(false);
-    const [teamID, setTeamID] = useState<string>('');
 
     // Read the latest value/onChange from the effect without making them
     // effect dependencies (which would re-run the fetch on every keystroke
@@ -161,20 +161,18 @@ export const ChannelPicker: React.FC<Props> = (props) => {
     onChangeRef.current = onChange;
     const prevTeamRef = useRef<string | null>(null);
 
-    // Resolve team slug -> team id, then fetch that team's channels.
-    // Cheapest path: fetch the full team list (we already do it for
-    // TeamPicker; the browser caches) and look up by name.
+    // Fetch the selected team's channels.
     useEffect(() => {
         // Guard against a slower earlier fetch resolving after a newer one
         // when the admin switches teams rapidly — a stale response must not
         // overwrite the current team's channels.
         let cancelled = false;
 
-        const isTeamChange = prevTeamRef.current !== null && prevTeamRef.current !== teamSlug;
-        prevTeamRef.current = teamSlug;
+        const isTeamChange = prevTeamRef.current !== null && prevTeamRef.current !== teamID;
+        prevTeamRef.current = teamID;
 
         // When the admin switches teams, clear any previously-selected
-        // channel so a slug from the OLD team can't be saved against the
+        // channel so a channel from the OLD team can't be saved against the
         // new one. Only on a genuine change — never clobber the saved
         // value on initial mount.
         const clearStaleChannel = () => {
@@ -184,36 +182,22 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             }
         };
 
-        if (!teamSlug) {
+        if (!teamID) {
             setChannels([]);
-            setTeamID('');
             clearStaleChannel();
             return undefined;
         }
         setLoading(true);
-        fetchTeams().then(async (teams) => {
+        fetchChannels(teamID).then((list) => {
             if (cancelled) {
                 return;
             }
-            const match = teams.find((t) => t.name === teamSlug);
-            if (!match) {
-                setChannels([]);
-                setTeamID('');
-                setLoading(false);
-                clearStaleChannel();
-                return;
-            }
-            const list = await fetchChannels(match.id);
-            if (cancelled) {
-                return;
-            }
-            setTeamID(match.id);
             setChannels(list);
             setLoading(false);
 
             // Clear the selection if the team changed and the old channel
             // isn't one of the new team's channels.
-            if (isTeamChange && valueRef.current && !list.some((c) => c.name === valueRef.current)) {
+            if (isTeamChange && valueRef.current && !list.some((c) => c.id === valueRef.current)) {
                 onChangeRef.current(id, '');
                 setSaveNeeded?.();
             }
@@ -222,14 +206,14 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [teamSlug]);
+    }, [teamID]);
 
     return (
         <div>
             <select
                 className='form-control'
                 value={value ?? ''}
-                disabled={disabled ?? (loading || !teamSlug)}
+                disabled={disabled ?? (loading || !teamID)}
                 onChange={(e) => {
                     onChange(id, e.target.value);
                     setSaveNeeded?.();
@@ -237,7 +221,7 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             >
                 <option value=''>
                     {(() => {
-                        if (!teamSlug) {
+                        if (!teamID) {
                             return '-- pick a team first --';
                         }
                         if (loading) {
@@ -252,7 +236,7 @@ export const ChannelPicker: React.FC<Props> = (props) => {
                 {channels.map((c) => (
                     <option
                         key={c.id}
-                        value={c.name}
+                        value={c.id}
                     >
                         {`${c.type === 'P' ? '🔒 ' : ''}${c.display_name || c.name}  (/${c.name})`}
                     </option>
@@ -260,7 +244,7 @@ export const ChannelPicker: React.FC<Props> = (props) => {
             </select>
             <small style={{opacity: 0.6}}>
                 {'The channel where new channel requests get posted for approval. '}
-                {teamID ? `Scoped to team ID ${teamID.slice(0, 8)}...` : 'Pick a team above first.'}
+                {teamID ? '' : 'Pick a team above first.'}
             </small>
         </div>
     );
