@@ -347,10 +347,7 @@ test.describe('MemberPicker', () => {
             expect(changes).toEqual(['bob']);
         });
 
-        // Known gap: Backspace is only handled while the dropdown lists
-        // matches, and an empty query never has matches.
         test('Backspace on an empty input removes the last user', async ({mount, page}) => {
-            test.fail();
             const changes: string[] = [];
             await mount(<MemberPicker
                 value='alice, bob'
@@ -360,6 +357,20 @@ test.describe('MemberPicker', () => {
             await input(page).press('Backspace');
             await expect(pill(page, 'bob')).toBeHidden();
             expect(changes).toEqual(['alice']);
+        });
+
+        test('Backspace while typing edits the query only', async ({mount, page}) => {
+            await routeUsers(page, []);
+            const changes: string[] = [];
+            await mount(<MemberPicker
+                value='alice'
+                onChange={(v) => changes.push(v)}
+                        />);
+            await input(page).fill('bo');
+            await input(page).press('Backspace');
+            await expect(input(page)).toHaveValue('b');
+            await expect(pill(page, 'alice')).toBeVisible();
+            expect(changes).toEqual([]);
         });
     });
 });
