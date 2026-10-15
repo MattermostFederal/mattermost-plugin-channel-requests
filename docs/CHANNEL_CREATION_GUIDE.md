@@ -65,8 +65,10 @@ message when an approver responds.
 
 ## Approving requests
 
-Approvers (System Admins, plus Team Admins if your admin enabled it) receive each
-request in the **approval channel** with **Approve** and **Deny** buttons.
+Approvers (System Admins, plus Team Admins of the approval team if your admin
+enabled it) receive each request in the **approval channel** with **Approve**
+and **Deny** buttons. Only a System Admin can approve a request they made
+themselves. The card names the team the channel will be created in.
 
 ![A channel creation request card with Approve/Deny buttons](images/mattermost-creation-approval-card.png)
 
@@ -93,7 +95,7 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 | **Approval team** | The team whose channel receives requests. Required. |
 | **Approval channel** | The channel where Approve/Deny cards are posted. Required. |
 | **Channel domain prefixes** | The prefix list requesters pick from (see below). Leave empty for free-form URLs. |
-| **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny, not just System Admins. |
+| **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Auto-approve requests from these users** | Requests from these users skip approval. |
 | **Audit channel ID** | Optional. Posts an audit line for every approve/deny. |
 
