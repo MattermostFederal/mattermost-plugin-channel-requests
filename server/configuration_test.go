@@ -61,8 +61,17 @@ func TestMigrateLegacySettings_ConvertsNamesToIDs(t *testing.T) {
 	api.On("SavePluginConfig", mock.Anything).Run(func(args mock.Arguments) {
 		saved = args.Get(0).(map[string]any)
 	}).Return(nil)
+	// The migrated values must take effect immediately: Mattermost doesn't
+	// send OnConfigurationChange to a plugin that is still activating.
+	api.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
+		dest := args.Get(0).(*configuration)
+		dest.ApprovalTeam, _ = saved["approvalteam"].(string)
+		dest.AutoApproveUserIDs, _ = saved["autoapproveuserids"].(string)
+	}).Return(nil)
 
 	require.NoError(t, p.migrateLegacySettings())
+	require.True(t, p.getConfiguration().AutoApproveContains(aliceID), "migrated auto-approve list is live without a restart")
+	require.Equal(t, teamID, p.getConfiguration().ApprovalTeam)
 
 	require.Equal(t, teamID, saved["approvalteam"])
 	require.Equal(t, channelID, saved["approvalchannel"])

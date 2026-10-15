@@ -263,7 +263,10 @@ func (p *Plugin) migrateLegacySettings() error {
 	if appErr := p.API.SavePluginConfig(cfg); appErr != nil {
 		return errors.Wrap(appErr, "failed to save migrated settings")
 	}
-	return nil
+	// Mattermost only delivers OnConfigurationChange to active plugins, and
+	// this runs from OnActivate, so the save above doesn't reach us. Reload
+	// explicitly or the old name values stay in effect until the next save.
+	return p.OnConfigurationChange()
 }
 
 // isTeamID reports whether s is the ID of an existing team.
