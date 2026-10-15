@@ -450,6 +450,17 @@ func TestValidateRequestInput(t *testing.T) {
 			in:      requestInput{DisplayName: "Marketing", TeamID: "  "},
 			wantErr: "a team is required",
 		},
+		{
+			// The dialog path submits raw strings; junk must not be stored.
+			name:    "member that is not a user ID",
+			in:      requestInput{DisplayName: "Marketing", TeamID: "team1", MemberIDs: []string{strings.Repeat("A", 100000)}},
+			wantErr: "valid users",
+		},
+		{
+			name:    "admin that is not a user ID",
+			in:      requestInput{DisplayName: "Marketing", TeamID: "team1", AdminMemberIDs: []string{"alice"}},
+			wantErr: "valid users",
+		},
 	}
 
 	for _, tc := range cases {
@@ -554,4 +565,102 @@ func TestResolveUsernameList_UnknownUserErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, ids)
 	require.Contains(t, err.Error(), "ghost")
+}
+
+func TestResolvePrefixedName_RejectsNamesOverMaxLength(t *testing.T) {
+	prefixes := []channelPrefix{{Prefix: "team-"}}
+
+	// slugify caps the suffix at 64, but prefix + suffix can still exceed
+	// the 64-char column and would only fail when an approver clicks.
+	_, err := resolvePrefixedName(prefixes, requestInput{Prefix: "team-", DisplayName: strings.Repeat("a", 64)})
+	require.Error(t, err)
+
+	name, err := resolvePrefixedName(prefixes, requestInput{Prefix: "team-", Name: strings.Repeat("a", model.ChannelNameMaxLength-len("team-"))})
+	require.NoError(t, err)
+	require.Len(t, name, model.ChannelNameMaxLength)
+}
+
+func TestResolvePrefixedName_RequiresMostSpecificPrefix(t *testing.T) {
+	noopLog := func(string, ...any) {}
+	prefixes := parsePrefixList("team-|Teams|32\nteam-ops-|Ops teams|6", noopLog)
+
+	// "team-" + "ops-anything-very-long" would dodge team-ops-'s 6-char rule.
+	_, err := resolvePrefixedName(prefixes, requestInput{Prefix: "team-", Name: "ops-anything-very-long"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `"team-ops-"`)
+
+	name, err := resolvePrefixedName(prefixes, requestInput{Prefix: "team-ops-", Name: "alpha"})
+	require.NoError(t, err)
+	require.Equal(t, "team-ops-alpha", name)
+}
+
+func TestEscapeMarkdown(t *testing.T) {
+	got := escapeMarkdown("x` @all [Approve](https://evil.example/a) ![](https://evil.example/p.png)")
+
+	require.NotContains(t, got, "@all")
+	require.NotContains(t, got, "](")
+	require.NotContains(t, got, "https://")
+	require.Contains(t, got, "\\`")
+	require.Equal(t, "Marketing Team", escapeMarkdown("Marketing Team"))
+}
+
+func TestApprovalChannel_ResolvedByIDAndTeam(t *testing.T) {
+	cases := []struct {
+		name    string
+		channel *model.Channel
+		wantErr bool
+	}{
+		{name: "in approval team", channel: &model.Channel{Id: "appch", TeamId: "appteam"}},
+		{name: "in another team", channel: &model.Channel{Id: "appch", TeamId: "elsewhere"}, wantErr: true},
+		{name: "archived", channel: &model.Channel{Id: "appch", TeamId: "appteam", DeleteAt: 1}, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			api.On("GetChannel", "appch").Return(tc.channel, nil)
+
+			ch, err := p.approvalChannel(&configuration{ApprovalTeam: "appteam", ApprovalChannel: "appch"})
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "appch", ch.Id)
+			// Never resolved by name.
+			api.AssertNotCalled(t, "GetChannelByNameForTeamName", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestApprovalAttachment_EscapesRequesterTextAndNamesTeam(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "ops", DisplayName: "Operations"}, nil)
+
+	req := &channelRequest{
+		ID:          "req1",
+		TeamID:      "team1",
+		Name:        "team-x",
+		DisplayName: "Ops ![](https://evil.example/px.png)",
+		Purpose:     "**✅ Approved by @sysadmin.** [Review details](https://evil.example/sso)\n# PRE-APPROVED",
+		ChannelType: channelTypeOpen,
+	}
+	att := p.approvalAttachment(req, &model.User{Username: "req"})
+
+	values := map[string]string{}
+	for _, f := range att.Fields {
+		values[f.Title], _ = f.Value.(string)
+	}
+	require.Contains(t, values["Team"], "Operations")
+	for _, title := range []string{"Channel name", "Purpose"} {
+		require.NotContains(t, values[title], "](", title)
+		require.NotContains(t, values[title], "@sysadmin", title)
+		require.NotContains(t, values[title], "\n#", title)
+	}
 }

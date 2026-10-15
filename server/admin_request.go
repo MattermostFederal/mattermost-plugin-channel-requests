@@ -26,8 +26,9 @@ type adminRequest struct {
 	RequesterID string `json:"requester_id"`
 	ChannelID   string `json:"channel_id"`
 	// NomineeIDs are the users the requester wants promoted to Channel
-	// Admin. On approval each is added to the channel (if not already a
-	// member) and granted the channel_admin scheme role.
+	// Admin. They must already be channel members; on approval, those who
+	// still are get the channel_admin scheme role. Nobody is added to the
+	// channel by this flow.
 	NomineeIDs []string `json:"nominee_ids"`
 }
 
@@ -45,14 +46,10 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		return "", errors.New("pick at least one person to make a Channel Admin")
 	}
 
-	channel, appErr := p.API.GetChannel(channelID)
-	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load channel")
-	}
-
 	requester, appErr := p.API.GetUser(requesterID)
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load requesting user")
+		p.API.LogError("failed to load requesting user", "user_id", requesterID, "error", appErr.Error())
+		return "", errors.New("could not load your account; try again")
 	}
 
 	// The requester must belong to the channel they're nominating admins for.
@@ -61,9 +58,32 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	// membership on the server. System Admins manage every channel and are
 	// exempt. GetChannelMember returns an error for non-members (channel
 	// memberships are hard-deleted on leave, so no soft-delete check needed).
+	// Membership is checked before the channel is loaded, and both failures
+	// get the same message, so the reply doesn't reveal whether a channel ID
+	// the caller can't see exists.
+	const noChannelMsg = "channel not found, or you are not a member of it"
 	if !requester.IsSystemAdmin() {
-		if _, appErr := p.API.GetChannelMember(channelID, requesterID); appErr != nil {
-			return "", errors.New("you must be a member of the channel to request Channel Admins for it")
+		if _, appErr = p.API.GetChannelMember(channelID, requesterID); appErr != nil {
+			return "", errors.New(noChannelMsg)
+		}
+	}
+	channel, appErr := p.API.GetChannel(channelID)
+	if appErr != nil || channel == nil {
+		return "", errors.New(noChannelMsg)
+	}
+	if channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate {
+		return "", errors.New("Channel Admins can only be requested for public or private channels")
+	}
+	if channel.DeleteAt != 0 {
+		return "", errors.New("that channel is archived")
+	}
+
+	// Nominees must already be in the channel. Promoting someone who isn't
+	// would add them to it, turning a Channel Admin request into a way to
+	// get people into a private channel.
+	for _, id := range nominees {
+		if _, appErr = p.API.GetChannelMember(channelID, id); appErr != nil {
+			return "", errors.New("everyone you nominate must already be a member of the channel")
 		}
 	}
 
@@ -79,7 +99,7 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	// Bypass approval for System Admins and delegated managers on the
 	// auto-approve list, mirroring the channel-creation flow.
 	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
-		p.promoteChannelAdmins(req)
+		req.NomineeIDs = p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, requester)
 		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
 			requester.Username, p.mentionList(req.NomineeIDs), channel.Name))
@@ -87,38 +107,43 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	}
 
 	if err := p.storeAdminRequest(req); err != nil {
-		return "", err
+		p.API.LogError("failed to store Channel Admin request", "error", err.Error())
+		return "", errors.New("could not save your request; try again")
 	}
 
 	if err := p.postAdminApprovalRequest(req, requester, channel); err != nil {
 		// Roll back so the stored request isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
-		return "", err
+		p.API.LogError("failed to post Channel Admin request for approval", "error", err.Error())
+		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 
 	return "Your Channel Admin request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
 
-// promoteChannelAdmins adds each nominee to the channel (a no-op for existing
-// members) and grants them the channel_admin role. Per-user failures are
-// logged but don't abort the others — a partial promotion is better than
-// none.
-func (p *Plugin) promoteChannelAdmins(req *adminRequest) {
+// promoteChannelAdmins grants the channel_admin role to each nominee who is
+// still a member of the channel and returns the IDs actually promoted.
+// Membership is re-checked because a request can sit pending while people
+// leave or are removed; nobody is added to the channel. Per-user failures
+// are logged but don't abort the others — a partial promotion is better than
+// none, and callers report only who was promoted.
+func (p *Plugin) promoteChannelAdmins(req *adminRequest) []string {
+	promoted := make([]string, 0, len(req.NomineeIDs))
 	for _, userID := range req.NomineeIDs {
 		if userID == "" {
 			continue
 		}
-		// Ensure membership first — a user can't be a Channel Admin without
-		// being in the channel. AddChannelMember is idempotent for existing
-		// members; a failure here is logged but we still attempt the
-		// promotion in case they're already a member.
-		if _, appErr := p.API.AddChannelMember(req.ChannelID, userID); appErr != nil {
-			p.API.LogWarn("failed to add nominee to channel", "channel_id", req.ChannelID, "user_id", userID, "error", appErr.Error())
+		if _, appErr := p.API.GetChannelMember(req.ChannelID, userID); appErr != nil {
+			p.API.LogWarn("skipping nominee who is not a channel member", "channel_id", req.ChannelID, "user_id", userID)
+			continue
 		}
 		if _, appErr := p.API.UpdateChannelMemberRoles(req.ChannelID, userID, channelAdminRoleString); appErr != nil {
 			p.API.LogWarn("failed to promote nominee to channel admin", "channel_id", req.ChannelID, "user_id", userID, "error", appErr.Error())
+			continue
 		}
+		promoted = append(promoted, userID)
 	}
+	return promoted
 }
 
 // postAdminPromotionMessage posts a bot message in the channel announcing the
@@ -249,7 +274,8 @@ func (p *Plugin) adminApproverIDs(teamID string) []string {
 func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.User, channel *model.Channel) *model.MessageAttachment {
 	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
-		{Title: "Channel", Value: fmt.Sprintf("~%s", channel.Name), Short: true},
+		{Title: "Team", Value: p.teamLabel(channel.TeamId), Short: true},
+		{Title: "Channel", Value: escapeMarkdown(fmt.Sprintf("%s (%s)", channel.DisplayName, channel.Name)), Short: true},
 		{Title: "Proposed Channel Admins", Value: p.mentionList(req.NomineeIDs), Short: false},
 	}
 

@@ -26,13 +26,13 @@
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
                 "type": "custom",
-                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel."
+                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel. Saved as the team ID, so renaming the team doesn't change where requests go."
             },
             {
                 "key": "ApprovalChannel",
                 "display_name": "Approval channel",
                 "type": "custom",
-                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval."
+                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval. Saved as the channel ID."
             },
             {
                 "key": "ChannelNamePrefixes",
@@ -44,13 +44,13 @@
                 "key": "AllowTeamAdminApprovers",
                 "display_name": "Team Admins can approve requests",
                 "type": "bool",
-                "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
+                "help_text": "When enabled, Team Admins of the approval team can approve or deny channel-creation requests in addition to System Admins. Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team, whatever this is set to. Nobody but a System Admin can approve their own request."
             },
             {
                 "key": "AutoApproveUserIDs",
                 "display_name": "Auto-approve requests from these users",
                 "type": "custom",
-                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
+                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers. Saved as user IDs, so a renamed account can't be taken over by someone else."
             },
             {
                 "key": "AuditChannelID",

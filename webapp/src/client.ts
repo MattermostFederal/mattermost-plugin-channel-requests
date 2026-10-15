@@ -56,7 +56,7 @@ export async function fetchPrefixes(): Promise<ChannelPrefix[]> {
 
 // getCSRFToken reads the CSRF token Mattermost sets as a cookie, required for authenticated
 // state-changing requests to plugin endpoints.
-function getCSRFToken(): string {
+export function getCSRFToken(): string {
     const match = (typeof document === 'undefined' ? '' : document.cookie).match(/(?:^|;\s*)MMCSRF=([^;]+)/);
     return match ? match[1] : '';
 }
@@ -111,4 +111,53 @@ export async function submitAdminRequest(payload: AdminRequestPayload): Promise<
     }
 
     return body;
+}
+
+// UserSummary is the subset of a Mattermost user the pickers display.
+export type UserSummary = {
+    id: string;
+    username: string;
+    nickname?: string;
+    first_name?: string;
+    last_name?: string;
+};
+
+// fetchUsersByIDs resolves user IDs to users via core's /users/ids, which
+// applies the caller's own view permissions. Unknown IDs are simply absent
+// from the result.
+export async function fetchUsersByIDs(ids: string[]): Promise<UserSummary[]> {
+    if (ids.length === 0) {
+        return [];
+    }
+    const response = await fetch('/api/v4/users/ids', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(ids),
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to load users (${response.status})`);
+    }
+    const body = await response.json();
+    return Array.isArray(body) ? body : [];
+}
+
+// autocompleteUsers searches all users via core's /users/autocomplete, which
+// applies the caller's own view restrictions (unlike the plugin's
+// team-scoped endpoint, which needs a team the admin console doesn't have).
+export async function autocompleteUsers(term: string): Promise<UserSummary[]> {
+    const params = new URLSearchParams({name: term, limit: '20'});
+    const response = await fetch(`/api/v4/users/autocomplete?${params.toString()}`, {
+        credentials: 'same-origin',
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    });
+    if (!response.ok) {
+        throw new Error(`User search failed (${response.status})`);
+    }
+    const body = await response.json();
+    return Array.isArray(body?.users) ? body.users : [];
 }
