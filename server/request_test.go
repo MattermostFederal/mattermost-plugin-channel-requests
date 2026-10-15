@@ -600,6 +600,9 @@ func TestEscapeMarkdown(t *testing.T) {
 	require.NotContains(t, got, "@all")
 	require.NotContains(t, got, "](")
 	require.NotContains(t, got, "https://")
+	// ":" stays unescaped: the emoticon parser ignores the backslash, so
+	// "\:/" rendered as a stray backslash and a :/ emoji.
+	require.NotContains(t, got, `\:`)
 	require.Contains(t, got, "\\`")
 	require.Equal(t, "Marketing Team", escapeMarkdown("Marketing Team"))
 }

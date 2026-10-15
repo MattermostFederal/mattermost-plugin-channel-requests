@@ -104,18 +104,21 @@ var invalidNameChars = regexp.MustCompile(`[^a-z0-9]+`)
 
 // markdownSpecial matches characters that start Markdown syntax in a
 // Mattermost post: emphasis, code, links, images, headings, quotes, tables,
-// strikethrough, lists, HTML-ish brackets and the backslash itself. "." and
-// ":" are included so bare URLs and domains aren't auto-linked.
-var markdownSpecial = regexp.MustCompile("([\\\\`*_\\[\\]()#~>|!<{}+\\-.:])")
+// strikethrough, lists, HTML-ish brackets and the backslash itself. "." is
+// included so bare domains aren't auto-linked. ":" is deliberately not: the
+// emoticon parser ignores the escape, so "\:/" renders as a stray backslash
+// and an emoji. escapeMarkdown breaks up bare URLs instead.
+var markdownSpecial = regexp.MustCompile("([\\\\`*_\\[\\]()#~>|!<{}+\\-.])")
 
 // escapeMarkdown makes requester-supplied text (display names, purposes,
 // team names) render literally in bot posts and approval cards. Markdown
 // characters are backslash-escaped so the text can't add links, images,
-// headings or a fake "Approved" line, and a zero-width space after each @
-// stops it from triggering @all/@channel/@here or user mentions from the
-// bot account.
+// headings or a fake "Approved" line. A zero-width space inside "://" stops
+// bare URLs from being auto-linked, and one after each @ stops the text from
+// triggering @all/@channel/@here or user mentions from the bot account.
 func escapeMarkdown(s string) string {
 	s = markdownSpecial.ReplaceAllString(s, `\$1`)
+	s = strings.ReplaceAll(s, "://", ":\u200b//")
 	return strings.ReplaceAll(s, "@", "@\u200b")
 }
 
