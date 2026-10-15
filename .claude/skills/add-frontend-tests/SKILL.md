@@ -21,20 +21,19 @@ This skill uses a plan-then-execute workflow:
 
 ## Step 1: Measure Current Coverage (in plan mode)
 
-`make coverage-frontend` calls three npm scripts, `test:coverage`, `test:pw-ct-coverage` and `test:coverage-merged`, that **do not exist yet** in `webapp/package.json`, so the target fails today. Do not report coverage numbers you did not measure.
-
-Pick one, and say which in the plan:
-
-1. **Add the coverage scripts** (unit coverage with C8, component coverage with V8 browser coverage, and a merged report) as the first task of the plan, then measure. This changes `package.json` and may add dev dependencies, so it needs the user's approval like any other task.
-2. **Measure by inventory** when the user does not want tooling changes: list every module under `webapp/src/` and whether it has a `.spec.ts` or `.pw.tsx` beside it, and read the existing tests to see which branches they reach. Treat a module with no test as 0%.
+Run the full coverage suite from the repo root:
 
 ```bash
-cd webapp
-find src -name '*.ts' -o -name '*.tsx' | grep -v -e '\.spec\.ts$' -e '\.pw\.tsx$' -e '/types/' -e 'manifest.ts$' | sort
-find src -name '*.spec.ts' -o -name '*.pw.tsx' | sort
+make coverage-frontend
 ```
 
-Today only `src/manifest.spec.ts` and `src/HeaderIcon.pw.tsx` exist, so nearly every module starts in Tier 1.
+It runs three npm scripts in `webapp/package.json`:
+
+- `test:coverage`: unit tests (`*.spec.ts`) under C8, configured by `c8-unit.json`.
+- `test:pw-ct-coverage`: component tests (`*.pw.tsx`). Browser V8 coverage is collected by the fixture in `playwright/ct-coverage.ts`, so every component test must import `test` and `expect` from there, not from `@playwright/experimental-ct-react`, or its coverage is lost.
+- `test:coverage-merged`: merges both, configured by `c8-merged.json`. It counts every source file under `src/`, including ones no test loads. **Use this report for the gates below.**
+
+Component coverage is skipped when `CI` is set, so read the merged number from a local run.
 
 ### Coverage Threshold Check
 

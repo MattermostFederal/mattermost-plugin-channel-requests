@@ -1,0 +1,12 @@
+{
+    "all": true,
+    "excludeAfterRemap": true,
+    "include": ["src/**/*.{ts,tsx}"],
+    "exclude": [
+        "src/**/*.spec.ts",
+        "src/**/*.pw.tsx",
+        "src/types/**",
+        "src/manifest.ts"
+    ],
+    "reporter": ["text", "html"]
+}
