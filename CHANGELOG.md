@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.3.0...v0.3.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **build:** build Go tools with the module's toolchain ([#51](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/51)) ([0849591](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/08495910158c08779f53102de550f8c348e79a60))
+* **ci:** least-privilege secrets + correct SARIF ref on release call ([82c7f3a](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/82c7f3a3d9bb83cfeb54c816b54d2190ef29ac18))
+* **ci:** publish release assets via reusable workflow ([56dc238](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/56dc238e407cea57d4e6c8fee4e7a527e70f430e))
+* **ci:** publish release assets via reusable workflow ([0cc42d6](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/0cc42d6e5c1b3ba5ef82d658087ba63d25614080))
+* correct stale fork references (alertmanager/template leftovers) ([c302569](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c3025691b71e42b68bb1d49cd246355c131bf71b))
+* correct stale fork references (alertmanager/template leftovers) ([15cbe50](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/15cbe5017889485a80fd05ced2d72cc6b066595a))
+* **deps:** match the template's Go deps and Grype ignore ([c39aea7](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c39aea728597f24aa3546f8d5785b689542efe19))
+* **webapp:** pin @playwright/test to 1.62.1 to match experimental-ct-react ([#53](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/53)) ([9611c99](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/9611c99b7445748ecb74f422e2a2e64e280e554f))
+
+
+### Dependencies
+
+* **actions:** bump actions/download-artifact ([#56](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/56)) ([90ad88a](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/90ad88a4c7e7ca4de976c8a15b78294e51fed07a))
+* **actions:** bump the actions-minor-patch group across 1 directory with 7 updates ([#46](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/46)) ([ceb2f47](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/ceb2f476e57c884829044e074722221b90b7961a))
+* **actions:** bump the actions-minor-patch group with 4 updates ([60a63e3](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/60a63e3e40b06f09cf13d8aaf90a8d21d329d8bb))
+* **go:** bump indirect Go modules to clear high-severity Grype findings ([#50](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/50)) ([bc04c64](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/bc04c64c6e49294f6ec0e50b6a66db8653bf6079))
+* **go:** bump the go-minor-patch group across 1 directory with 2 updates ([#38](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/38)) ([59f2efc](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/59f2efcc6d33570f857d373455baa72c4698d490))
+* **npm:** bump the npm-minor-patch group across 1 directory with 13 updates ([#44](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/44)) ([0bd72be](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/0bd72be03d90d256b554f28388a4e0a22a20d21b))
+* **npm:** bump the npm-minor-patch group in /webapp with 3 updates ([c32c27d](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/c32c27dc655a593fc9095ccb8b4b407fe7d0dc02))
+* **npm:** bump the npm-minor-patch group in /webapp with 5 updates ([#54](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues/54)) ([f13f411](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/commit/f13f411f9a3498f68acabb808da198b8d1e513aa))
+
 ## [0.3.0](https://github.com/MattermostFederal/mattermost-plugin-channel-requests/compare/v0.2.1...v0.3.0) (2026-08-04)
 
 
