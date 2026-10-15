@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 )
 
@@ -38,13 +39,16 @@ type channelPrefix struct {
 // deserialized from the Mattermost server configuration in OnConfigurationChange.
 //
 // Field grouping (matches the System Console layout):
-//  1. Approval routing (team + channel slugs)
+//  1. Approval routing (team + channel IDs)
 //  2. Naming enforcement (structured prefix list — required)
 //  3. Approver policy (who can approve, auto-approve list)
 //  4. Notification preferences (DM + audit channel + welcome post)
 //  5. Rate limits
 type configuration struct {
 	// --- 1. Approval routing ---
+	// ApprovalTeam and ApprovalChannel hold IDs, not names, so renames
+	// don't change where requests go. Older versions stored names;
+	// migrateLegacySettings converts them once at activation.
 	ApprovalTeam    string
 	ApprovalChannel string
 
@@ -59,13 +63,9 @@ type configuration struct {
 	// --- 3. Approver policy ---
 	AllowTeamAdminApprovers bool
 
-	// AutoApproveUserIDs is the raw comma-separated USERNAMES the admin
-	// entered via the AutoApprovePicker. Parsed + resolved to user IDs
-	// in OnConfigurationChange and stored in autoApproveUserIDs.
-	//
-	// (Field kept named AutoApproveUserIDs for plugin.json setting-key
-	// stability. Value shape is usernames now — the picker resolves to
-	// IDs on the server side, since usernames are what admins recognize.)
+	// AutoApproveUserIDs is the comma-separated user IDs the admin picked
+	// in the AutoApprovePicker. Older versions stored usernames;
+	// migrateLegacySettings converts them once at activation.
 	AutoApproveUserIDs string
 
 	// --- 4. Audit ---
@@ -137,71 +137,138 @@ func (p *Plugin) OnConfigurationChange() error {
 	// activation — a typo in one line should not wedge the plugin.
 	configuration.prefixes = parsePrefixList(configuration.ChannelNamePrefixes, p.API.LogError)
 
-	// Parse the auto-approve list. The picker component serializes
-	// selected users as comma-separated USERNAMES (matching MemberPicker
-	// serialization). Resolve each to a user ID here so runtime
-	// AutoApproveContains checks are O(len(list)) string compares
-	// instead of hitting the API for every request.
-	configuration.autoApproveUserIDs = p.resolveAutoApproveList(configuration.AutoApproveUserIDs)
+	// Parse the auto-approve list. Only user IDs are accepted.
+	configuration.autoApproveUserIDs = parseAutoApproveList(configuration.AutoApproveUserIDs, p.API.LogWarn)
 
 	p.setConfiguration(configuration)
 
 	return nil
 }
 
-// resolveAutoApproveList parses the auto-approve setting (comma-
-// separated usernames or IDs) and resolves everything to MM user IDs.
-// Deduplicates. Skips unresolvable entries with a warn log so the
-// admin can spot typos in the plugin log.
-//
-// Accepts BOTH usernames (what the picker produces) AND raw 26-char
-// user IDs (for backward compat with anyone who typed IDs directly).
-func (p *Plugin) resolveAutoApproveList(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	// Split on any punctuation/whitespace so admins can paste in any
-	// reasonable format ("alice, bob", "alice bob", "alice\nbob").
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
+// splitSettingList splits a free-form list setting on commas,
+// semicolons and whitespace so admins can paste in any reasonable format
+// ("a, b", "a b", "a\nb").
+func splitSettingList(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
 	})
+}
 
+// parseAutoApproveList parses the auto-approve setting into a deduplicated
+// list of user IDs. Entries that aren't well-formed IDs are skipped with a
+// warning.
+func parseAutoApproveList(raw string, logWarn func(msg string, keyValuePairs ...any)) []string {
+	fields := splitSettingList(raw)
 	seen := make(map[string]bool, len(fields))
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
-		f = strings.TrimPrefix(strings.TrimSpace(f), "@")
-		if f == "" {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
 			continue
 		}
-
-		var userID string
-		if len(f) == 26 {
-			// Looks like an MM ID. Trust it — a wrong ID just means the
-			// user never matches at runtime; no harm at parse time.
-			userID = f
-		} else {
-			// Username -> resolve via API.
-			user, appErr := p.API.GetUserByUsername(f)
-			if appErr != nil || user == nil {
-				p.API.LogWarn("channel-requests: auto-approve entry did not resolve to a user; skipping",
-					"entry", f, "error", func() string {
-						if appErr != nil {
-							return appErr.Error()
-						}
-						return "nil user"
-					}())
-				continue
-			}
-			userID = user.Id
-		}
-		if seen[userID] {
+		if !model.IsValidId(f) {
+			logWarn("channel-requests: auto-approve entry is not a user ID; skipping", "entry", f)
 			continue
 		}
-		seen[userID] = true
-		out = append(out, userID)
+		seen[f] = true
+		out = append(out, f)
 	}
 	return out
+}
+
+// migrateLegacySettings converts settings saved by older versions as names
+// (approval team slug, approval channel name, auto-approve usernames) to
+// IDs and saves them back, once. Names are resolved here, at upgrade time,
+// against whatever currently holds them, and each conversion is logged so
+// an admin can check it. Unresolvable entries are kept as-is for
+// ApprovalTeam/ApprovalChannel (requests then fall back to DMing System
+// Admins, as for an unconfigured channel) and dropped from the
+// auto-approve list.
+func (p *Plugin) migrateLegacySettings() error {
+	stored := p.API.GetPluginConfig()
+	cfg := make(map[string]any, len(stored))
+	for k, v := range stored {
+		cfg[strings.ToLower(k)] = v
+	}
+	str := func(key string) string {
+		v, _ := cfg[key].(string)
+		return strings.TrimSpace(v)
+	}
+
+	changed := false
+
+	teamID := str("approvalteam")
+	if teamID != "" && !p.isTeamID(teamID) {
+		if team, appErr := p.API.GetTeamByName(teamID); appErr == nil && team != nil {
+			p.API.LogInfo("channel-requests: migrated ApprovalTeam from name to ID", "name", teamID, "team_id", team.Id)
+			teamID = team.Id
+			cfg["approvalteam"] = teamID
+			changed = true
+		} else {
+			p.API.LogWarn("channel-requests: ApprovalTeam is neither a team ID nor a team name; leaving it unchanged", "value", teamID)
+		}
+	}
+
+	if channelName := str("approvalchannel"); channelName != "" && p.isTeamID(teamID) {
+		if channel, appErr := p.API.GetChannel(channelName); appErr != nil || channel == nil {
+			if channel, appErr := p.API.GetChannelByName(teamID, channelName, false); appErr == nil && channel != nil {
+				p.API.LogInfo("channel-requests: migrated ApprovalChannel from name to ID", "name", channelName, "channel_id", channel.Id)
+				cfg["approvalchannel"] = channel.Id
+				changed = true
+			} else {
+				p.API.LogWarn("channel-requests: ApprovalChannel is neither a channel ID nor a channel name in the approval team; leaving it unchanged", "value", channelName)
+			}
+		}
+	}
+
+	if raw := str("autoapproveuserids"); raw != "" {
+		var ids []string
+		legacy := false
+		for _, f := range splitSettingList(raw) {
+			f = strings.TrimPrefix(strings.TrimSpace(f), "@")
+			if f == "" {
+				continue
+			}
+			if model.IsValidId(f) {
+				if _, appErr := p.API.GetUser(f); appErr == nil {
+					ids = append(ids, f)
+					continue
+				}
+			}
+			legacy = true
+			user, appErr := p.API.GetUserByUsername(f)
+			if appErr != nil || user == nil {
+				p.API.LogWarn("channel-requests: dropping auto-approve entry that is neither a user ID nor a username", "entry", f)
+				continue
+			}
+			p.API.LogInfo("channel-requests: migrated auto-approve entry from username to ID", "username", f, "user_id", user.Id)
+			ids = append(ids, user.Id)
+		}
+		if legacy {
+			cfg["autoapproveuserids"] = strings.Join(dedupeNonEmpty(ids), ",")
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+	if appErr := p.API.SavePluginConfig(cfg); appErr != nil {
+		return errors.Wrap(appErr, "failed to save migrated settings")
+	}
+	// Mattermost only delivers OnConfigurationChange to active plugins, and
+	// this runs from OnActivate, so the save above doesn't reach us. Reload
+	// explicitly or the old name values stay in effect until the next save.
+	return p.OnConfigurationChange()
+}
+
+// isTeamID reports whether s is the ID of an existing team.
+func (p *Plugin) isTeamID(s string) bool {
+	if !model.IsValidId(s) {
+		return false
+	}
+	team, appErr := p.API.GetTeam(s)
+	return appErr == nil && team != nil
 }
 
 // parsePrefixList parses the admin's multi-line prefix-list setting.
@@ -219,9 +286,9 @@ func (p *Plugin) resolveAutoApproveList(raw string) []string {
 // Empty third field -> no constraint on the suffix (other than MM's
 // channel identifier validity check).
 //
-// Empty lines and comments (# prefix) are skipped. Malformed regex is
-// logged and the prefix stays selectable with a no-op rule so a typo
-// can't wedge the plugin.
+// Empty lines and comments (# prefix) are skipped. A malformed regex is
+// logged and the prefix stays listed but rejects every suffix (fail
+// closed), so a typo can't silently lift the naming rule.
 func parsePrefixList(raw string, logErr func(msg string, keyValuePairs ...any)) []channelPrefix {
 	var out []channelPrefix
 	for lineNo, line := range strings.Split(raw, "\n") {
@@ -251,9 +318,14 @@ func parsePrefixList(raw string, logErr func(msg string, keyValuePairs ...any)) 
 	return out
 }
 
+// matchNothing is the suffix rule used when an admin's pattern can't be
+// compiled: requests under that prefix are rejected until it's fixed.
+var matchNothing = regexp.MustCompile(`[^\s\S]`)
+
 // compileSuffixRule converts the third pipe-field into a compiled regex.
-// Returns (nil, third) when the field can't be compiled — the caller
-// stores the raw text so error messages reference what the admin wrote.
+// Returns (matchNothing, third) when the field can't be compiled — the
+// caller stores the raw text so error messages reference what the admin
+// wrote.
 func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePairs ...any)) (*regexp.Regexp, string) {
 	// Numeric shape: treat as max length. Build [a-z0-9-]{2,N}. Any
 	// N > 32 is silently capped since MM channel identifiers max out
@@ -276,7 +348,7 @@ func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePai
 			// Shouldn't happen — regex is generated from a bounded int.
 			logErr("channel-requests: failed to compile numeric suffix rule",
 				"prefix", prefix, "n", third, "error", err.Error())
-			return nil, third
+			return matchNothing, third
 		}
 		return re, third
 	}
@@ -284,12 +356,18 @@ func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePai
 	// Legacy regex path. Anchor the admin-supplied pattern so it must
 	// match the entire suffix — admins write patterns like [a-z0-9-]{2,16}
 	// expecting "the suffix must be exactly this shape". Wrapping in a
-	// non-capturing group keeps top-level alternations intact.
+	// non-capturing group keeps top-level alternations intact. The pattern
+	// must also compile on its own so the wrapping group stays balanced.
+	if _, err := regexp.Compile(third); err != nil {
+		logErr("channel-requests: invalid suffix regex for prefix; rejecting all suffixes until it's fixed",
+			"prefix", prefix, "pattern", third, "error", err.Error())
+		return matchNothing, third
+	}
 	re, err := regexp.Compile("^(?:" + third + ")$")
 	if err != nil {
-		logErr("channel-requests: invalid suffix regex for prefix; falling back to no-pattern",
+		logErr("channel-requests: invalid suffix regex for prefix; rejecting all suffixes until it's fixed",
 			"prefix", prefix, "pattern", third, "error", err.Error())
-		return nil, third
+		return matchNothing, third
 	}
 	return re, third
 }

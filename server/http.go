@@ -28,9 +28,15 @@ const (
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
 	fieldPrefix = "prefix"
+
+	// maxRequestBodyBytes bounds every request body. The largest legitimate
+	// payload (two full member lists of usernames plus the text fields) is
+	// a few KB.
+	maxRequestBodyBytes = 64 << 10
 )
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	switch r.URL.Path {
 	case routeDialog:
 		p.handleDialogSubmit(w, r)
@@ -179,6 +185,18 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Guests get no results, and real names follow
+	// PrivacySettings.ShowFullName.
+	caller, appErr := p.API.GetUser(userID)
+	if appErr != nil || caller == nil || caller.IsGuest() {
+		writeJSON(w, []any{})
+		return
+	}
+	showFullName := caller.IsSystemAdmin()
+	if cfg := p.API.GetConfig(); cfg != nil && cfg.PrivacySettings.ShowFullName != nil && *cfg.PrivacySettings.ShowFullName {
+		showFullName = true
+	}
+
 	// Limit MUST be non-zero — MM's UserSearch treats Limit=0 as
 	// "return no results" (not "unlimited"). Set Limit to a
 	// slightly-larger cap than our display cap of 20 so we still
@@ -199,21 +217,20 @@ func (p *Plugin) handleUserAutocomplete(w http.ResponseWriter, r *http.Request) 
 		ID        string `json:"id"`
 		Username  string `json:"username"`
 		Nickname  string `json:"nickname"`
-		FirstName string `json:"first_name"`
-		LastName  string `json:"last_name"`
+		FirstName string `json:"first_name,omitempty"`
+		LastName  string `json:"last_name,omitempty"`
 	}
 	if len(users) > 20 {
 		users = users[:20]
 	}
 	out := make([]userDTO, 0, len(users))
 	for _, u := range users {
-		out = append(out, userDTO{
-			ID:        u.Id,
-			Username:  u.Username,
-			Nickname:  u.Nickname,
-			FirstName: u.FirstName,
-			LastName:  u.LastName,
-		})
+		dto := userDTO{ID: u.Id, Username: u.Username, Nickname: u.Nickname}
+		if showFullName {
+			dto.FirstName = u.FirstName
+			dto.LastName = u.LastName
+		}
+		out = append(out, dto)
 	}
 	writeJSON(w, out)
 }
@@ -516,9 +533,12 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		// Only the click that wins the claim below updates the approval card.
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
+		return
+	}
+	if approve && req.RequesterID == actingUser.Id && !actingUser.IsSystemAdmin() {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You can't approve your own request. Another approver has to review it."})
 		return
 	}
 
@@ -537,9 +557,9 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		// The winner updates the card; overwriting it here would erase
+		// their outcome.
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
 		return
 	}
 
@@ -568,14 +588,14 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		if requester != nil {
 			p.postWelcomeMessage(channel, req, requester, actingUser)
 		}
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", req.DisplayName, channel.Name))
-		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",
-			actingUser.Username, req.DisplayName, channel.Name, requesterUsername(requester, req.RequesterID)))
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", escapeMarkdown(req.DisplayName), channel.Name))
+		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request \"%s\" (~%s) from %s",
+			actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name, requesterUsername(requester, req.RequesterID)))
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", req.DisplayName))
-		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request `%s` from @%s",
-			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
+		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", escapeMarkdown(req.DisplayName)))
+		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request \"%s\" from %s",
+			actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)))
 	}
 
 	// The KV key was already removed by the atomic claim above.
@@ -613,18 +633,20 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		// See handleAction.
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
 		return
 	}
 
-	// A channel-admin request is scoped to a specific channel, so its own
-	// Channel Admins may act on it (in addition to the global approvers). We
-	// need the loaded request's ChannelID for that check, so it happens here
-	// rather than up front.
+	// A channel-admin request is scoped to a specific channel, so the check
+	// needs the loaded request's ChannelID and happens here rather than up
+	// front.
 	if !p.canApproveAdminRequest(actingUser, req.ChannelID) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny this Channel Admin request. Contact a Channel Admin or System Admin."})
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny this Channel Admin request. Contact a Team Admin of the channel's team or a System Admin."})
+		return
+	}
+	if approve && req.RequesterID == actingUser.Id && !actingUser.IsSystemAdmin() {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You can't approve your own request. Another approver has to review it."})
 		return
 	}
 
@@ -640,7 +662,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 
 	// On approval we need a live channel to promote into; bail before claiming
 	// the request so a deleted channel leaves the pending request intact.
-	if approve && channelErr != nil {
+	// GetChannel returns archived channels too, so check DeleteAt.
+	if approve && (channelErr != nil || channel.DeleteAt != 0) {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
 		return
 	}
@@ -658,20 +681,28 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
 		return
 	}
 
 	var outcome string
 	if approve {
-		p.promoteChannelAdmins(req)
-		p.postAdminPromotionMessage(channel, req, actingUser)
-		outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, nominees, channelRef)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved.", nominees, channelRef))
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by @%s)",
-			actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
+		// Report only who was actually promoted; nominees who have since
+		// left the channel are skipped.
+		req.NomineeIDs = p.promoteChannelAdmins(req)
+		promoted := p.mentionList(req.NomineeIDs)
+		if promoted == "" {
+			outcome = fmt.Sprintf("⚠️ Approved by @%s, but nobody was promoted: the nominees are no longer members of %s.", actingUser.Username, channelRef)
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved, but nobody was promoted because they are no longer members of the channel.", nominees, channelRef))
+			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED (NO CHANGE): @%s approved %s for %s, but none were still members (requested by %s)",
+				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
+		} else {
+			p.postAdminPromotionMessage(channel, req, actingUser)
+			outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, promoted, channelRef)
+			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved. Promoted: %s.", nominees, channelRef, promoted))
+			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by %s)",
+				actingUser.Username, promoted, channelRef, requesterUsername(requester, req.RequesterID)))
+		}
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was denied.", nominees, channelRef))
@@ -683,11 +714,16 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
+// alreadyHandledText is the private reply to a click on a request that no
+// longer exists (approved, denied, or claimed by a concurrent click).
+const alreadyHandledText = "This request has already been handled."
+
 // resolvedPost returns an updated version of the approval post with the buttons removed and a
-// status line appended.
+// status line appended. Only posts the bot authored are rebuilt; anything else
+// gets a bare status post.
 func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 	post, appErr := p.API.GetPost(postID)
-	if appErr != nil {
+	if appErr != nil || post == nil || post.UserId != p.botUserID {
 		return &model.Post{Message: status}
 	}
 
@@ -748,23 +784,26 @@ func (p *Plugin) canApprove(user *model.User) bool {
 		return true
 	}
 	config := p.getConfiguration()
-	if config.AllowTeamAdminApprovers && p.isTeamAdmin(user.Id, config.ApprovalTeam) {
+	if config.AllowTeamAdminApprovers && p.isTeamAdminOfTeamID(user.Id, config.ApprovalTeam) {
 		return true
 	}
 	return false
 }
 
 // canApproveAdminRequest reports whether the acting user may approve or deny a
-// Channel Admin request for the given channel. Beyond the global approvers
-// (System Admins, opted-in approval-team admins via canApprove), the Team
-// Admins of the TARGET channel's team may act on it — postAdminApprovalRequest
-// mentions exactly this set (System Admins + the channel's Team Admins) when it
-// posts to the approval channel.
+// Channel Admin request for the given channel: System Admins, and the Team
+// Admins of the TARGET channel's team. Approval-team Team Admins
+// (AllowTeamAdminApprovers) are not included: a Team Admin's authority stops
+// at their own team.
+// postAdminApprovalRequest mentions exactly this set when it posts.
 func (p *Plugin) canApproveAdminRequest(user *model.User, channelID string) bool {
-	if p.canApprove(user) {
+	if user == nil {
+		return false
+	}
+	if user.IsSystemAdmin() {
 		return true
 	}
-	if user == nil || channelID == "" {
+	if channelID == "" {
 		return false
 	}
 	channel, appErr := p.API.GetChannel(channelID)
@@ -774,33 +813,16 @@ func (p *Plugin) canApproveAdminRequest(user *model.User, channelID string) bool
 	return p.isTeamAdminOfTeamID(user.Id, channel.TeamId)
 }
 
-// isTeamAdminOfTeamID reports whether the user is a Team Admin of the team
-// identified by teamID. Companion to isTeamAdmin, which resolves a team by its
-// name/slug; this one takes the ID directly (e.g. a channel's TeamId).
+// isTeamAdminOfTeamID reports whether the user is an active Team Admin of
+// the team identified by teamID. Handles both classic roles-string admin and
+// scheme-based admin (permissions v2).
 func (p *Plugin) isTeamAdminOfTeamID(userID, teamID string) bool {
 	if teamID == "" {
 		return false
 	}
+	// GetTeamMember returns soft-deleted rows; only active memberships count.
 	member, appErr := p.API.GetTeamMember(teamID, userID)
-	if appErr != nil || member == nil {
-		return false
-	}
-	if slices.Contains(strings.Fields(member.Roles), model.TeamAdminRoleId) {
-		return true
-	}
-	return member.SchemeAdmin
-}
-
-// isTeamAdmin reports whether the user is a Team Admin of the team
-// identified by teamSlug. Handles both classic roles-string admin and
-// scheme-based admin (permissions v2).
-func (p *Plugin) isTeamAdmin(userID, teamSlug string) bool {
-	team, appErr := p.API.GetTeamByName(teamSlug)
-	if appErr != nil || team == nil {
-		return false
-	}
-	member, appErr := p.API.GetTeamMember(team.Id, userID)
-	if appErr != nil || member == nil {
+	if appErr != nil || member == nil || member.DeleteAt != 0 {
 		return false
 	}
 	if slices.Contains(strings.Fields(member.Roles), model.TeamAdminRoleId) {

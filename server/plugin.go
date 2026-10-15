@@ -30,5 +30,12 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.botUserID = botUserID
 
+	// A failed migration leaves the old values in place, which the server
+	// no longer resolves by name: requests fall back to DMing System
+	// Admins and auto-approve is off. Log it rather than refusing to start.
+	if err := p.migrateLegacySettings(); err != nil {
+		p.API.LogError("channel-requests: failed to migrate settings to IDs", "error", err.Error())
+	}
+
 	return p.API.RegisterCommand(getCommand())
 }

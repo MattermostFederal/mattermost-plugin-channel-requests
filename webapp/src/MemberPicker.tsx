@@ -1,6 +1,7 @@
 import manifest from 'manifest';
 import React, {useEffect, useRef, useState} from 'react';
 
+import type {UserSummary} from './client';
 import {makeDebug} from './debug';
 
 // Traces autocomplete behavior when localStorage
@@ -21,13 +22,7 @@ const debug = makeDebug('member-picker');
 // Debounce is 200ms — snappy enough to feel live, sparse enough not to
 // hammer the endpoint on every keystroke.
 
-type User = {
-    id: string;
-    username: string;
-    nickname?: string;
-    first_name?: string;
-    last_name?: string;
-};
+type User = UserSummary;
 
 type Props = {
     value: string; // comma-separated usernames
@@ -37,6 +32,11 @@ type Props = {
 
     // teamId, when set, scopes autocomplete to members of that team.
     teamId?: string;
+
+    // searchUsers, when set, replaces the plugin's team-scoped
+    // /api/v1/user_autocomplete as the source of candidates (e.g. the
+    // System Console, which has no team to scope to).
+    searchUsers?: (term: string) => Promise<User[]>;
 
     // usernameBadges maps username -> a short label ("Channel Admin",
     // "Member", "Auto-approved", etc.). When a candidate's username
@@ -125,7 +125,7 @@ const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) =>
     );
 };
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, searchUsers, usernameBadges}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -184,25 +184,31 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         let cancelled = false;
         const timer = window.setTimeout(async () => {
             try {
-                const params = new URLSearchParams({q});
-                if (teamId) {
-                    params.set('team_id', teamId);
+                let users: User[];
+                if (searchUsers) {
+                    debug('searching via custom source', {q, selectedCount: selected.length});
+                    users = await searchUsers(q);
+                } else {
+                    const params = new URLSearchParams({q});
+                    if (teamId) {
+                        params.set('team_id', teamId);
+                    }
+                    const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
+                    debug('fetching', {url, q, teamId, selectedCount: selected.length});
+                    const response = await fetch(url, {
+                        credentials: 'same-origin',
+                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    });
+                    if (cancelled) {
+                        return;
+                    }
+                    if (!response.ok) {
+                        debug('response not ok', {status: response.status});
+                        setCandidates([]);
+                        return;
+                    }
+                    users = await response.json();
                 }
-                const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
-                debug('fetching', {url, q, teamId, selectedCount: selected.length});
-                const response = await fetch(url, {
-                    credentials: 'same-origin',
-                    headers: {'X-Requested-With': 'XMLHttpRequest'},
-                });
-                if (cancelled) {
-                    return;
-                }
-                if (!response.ok) {
-                    debug('response not ok', {status: response.status});
-                    setCandidates([]);
-                    return;
-                }
-                const users: User[] = await response.json();
                 if (cancelled) {
                     return;
                 }
@@ -228,7 +234,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [query, selected, teamId]);
+    }, [query, selected, teamId, searchUsers]);
 
     // Close dropdown when clicking outside.
     useEffect(() => {
