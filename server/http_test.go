@@ -575,6 +575,7 @@ func TestHandleAdminAction_ApproveClaimsAndPromotes(t *testing.T) {
 	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
 	// The claim compares against the exact bytes loadAdminRequest returned.
+	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
 	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
 	api.On("UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
@@ -614,6 +615,7 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
 	// Another reviewer already claimed and processed the request.
+	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
 
 	r := httptest.NewRequest(http.MethodPost, routeApproveAdmin, strings.NewReader(actionBody(t, "areq1")))
@@ -1307,6 +1309,7 @@ func TestHandleAdminAction_ErrorPaths(t *testing.T) {
 				api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
 				api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 				api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+				api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
 				api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, testAppErr("kv down"))
 			},
 			want: "Could not process that request.",
@@ -1381,6 +1384,7 @@ func TestHandleAdminAction_ApproveWithNoRemainingNominees(t *testing.T) {
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
 	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
 	// The nominee left the channel while the request was pending.
 	api.On("GetChannelMember", "chX", "u_nom").Return(nil, testAppErr("not a member"))
@@ -1690,6 +1694,122 @@ func TestHandleActionApproveSystemAdminRequesterSkipsTeamCheck(t *testing.T) {
 	api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
 }
 
+func TestHandleAdminActionApproveRechecks(t *testing.T) {
+	notFound := model.NewAppError("test", "test.not_found", nil, "", http.StatusNotFound)
+	cases := []struct {
+		name         string
+		requester    *model.User
+		requesterErr *model.AppError
+		member       *model.ChannelMember
+		memberErr    *model.AppError
+		memberCalled bool
+		want         string
+	}{
+		{name: "requester not found", requesterErr: notFound, want: requesterInactiveText},
+		{name: "requester lookup fails", requesterErr: testAppErr("db down"), want: approvalRetryText},
+		{name: "requester deactivated", requester: &model.User{Id: "u_req", DeleteAt: 1}, want: requesterInactiveText},
+		{name: "deactivated System Admin requester", requester: &model.User{Id: "u_req", Roles: "system_user system_admin", DeleteAt: 1}, want: requesterInactiveText},
+		{name: "requester left the channel", requester: &model.User{Id: "u_req"}, memberErr: notFound, memberCalled: true, want: "The requester is no longer a member of the channel."},
+		{name: "membership lookup returns nothing", requester: &model.User{Id: "u_req"}, memberCalled: true, want: "The requester is no longer a member of the channel."},
+		{name: "membership lookup fails", requester: &model.User{Id: "u_req"}, memberErr: testAppErr("db down"), memberCalled: true, want: approvalRetryText},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			p.setConfiguration(&configuration{})
+
+			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+			raw, err := json.Marshal(req)
+			require.NoError(t, err)
+
+			api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
+			api.On("GetUser", "u_req").Return(tc.requester, tc.requesterErr)
+			api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+			if tc.memberCalled {
+				api.On("GetChannelMember", "chX", "u_req").Return(tc.member, tc.memberErr)
+			}
+			api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+			api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+
+			w := callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAdminAction(w, r, true) },
+				http.MethodPost, routeApproveAdmin, "admin1", actionBody(t, "areq1"))
+
+			resp := actionResponse(t, w)
+			require.Contains(t, resp.EphemeralText, tc.want)
+			require.Nil(t, resp.Update, "the card keeps its buttons")
+			api.AssertNotCalled(t, "KVCompareAndDelete", mock.Anything, mock.Anything)
+			api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestHandleAdminActionApproveSystemAdminRequesterSkipsChannelCheck(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	stubPendingLists(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	req := &adminRequest{ID: "areq1", RequesterID: "admin2", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
+	api.On("GetUser", "admin2").Return(sysadmin("admin2"), nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
+	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
+	api.On("UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
+	api.On("GetDirectChannel", "admin2", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	w := callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAdminAction(w, r, true) },
+		http.MethodPost, routeApproveAdmin, "admin1", actionBody(t, "areq1"))
+
+	resp := actionResponse(t, w)
+	require.NotNil(t, resp.Update, resp.EphemeralText)
+	require.Contains(t, resp.Update.Message, "promoted to Channel Admin")
+	api.AssertNotCalled(t, "GetChannelMember", "chX", "admin2")
+}
+
+func TestHandleAdminActionDenyInactiveRequester(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	stubPendingLists(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req", DeleteAt: 1}, nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	w := callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAdminAction(w, r, false) },
+		http.MethodPost, routeDenyAdmin, "admin1", actionBody(t, "areq1"))
+
+	resp := actionResponse(t, w)
+	require.NotNil(t, resp.Update, resp.EphemeralText)
+	require.Equal(t, "❌ Denied by @admin.", resp.Update.Message)
+	api.AssertNotCalled(t, "GetChannelMember", mock.Anything, mock.Anything)
+}
+
 func TestHandleActionFreesPendingSlot(t *testing.T) {
 	entry := pendingEntry{ID: "req1", CreatedAt: 1, Key: "team1/team-x"}
 	listKey := pendingListKey(pendingKindChannel, "u_req")
@@ -1794,6 +1914,50 @@ func TestHandleAdminActionExpired(t *testing.T) {
 	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
 
+func TestHandleAdminActionExpiredInactiveRequester(t *testing.T) {
+	notFound := model.NewAppError("test", "test.not_found", nil, "", http.StatusNotFound)
+	for name, tc := range map[string]struct {
+		requester    *model.User
+		requesterErr *model.AppError
+	}{
+		"deactivated": {requester: &model.User{Id: "u_req", Username: "req", DeleteAt: 1}},
+		"not found":   {requesterErr: notFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			p.setConfiguration(&configuration{expiryDays: 30})
+
+			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
+			raw, err := json.Marshal(req)
+			require.NoError(t, err)
+			fakePendingLists(api)
+
+			api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
+			api.On("GetUser", "u_req").Return(tc.requester, tc.requesterErr)
+			api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+			api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+			api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+			api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
+			api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+			api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+			api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+			// Expiry is checked before the requester, so the request still
+			// closes as expired rather than being left pending.
+			resp := actionResponse(t, callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAdminAction(w, r, true) },
+				http.MethodPost, routeApproveAdmin, "admin1", actionBody(t, "areq1")))
+
+			require.Equal(t, expiredText, resp.EphemeralText)
+			require.NotNil(t, resp.Update)
+			require.Contains(t, resp.Update.Message, "Expired")
+			api.AssertNotCalled(t, "GetChannelMember", mock.Anything, mock.Anything)
+		})
+	}
+}
+
 func TestHandleAdminActionFreesPendingSlot(t *testing.T) {
 	for _, approve := range []bool{true, false} {
 		t.Run(fmt.Sprintf("approve=%v", approve), func(t *testing.T) {
@@ -1814,6 +1978,7 @@ func TestHandleAdminActionFreesPendingSlot(t *testing.T) {
 			api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
 			api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 			api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+			api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 			api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
 			api.On("GetChannelMember", "ch1", "u_nom").Return(&model.ChannelMember{}, nil).Maybe()
 			api.On("UpdateChannelMemberRoles", "ch1", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil).Maybe()

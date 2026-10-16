@@ -73,9 +73,7 @@ request. Everyone you nominate must already be a member of the channel; if
 someone isn't, add them to the channel first (or ask a Channel Admin to).
 
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
-message when an approver responds. If your admin hasn't configured an approval
-channel yet, you'll be told so directly instead of the request disappearing
-silently — pass that message along to a System Admin.
+message when an approver responds.
 
 **Limits.** A System Admin sets how many Channel Admin requests you can have
 waiting for review at once. At the limit you'll see *you have N pending requests
@@ -103,6 +101,14 @@ teams, including the approval team, can't act on it.
   A bot message in the channel announces who can now manage it.
 - **Deny** — the request is closed and the requester is notified by DM.
 
+Approve checks the request again first. If the requester's account is no longer
+active, or they've left the channel (System Admins excepted), you'll get a
+private message saying so (for example *The requester is no longer a member of
+the channel. Deny this request instead.*). The request stays pending and the
+card keeps its buttons, so deny it. If the requester can't be checked at that
+moment, you'll see *Could not check the requester right now. Try again in a
+moment.* instead.
+
 A request that wasn't reviewed within **Request expiry (days)** can't be
 approved: clicking either button replies *This request has expired.*, marks the
 card *⌛ Expired: not reviewed within N days.* and DMs the requester.
@@ -119,8 +125,8 @@ requests, in **System Console → Plugins → Channel Requests**:
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team that owns the approval channel. Required. |
-| **Approval channel** | The channel where Channel Admin request cards are posted. **Required** — if it's unset, requesters are shown an error instead of the request being dropped. |
+| **Approval team** | The team that owns the approval channel. Recommended. |
+| **Approval channel** | The channel where Channel Admin request cards are posted. Recommended: if it isn't set, or the channel is missing or archived, each request is sent by direct message to every System Admin instead. |
 | **Team Admins can approve requests** | Applies to channel-creation requests only. Channel Admin requests are always reviewed by System Admins and the Team Admins of the *requested channel's* team, whatever this is set to. |
 | **Auto-approve requests from these users** | Requests from these users skip approval — nominees are promoted immediately. |
 | **Pending requests per user** | How many Channel Admin requests one user can have waiting for review (counted separately from channel requests), up to `1000`. Default `5`; `0` means no limit. |

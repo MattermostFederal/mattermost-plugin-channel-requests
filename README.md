@@ -21,8 +21,8 @@ A Mattermost plugin that lets non-admins **request** new channels for approval i
 
 In **System Console → Plugins → Channel Requests**, set:
 
-- **Approval team** — the team containing the approval channel, picked from a dropdown. Required.
-- **Approval channel** — the channel where requests are posted, picked from a dropdown. Required.
+- **Approval team** — the team containing the approval channel, picked from a dropdown. Recommended.
+- **Approval channel** — the channel where requests are posted, picked from a dropdown. Recommended: if it isn't set, or the channel is missing or archived, each request is sent by direct message to every System Admin instead.
 - **Channel domain prefixes** — the prefixes requesters pick from, with descriptions and suffix rules. At least one is required.
 - **Team Admins can approve requests** — optional; lets Team Admins of the approval team act on channel-creation requests.
 - **Auto-approve requests from these users** — optional; these users' requests skip approval.
