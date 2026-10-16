@@ -102,3 +102,91 @@ func TestMigrateLegacySettings_IDsAreLeftAlone(t *testing.T) {
 	api.AssertNotCalled(t, "GetTeamByName", mock.Anything)
 	api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
 }
+
+func TestSetConfiguration_SamePointerPanics(t *testing.T) {
+	p := newTestPlugin(&plugintest.API{})
+	cfg := &configuration{AuditChannelID: "audit"}
+	p.setConfiguration(cfg)
+
+	require.Panics(t, func() { p.setConfiguration(cfg) })
+}
+
+func TestOnConfigurationChange_LoadFailure(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	api.On("LoadPluginConfiguration", mock.Anything).Return(testAppErr("bad config"))
+
+	require.ErrorContains(t, p.OnConfigurationChange(), "failed to load plugin configuration")
+	require.Nil(t, p.configuration)
+}
+
+func TestMigrateLegacySettings_UnknownTeamNameLeftAlone(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetPluginConfig").Return(map[string]any{"approvalteam": "nosuch", "approvalchannel": "requests"})
+	api.On("GetTeamByName", "nosuch").Return(nil, testAppErr("not found"))
+
+	require.NoError(t, p.migrateLegacySettings())
+	// With no resolvable team, the channel name isn't looked up either.
+	api.AssertNotCalled(t, "GetChannelByName", mock.Anything, mock.Anything, mock.Anything)
+	api.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
+}
+
+func TestMigrateLegacySettings_UnresolvableEntriesAndSaveFailure(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	teamID := model.NewId()
+	api.On("GetPluginConfig").Return(map[string]any{
+		"approvalteam":       teamID,
+		"approvalchannel":    "nochan",
+		"autoapproveuserids": "ghost, @",
+	})
+	api.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil)
+	api.On("GetChannel", "nochan").Return(nil, testAppErr("not found"))
+	api.On("GetChannelByName", teamID, "nochan", false).Return(nil, testAppErr("not found"))
+	api.On("GetUserByUsername", "ghost").Return(nil, testAppErr("not found"))
+	var saved map[string]any
+	api.On("SavePluginConfig", mock.Anything).Run(func(args mock.Arguments) {
+		saved = args.Get(0).(map[string]any)
+	}).Return(testAppErr("save failed"))
+
+	err := p.migrateLegacySettings()
+
+	require.ErrorContains(t, err, "failed to save migrated settings")
+	// The unknown channel name is kept; the unknown username is dropped.
+	require.Equal(t, "nochan", saved["approvalchannel"])
+	require.Equal(t, "", saved["autoapproveuserids"])
+}
+
+func TestParsePrefixList_SkipsEmptyPrefix(t *testing.T) {
+	var logged []string
+	got := parsePrefixList("|No prefix\nteam-|Teams", func(msg string, _ ...any) { logged = append(logged, msg) })
+
+	require.Len(t, got, 1)
+	require.Equal(t, "team-", got[0].Prefix)
+	require.Equal(t, []string{"channel-requests: skipping prefix entry with empty prefix"}, logged)
+}
+
+func TestCompileSuffixRule_ClampsNumericLength(t *testing.T) {
+	noopLog := func(string, ...any) {}
+	cases := []struct{ in, want string }{
+		{"1", "^(?:[a-z0-9-]{2,2})$"},
+		{"16", "^(?:[a-z0-9-]{2,16})$"},
+		{"99", "^(?:[a-z0-9-]{2,32})$"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			re, raw := compileSuffixRule(tc.in, "team-", noopLog)
+			require.Equal(t, tc.want, re.String())
+			require.Equal(t, tc.in, raw)
+		})
+	}
+	require.False(t, isPositiveInt(""))
+}

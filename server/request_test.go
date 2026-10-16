@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -666,4 +667,338 @@ func TestApprovalAttachment_RendersRequesterTextAsTextAndNamesTeam(t *testing.T)
 		require.NotContains(t, values[title], "@someone", title)
 		require.NotContains(t, values[title], "\n#", title)
 	}
+}
+
+// pendingKey matches the KV key of any pending channel request.
+var pendingKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvRequestPrefix) })
+
+// approvalConfig routes approvals to channel "appch" in team "appteam".
+func approvalConfig() *configuration {
+	return &configuration{
+		prefixes:        []channelPrefix{{Prefix: "team-"}},
+		ApprovalTeam:    "appteam",
+		ApprovalChannel: "appch",
+	}
+}
+
+// mockMemberRequester sets up a regular (non-admin) requester u1 who is an
+// active member of team1.
+func mockMemberRequester(api *plugintest.API) {
+	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "req", Roles: "system_user"}, nil)
+	api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{TeamId: "team1", UserId: "u1"}, nil)
+}
+
+func TestSubmitRequest_StoresAndPostsForApproval(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	mockMemberRequester(api)
+	var stored channelRequest
+	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
+	}).Return(nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+	var approval *model.Post
+	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) { approval = args.Get(0).(*model.Post) }).Return(&model.Post{}, nil)
+
+	msg, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "  Marketing   Team ", Prefix: "team-", ChannelType: "bogus"})
+
+	require.NoError(t, err)
+	require.Contains(t, msg, "submitted for approval")
+	require.Equal(t, "team-marketing-team", stored.Name)
+	require.Equal(t, "Marketing Team", stored.DisplayName)
+	require.Equal(t, channelTypeOpen, stored.ChannelType) // unknown types default to public
+	require.NotNil(t, approval)
+	require.Equal(t, "appch", approval.ChannelId)
+	require.Len(t, approval.Attachments(), 1)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestSubmitRequest_StoreFailure(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	mockMemberRequester(api)
+	api.On("KVSet", pendingKey, mock.Anything).Return(testAppErr("kv down"))
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+
+	require.EqualError(t, err, "could not save your request; try again")
+	api.AssertNotCalled(t, "CreatePost", mock.Anything)
+}
+
+func TestSubmitRequest_ApprovalPostFailureRollsBack(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	mockMemberRequester(api)
+	var key string
+	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) { key = args.String(0) }).Return(nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+	api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
+	api.On("KVDelete", pendingKey).Return(nil)
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+
+	require.ErrorContains(t, err, "could not send your request to the approvers")
+	api.AssertCalled(t, "KVDelete", key)
+}
+
+func TestSubmitRequest_RequesterLookupFails(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	api.On("GetUser", "u1").Return(nil, testAppErr("gone"))
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+
+	require.EqualError(t, err, "could not load your account; try again")
+}
+
+func TestSubmitRequest_InvalidInputSkipsLookups(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1"})
+
+	require.EqualError(t, err, "a channel name is required")
+	api.AssertNotCalled(t, "GetUser", mock.Anything)
+}
+
+func TestSubmitRequest_ChannelNameErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		config *configuration
+		in     requestInput
+		want   string
+	}{
+		{name: "no prefixes configured", config: &configuration{}, in: requestInput{DisplayName: "Ops", Prefix: "team-"}, want: "plugin is not configured"},
+		{name: "no prefix picked", config: approvalConfig(), in: requestInput{DisplayName: "Ops"}, want: "please pick a channel prefix"},
+		{name: "unknown prefix", config: approvalConfig(), in: requestInput{DisplayName: "Ops", Prefix: "nope-"}, want: `prefix "nope-" is not in the list`},
+		{name: "suffix empty after cleanup", config: approvalConfig(), in: requestInput{DisplayName: "!!!", Name: "---", Prefix: "team-"}, want: "channel name suffix is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			p.setConfiguration(tc.config)
+			// A System Admin skips the team-membership check.
+			api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
+
+			tc.in.RequesterID, tc.in.TeamID = "admin1", "team1"
+			_, err := p.submitRequest(tc.in)
+
+			require.ErrorContains(t, err, tc.want)
+			api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+		})
+	}
+}
+
+func TestPostApprovalAttachment_ChannelPostFailureIsReturned(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+	api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
+
+	err := p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header")
+
+	require.ErrorContains(t, err, "failed to post approval request")
+	// A failed post in a working channel is not retried as DMs.
+	api.AssertNotCalled(t, "GetUsers", mock.Anything)
+}
+
+func TestPostApprovalAttachment_FallsBackToSystemAdminDMs(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	api.On("GetChannel", "appch").Return(nil, testAppErr("gone"))
+	api.On("GetUsers", mock.MatchedBy(func(o *model.UserGetOptions) bool { return o.Role == model.SystemAdminRoleId })).
+		Return([]*model.User{{Id: "bot-user-id"}, {Id: "a1"}, {Id: "a2"}, {Id: "a3"}}, nil)
+	api.On("GetDirectChannel", "a1", "bot-user-id").Return(nil, testAppErr("no dm"))
+	api.On("GetDirectChannel", "a2", "bot-user-id").Return(&model.Channel{Id: "dm2"}, nil)
+	api.On("GetDirectChannel", "a3", "bot-user-id").Return(&model.Channel{Id: "dm3"}, nil)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm2" })).Return(nil, testAppErr("post failed"))
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm3" })).Return(&model.Post{}, nil)
+
+	require.NoError(t, p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header"))
+	// The bot never DMs itself.
+	api.AssertNotCalled(t, "GetDirectChannel", "bot-user-id", "bot-user-id")
+	api.AssertCalled(t, "LogWarn", "configured approval channel unavailable; falling back to System Admins",
+		"team_id", "appteam", "channel_id", "appch", "error", mock.Anything)
+}
+
+func TestPostApprovalToSystemAdmins_Failures(t *testing.T) {
+	t.Run("listing admins fails", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetUsers", mock.Anything).Return(nil, testAppErr("db down"))
+
+		require.ErrorContains(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}), "failed to list System Admins")
+	})
+
+	t.Run("nobody receives it", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "bot-user-id"}}, nil)
+
+		require.EqualError(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}),
+			"no System Admins are available to receive the approval request")
+	})
+}
+
+func TestApprovalChannel_Unavailable(t *testing.T) {
+	t.Run("not configured", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		_, err := p.approvalChannel(&configuration{ApprovalTeam: "appteam"})
+		require.EqualError(t, err, "approval channel is not configured")
+		api.AssertNotCalled(t, "GetChannel", mock.Anything)
+	})
+
+	t.Run("lookup fails", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetChannel", "appch").Return(nil, testAppErr("gone"))
+		_, err := p.approvalChannel(&configuration{ApprovalTeam: "appteam", ApprovalChannel: "appch"})
+		require.ErrorContains(t, err, "failed to load approval channel")
+	})
+}
+
+func TestApprovalAttachment_PrivateWithMembersAndUnknownTeam(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetTeam", "team1").Return(nil, testAppErr("gone"))
+	api.On("GetUser", "u_mem").Return(&model.User{Id: "u_mem", Username: "mem"}, nil)
+	api.On("GetUser", "u_adm").Return(&model.User{Id: "u_adm", Username: "adm"}, nil)
+
+	att := p.approvalAttachment(&channelRequest{
+		ID: "req1", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: channelTypePrivate,
+		MemberIDs: []string{"u_mem"}, AdminMemberIDs: []string{"u_adm"},
+	}, &model.User{Username: "req"})
+
+	fields := map[string]string{}
+	for _, f := range att.Fields {
+		fields[f.Title] = f.Value.(string)
+	}
+	require.Equal(t, "Private", fields["Visibility"])
+	require.Equal(t, "team1", fields["Team"]) // falls back to the raw ID
+	require.Equal(t, "@mem", fields["Members to add"])
+	require.Equal(t, "@adm", fields["Channel Admins to add"])
+}
+
+func TestLoadRequest_Errors(t *testing.T) {
+	t.Run("store read fails", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("KVGet", kvRequestPrefix+"r1").Return(nil, testAppErr("kv down"))
+		_, _, err := p.loadRequest("r1")
+		require.ErrorContains(t, err, "failed to load request")
+	})
+
+	t.Run("corrupt record", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("KVGet", kvRequestPrefix+"r1").Return([]byte("not json"), nil)
+		_, _, err := p.loadRequest("r1")
+		require.ErrorContains(t, err, "failed to unmarshal request")
+	})
+}
+
+func TestBotPosts_FailuresAreLoggedNotReturned(t *testing.T) {
+	t.Run("welcome message", func(t *testing.T) {
+		api := &plugintest.API{}
+		stubLogs(api)
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
+
+		p.postWelcomeMessage(&model.Channel{Id: "ch1"}, &channelRequest{}, &model.User{Id: "u1", Username: "req"}, nil)
+
+		api.AssertCalled(t, "LogWarn", "failed to post welcome message", "channel_id", "ch1", "error", mock.Anything)
+	})
+
+	t.Run("requester notification", func(t *testing.T) {
+		api := &plugintest.API{}
+		stubLogs(api)
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+		api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
+
+		p.notifyRequester("u1", "hello")
+
+		api.AssertCalled(t, "LogWarn", "failed to notify requester", "user_id", "u1", "error", mock.Anything)
+	})
+}
+
+func TestCreateChannelForRequest_PromotionFailureIsNonFatal(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-x"}, nil)
+	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("AddChannelMember", "ch1", "u_adm").Return(&model.ChannelMember{}, nil)
+	api.On("UpdateChannelMemberRoles", "ch1", "u_adm", channelAdminRoles).Return(nil, testAppErr("denied"))
+
+	req := &channelRequest{RequesterID: "u_req", TeamID: "team1", Name: "team-x", AdminMemberIDs: []string{"u_adm"}}
+	ch, err := p.createChannelForRequest(req)
+
+	require.NoError(t, err)
+	require.Equal(t, "ch1", ch.Id)
+	// The welcome message must not claim a promotion that failed.
+	require.Empty(t, req.AdminMemberIDs)
+}
+
+func TestSlugify_TruncatesToChannelNameLimit(t *testing.T) {
+	got := slugify(strings.Repeat("a", model.ChannelNameMaxLength+10))
+	require.Len(t, got, model.ChannelNameMaxLength)
+}
+
+func TestSubmitRequest_SystemAdminCreateFailureIsReturned(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}, AuditChannelID: "audit"})
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
+	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
+
+	_, err := p.submitRequest(requestInput{RequesterID: "admin1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+
+	require.ErrorContains(t, err, "failed to create channel")
+	// Nothing is stored, announced or audited for a channel that wasn't made.
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	api.AssertNotCalled(t, "CreatePost", mock.Anything)
 }
