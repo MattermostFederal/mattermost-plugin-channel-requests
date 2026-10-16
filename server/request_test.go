@@ -332,12 +332,14 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{
 		prefixes:       []channelPrefix{{Prefix: "team-"}},
 		AuditChannelID: "audit1",
 	})
+	stubAuditChannel(api, "audit1")
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
@@ -357,6 +359,9 @@ func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
 		return post.ChannelId == "audit1" && strings.Contains(post.Message, "CREATED")
 	}))
+	// Direct creations never take a pending slot.
+	api.AssertNotCalled(t, "KVGet", isPendingListKey)
+	api.AssertNotCalled(t, "KVCompareAndSet", isPendingListKey, mock.Anything, mock.Anything)
 }
 
 func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
@@ -669,8 +674,8 @@ func TestApprovalAttachment_RendersRequesterTextAsTextAndNamesTeam(t *testing.T)
 	}
 }
 
-// pendingKey matches the KV key of any pending channel request.
-var pendingKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvRequestPrefix) })
+// isRequestRecordKey matches the KV key of any stored channel request.
+var isRequestRecordKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvRequestPrefix) })
 
 // approvalConfig routes approvals to channel "appch" in team "appteam".
 func approvalConfig() *configuration {
@@ -691,13 +696,14 @@ func mockMemberRequester(api *plugintest.API) {
 func TestSubmitRequest_StoresAndPostsForApproval(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
 
 	mockMemberRequester(api)
 	var stored channelRequest
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
 	}).Return(nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
@@ -721,12 +727,13 @@ func TestSubmitRequest_StoresAndPostsForApproval(t *testing.T) {
 func TestSubmitRequest_StoreFailure(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
 
 	mockMemberRequester(api)
-	api.On("KVSet", pendingKey, mock.Anything).Return(testAppErr("kv down"))
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Return(testAppErr("kv down"))
 
 	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
 
@@ -737,17 +744,18 @@ func TestSubmitRequest_StoreFailure(t *testing.T) {
 func TestSubmitRequest_ApprovalPostFailureRollsBack(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
 
 	mockMemberRequester(api)
 	var key string
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) { key = args.String(0) }).Return(nil)
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) { key = args.String(0) }).Return(nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
 	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
 	api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
-	api.On("KVDelete", pendingKey).Return(nil)
+	api.On("KVDelete", isRequestRecordKey).Return(nil)
 
 	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
 
@@ -991,6 +999,7 @@ func TestSubmitRequest_SystemAdminCreateFailureIsReturned(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}, AuditChannelID: "audit"})
+	stubAuditChannel(api, "audit")
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
@@ -1001,4 +1010,139 @@ func TestSubmitRequest_SystemAdminCreateFailureIsReturned(t *testing.T) {
 	// Nothing is stored, announced or audited for a channel that wasn't made.
 	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 	api.AssertNotCalled(t, "CreatePost", mock.Anything)
+}
+
+func TestSubmitRequestPendingLimit(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	config := approvalConfig()
+	config.maxPending = 1
+	p.setConfiguration(config)
+
+	lists := fakePendingLists(api)
+	mockMemberRequester(api)
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Return(nil)
+	// The first request is still stored, so its entry keeps counting.
+	api.On("KVGet", isRequestRecordKey).Return([]byte("{}"), nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
+	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+	require.NoError(t, err)
+	entries := decodeEntries(t, lists[pendingListKey(pendingKindChannel, "u1")])
+	require.Len(t, entries, 1)
+	require.Equal(t, "team1/team-marketing", entries[0].Key)
+	require.NotZero(t, entries[0].CreatedAt)
+
+	_, err = p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Sales", Prefix: "team-"})
+	require.ErrorContains(t, err, "you have 1 pending requests waiting for review")
+	api.AssertNumberOfCalls(t, "KVSet", 1)
+}
+
+func TestSubmitRequestDuplicate(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	fakePendingLists(api)
+	mockMemberRequester(api)
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Return(nil)
+	// The first request is still stored, so its entry keeps counting.
+	api.On("KVGet", isRequestRecordKey).Return([]byte("{}"), nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
+	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	in := requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"}
+	_, err := p.submitRequest(in)
+	require.NoError(t, err)
+
+	_, err = p.submitRequest(in)
+	require.EqualError(t, err, "you already have a pending request for ~team-marketing in this team")
+}
+
+func TestSubmitRequestFailureFreesPendingSlot(t *testing.T) {
+	for name, setup := range map[string]func(api *plugintest.API){
+		"store fails": func(api *plugintest.API) {
+			api.On("KVSet", isRequestRecordKey, mock.Anything).Return(testAppErr("kv down"))
+		},
+		"approval post fails": func(api *plugintest.API) {
+			api.On("KVSet", isRequestRecordKey, mock.Anything).Return(nil)
+			api.On("KVDelete", isRequestRecordKey).Return(nil)
+			api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
+			api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
+			api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			defer api.AssertExpectations(t)
+			p := newTestPlugin(api)
+			p.setConfiguration(approvalConfig())
+
+			lists := fakePendingLists(api)
+			mockMemberRequester(api)
+			setup(api)
+
+			_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+			require.Error(t, err)
+			require.Empty(t, lists, "the pending slot is given back")
+		})
+	}
+}
+
+func TestSubmitRequestPendingListUnavailable(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(approvalConfig())
+
+	mockMemberRequester(api)
+	api.On("KVGet", isPendingListKey).Return(nil, testAppErr("kv down"))
+
+	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+	require.EqualError(t, err, "could not save your request; try again")
+	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+}
+
+func TestPostApprovalToSystemAdmins_SkipsNonHumanAccounts(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	remote := "remote1"
+	api.On("GetUsers", isSystemAdminQuery).Return([]*model.User{
+		{Id: "bot-user-id"},
+		{Id: "otherbot", IsBot: true},
+		{Id: "gone", DeleteAt: 1},
+		{Id: "shared", RemoteId: &remote},
+		nil,
+		{Id: "sys1"},
+	}, nil)
+	api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	require.NoError(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}))
+	api.AssertNumberOfCalls(t, "GetDirectChannel", 1)
+}
+
+func TestLogAudit_SkipsUnusableAuditChannel(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetChannel", "audit").Return(&model.Channel{Id: "audit", Type: model.ChannelTypeOpen}, nil)
+
+	p.logAudit(&configuration{AuditChannelID: "audit"}, "APPROVED: something")
+	api.AssertNotCalled(t, "CreatePost", mock.Anything)
+	api.AssertCalled(t, "LogWarn", auditChannelWarning, "channel_id", "audit", "error", "audit channel is not a private channel")
 }

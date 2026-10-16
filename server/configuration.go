@@ -42,8 +42,9 @@ type channelPrefix struct {
 //  1. Approval routing (team + channel IDs)
 //  2. Naming enforcement (structured prefix list — required)
 //  3. Approver policy (who can approve, auto-approve list)
-//  4. Notification preferences (DM + audit channel + welcome post)
-//  5. Agents (MCP tools)
+//  4. Request limits (pending requests per user, expiry)
+//  5. Notification preferences (DM + audit channel + welcome post)
+//  6. Agents (MCP tools)
 type configuration struct {
 	// --- 1. Approval routing ---
 	// ApprovalTeam and ApprovalChannel hold IDs, not names, so renames
@@ -68,10 +69,17 @@ type configuration struct {
 	// migrateLegacySettings converts them once at activation.
 	AutoApproveUserIDs string
 
-	// --- 4. Audit ---
+	// --- 4. Request limits ---
+	// Both are text settings holding whole numbers; 0 turns the limit off.
+	// Blank or invalid values fall back to the defaults below.
+	MaxPendingRequestsPerUser string
+	RequestExpiryDays         string
+
+	// --- 5. Audit ---
+	// AuditChannelID must name an existing private channel; see auditChannel.
 	AuditChannelID string
 
-	// --- 5. Agents ---
+	// --- 6. Agents ---
 	// EnableMCP offers the request tools to the Mattermost Agents plugin.
 	// Off by default; syncMCPServer applies changes on save.
 	EnableMCP bool
@@ -79,6 +87,50 @@ type configuration struct {
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
 	autoApproveUserIDs []string
+	maxPending         int
+	expiryDays         int
+}
+
+// The defaults match plugin.json. The maximums keep the settings in a
+// sensible range.
+const (
+	defaultMaxPendingRequests = 5
+	defaultRequestExpiryDays  = 30
+	maxPendingRequestsLimit   = 1000
+	maxRequestExpiryDays      = 3650
+)
+
+// MaxPending returns how many requests of each kind one user may have
+// pending. 0 means no limit.
+func (c *configuration) MaxPending() int {
+	return c.maxPending
+}
+
+// ExpiryDays returns how many days a request stays approvable. 0 means
+// requests never expire.
+func (c *configuration) ExpiryDays() int {
+	return c.expiryDays
+}
+
+// allowsChannelName reports whether name still fits the configured prefix
+// list: it must start with a configured prefix, and the rest must satisfy
+// that prefix's suffix rule. The longest matching prefix is used, as in
+// resolvePrefixedName.
+func (c *configuration) allowsChannelName(name string) bool {
+	var entry *channelPrefix
+	for i := range c.prefixes {
+		if strings.HasPrefix(name, c.prefixes[i].Prefix) && (entry == nil || len(c.prefixes[i].Prefix) > len(entry.Prefix)) {
+			entry = &c.prefixes[i]
+		}
+	}
+	if entry == nil {
+		return false
+	}
+	suffix := strings.TrimPrefix(name, entry.Prefix)
+	if suffix == "" {
+		return false
+	}
+	return entry.SuffixPattern == nil || entry.SuffixPattern.MatchString(suffix)
 }
 
 // UsesPrefixList reports whether the admin has configured at least one
@@ -145,6 +197,16 @@ func (p *Plugin) OnConfigurationChange() error {
 	// Parse the auto-approve list. Only user IDs are accepted.
 	configuration.autoApproveUserIDs = parseAutoApproveList(configuration.AutoApproveUserIDs, p.API.LogWarn)
 
+	configuration.maxPending = parseNonNegativeInt(configuration.MaxPendingRequestsPerUser, defaultMaxPendingRequests, maxPendingRequestsLimit, "MaxPendingRequestsPerUser", p.API.LogWarn)
+	configuration.expiryDays = parseNonNegativeInt(configuration.RequestExpiryDays, defaultRequestExpiryDays, maxRequestExpiryDays, "RequestExpiryDays", p.API.LogWarn)
+
+	configuration.AuditChannelID = strings.TrimSpace(configuration.AuditChannelID)
+	if configuration.AuditChannelID != "" {
+		if _, err := p.auditChannel(configuration); err != nil {
+			p.API.LogWarn(auditChannelWarning, "channel_id", configuration.AuditChannelID, "error", err.Error())
+		}
+	}
+
 	p.setConfiguration(configuration)
 
 	if err := p.syncMCPServer(); err != nil {
@@ -161,6 +223,27 @@ func splitSettingList(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
 	})
+}
+
+// parseNonNegativeInt parses a whole-number setting. A blank value means the
+// default; anything that isn't a whole number 0 or greater is logged and
+// also falls back to the default. Values above max are logged and capped.
+func parseNonNegativeInt(raw string, def, maxValue int, key string, logWarn func(msg string, keyValuePairs ...any)) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	// isPositiveInt only checks for digits, so it also rejects signs.
+	n, err := strconv.Atoi(raw)
+	if err != nil || !isPositiveInt(raw) {
+		logWarn("channel-requests: setting must be a whole number 0 or greater; using the default", "setting", key, "value", raw, "default", def)
+		return def
+	}
+	if n > maxValue {
+		logWarn("channel-requests: setting is above its maximum; using the maximum", "setting", key, "value", raw, "maximum", maxValue)
+		return maxValue
+	}
+	return n
 }
 
 // parseAutoApproveList parses the auto-approve setting into a deduplicated

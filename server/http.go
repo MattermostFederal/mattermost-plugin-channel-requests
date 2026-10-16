@@ -541,9 +541,38 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
 		return
 	}
+
 	if approve && req.RequesterID == actingUser.Id && !actingUser.IsSystemAdmin() {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You can't approve your own request. Another approver has to review it."})
 		return
+	}
+
+	config := p.getConfiguration()
+	// Best-effort for the welcome post and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
+
+	if requestExpired(req.CreatedAt, config.ExpiryDays(), model.GetMillis()) {
+		p.expireRequest(w, config, expiredRequest{
+			kvKey:       kvRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindChannel,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			notice:      fmt.Sprintf("Your request for channel **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
+			audit: fmt.Sprintf("EXPIRED: @%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
+				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
+		})
+		return
+	}
+
+	// Re-check what submitRequest checked, since the request may have been
+	// pending a while. A failed check leaves it pending so it can be denied.
+	if approve {
+		if msg := p.approvalBlocker(config, req, requester, requesterErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	// Atomically claim the request before acting on it. Two admins
@@ -567,9 +596,6 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
-	config := p.getConfiguration()
-	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for welcome post + audit
-
 	var outcome string
 	if approve {
 		channel, createErr := p.createChannelForRequest(req)
@@ -582,6 +608,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			// requester resubmit rather than implying a retry will work.
 			if restoreErr := p.storeRequest(req); restoreErr != nil {
 				p.API.LogError("failed to restore request after create failure", "error", restoreErr.Error())
+				p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
 				return
 			}
@@ -603,6 +630,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 	}
 
 	// The KV key was already removed by the atomic claim above.
+	p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
 
@@ -664,6 +692,21 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 	nominees := p.mentionList(req.NomineeIDs)
 
+	if requestExpired(req.CreatedAt, config.ExpiryDays(), model.GetMillis()) {
+		p.expireRequest(w, config, expiredRequest{
+			kvKey:       kvAdminRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindAdmin,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			notice:      fmt.Sprintf("Your request to make %s Channel Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, channelRef),
+			audit: fmt.Sprintf("CHANNEL ADMIN EXPIRED: @%s closed the request for %s in %s from %s, which was not reviewed within %d days",
+				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
+		})
+		return
+	}
+
 	// On approval we need a live channel to promote into; bail before claiming
 	// the request so a deleted channel leaves the pending request intact.
 	// GetChannel returns archived channels too, so check DeleteAt.
@@ -715,8 +758,77 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 
 	// The KV key was already removed by the atomic claim above.
+	p.releasePending(pendingKindAdmin, req.RequesterID, req.ID)
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
+
+// expiredRequest describes a pending request whose approval card was
+// clicked after it expired.
+type expiredRequest struct {
+	kvKey       string
+	raw         []byte
+	kind        string
+	requestID   string
+	requesterID string
+	postID      string
+	notice      string // DM to the requester
+	audit       string // audit-channel line
+}
+
+// expireRequest closes an expired request: it claims the record like an
+// approve or deny would, tells the requester, and marks the card expired.
+func (p *Plugin) expireRequest(w http.ResponseWriter, config *configuration, e expiredRequest) {
+	claimed, claimErr := p.API.KVCompareAndDelete(e.kvKey, e.raw)
+	if claimErr != nil {
+		p.API.LogError("failed to claim expired request", "error", claimErr.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
+		return
+	}
+	if !claimed {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
+		return
+	}
+	p.releasePending(e.kind, e.requesterID, e.requestID)
+	p.notifyRequester(e.requesterID, e.notice)
+	p.logAudit(config, e.audit)
+	writeJSON(w, model.PostActionIntegrationResponse{
+		EphemeralText: expiredText,
+		Update:        p.resolvedPost(e.postID, fmt.Sprintf("⌛ Expired: not reviewed within %d days.", config.ExpiryDays())),
+	})
+}
+
+// approvalBlocker returns why a channel request can't be approved as it
+// stands, or "" when it can. A lookup that fails for any reason other than
+// "not found" asks the approver to try again rather than deny.
+func (p *Plugin) approvalBlocker(config *configuration, req *channelRequest, requester *model.User, requesterErr *model.AppError) string {
+	if requesterErr != nil && requesterErr.StatusCode != http.StatusNotFound {
+		p.API.LogWarn("failed to load requester for approval", "user_id", req.RequesterID, "error", requesterErr.Error())
+		return approvalRetryText
+	}
+	if requester == nil || requester.DeleteAt != 0 {
+		return "The requester's account is no longer active. Deny this request instead."
+	}
+	if !requester.IsSystemAdmin() {
+		member, appErr := p.API.GetTeamMember(req.TeamID, req.RequesterID)
+		if appErr != nil && appErr.StatusCode != http.StatusNotFound {
+			p.API.LogWarn("failed to check requester's team membership for approval", "user_id", req.RequesterID, "team_id", req.TeamID, "error", appErr.Error())
+			return approvalRetryText
+		}
+		if appErr != nil || member == nil || member.DeleteAt != 0 {
+			return "The requester is no longer a member of the team. Deny this request instead."
+		}
+	}
+	if !config.allowsChannelName(req.Name) {
+		return "The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again."
+	}
+	return ""
+}
+
+// approvalRetryText is the private reply when approval can't be checked.
+const approvalRetryText = "Could not check the requester right now. Try again in a moment."
+
+// expiredText is the private reply to a click on an expired request.
+const expiredText = "This request has expired."
 
 // alreadyHandledText is the private reply to a click on a request that no
 // longer exists (approved, denied, or claimed by a concurrent click).

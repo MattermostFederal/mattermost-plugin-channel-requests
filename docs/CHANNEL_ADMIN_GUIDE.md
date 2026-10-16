@@ -77,13 +77,21 @@ message when an approver responds. If your admin hasn't configured an approval
 channel yet, you'll be told so directly instead of the request disappearing
 silently — pass that message along to a System Admin.
 
+**Limits.** A System Admin sets how many Channel Admin requests you can have
+waiting for review at once. At the limit you'll see *you have N pending requests
+waiting for review; you can submit more once some are approved, denied or
+expire*. Asking again for the same people in the same channel while that request
+is pending shows *you already have a pending Channel Admin request for these
+people in this channel*. Requests that aren't reviewed within the configured
+number of days expire, and you'll get a direct message saying so.
+
 ---
 
 ## Approving requests
 
 The request is posted to the **approval channel**, and everyone who can act on it
 is @-mentioned there: every **System Admin** plus the **Team Admins** of the
-channel's team. Any of them can **Approve** or **Deny** — except that only a
+channel's team (bot and deactivated accounts aren't mentioned). Any of them can **Approve** or **Deny** — except that only a
 System Admin can approve a request they made themselves. Team Admins of other
 teams, including the approval team, can't act on it.
 
@@ -94,6 +102,10 @@ teams, including the approval team, can't act on it.
   the approval message, DM and audit line list only who was actually promoted.
   A bot message in the channel announces who can now manage it.
 - **Deny** — the request is closed and the requester is notified by DM.
+
+A request that wasn't reviewed within **Request expiry (days)** can't be
+approved: clicking either button replies *This request has expired.*, marks the
+card *⌛ Expired: not reviewed within N days.* and DMs the requester.
 
 Requests from **System Admins** and users on the **auto-approve list** skip this
 step — the nominees are promoted immediately.
@@ -111,6 +123,8 @@ requests, in **System Console → Plugins → Channel Requests**:
 | **Approval channel** | The channel where Channel Admin request cards are posted. **Required** — if it's unset, requesters are shown an error instead of the request being dropped. |
 | **Team Admins can approve requests** | Applies to channel-creation requests only. Channel Admin requests are always reviewed by System Admins and the Team Admins of the *requested channel's* team, whatever this is set to. |
 | **Auto-approve requests from these users** | Requests from these users skip approval — nominees are promoted immediately. |
+| **Pending requests per user** | How many Channel Admin requests one user can have waiting for review (counted separately from channel requests), up to `1000`. Default `5`; `0` means no limit. |
+| **Request expiry (days)** | Pending requests older than this can no longer be approved. At most `3650`. Default `30`; `0` means requests never expire. |
 
 See the [channel-creation guide](CHANNEL_CREATION_GUIDE.md#admin-setup) for the full settings
 reference.
