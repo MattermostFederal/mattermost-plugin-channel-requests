@@ -182,8 +182,8 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team whose channel receives requests. Required. |
-| **Approval channel** | The channel where Approve/Deny cards are posted. Required. |
+| **Approval team** | The team whose channel receives requests. Recommended. |
+| **Approval channel** | The channel where Approve/Deny cards are posted. Recommended: if it isn't set, or the channel is missing or archived, each request is sent by direct message to every System Admin instead. |
 | **Channel domain prefixes** | The prefix list requesters pick from (see below). **At least one is required** — until one exists, requesters are told the plugin isn't configured and can't submit. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Auto-approve requests from these users** | Requests from these users skip approval. |

@@ -32,7 +32,7 @@
                 "key": "ApprovalChannel",
                 "display_name": "Approval channel",
                 "type": "custom",
-                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval. Saved as the channel ID."
+                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval. Saved as the channel ID. If it isn't set, or the channel is missing or archived, requests are sent by direct message to every System Admin instead."
             },
             {
                 "key": "ChannelNamePrefixes",

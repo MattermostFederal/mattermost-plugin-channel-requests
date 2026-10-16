@@ -683,7 +683,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 
 	config := p.getConfiguration()
-	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for notify + audit
+	// Best-effort for notify and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
 	channel, channelErr := p.API.GetChannel(req.ChannelID)
 
 	channelRef := "the channel"
@@ -713,6 +714,15 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	if approve && (channelErr != nil || channel.DeleteAt != 0) {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
 		return
+	}
+
+	// Re-check what submitAdminRequest checked about the requester. A failed
+	// check leaves the request pending so it can be denied.
+	if approve {
+		if msg := p.adminApprovalBlocker(req, requester, requesterErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	// Atomically claim the request before acting. Two reviewers clicking
@@ -806,7 +816,7 @@ func (p *Plugin) approvalBlocker(config *configuration, req *channelRequest, req
 		return approvalRetryText
 	}
 	if requester == nil || requester.DeleteAt != 0 {
-		return "The requester's account is no longer active. Deny this request instead."
+		return requesterInactiveText
 	}
 	if !requester.IsSystemAdmin() {
 		member, appErr := p.API.GetTeamMember(req.TeamID, req.RequesterID)
@@ -824,8 +834,38 @@ func (p *Plugin) approvalBlocker(config *configuration, req *channelRequest, req
 	return ""
 }
 
+// adminApprovalBlocker returns why a Channel Admin request can't be approved
+// as it stands, or "" when it can. Like approvalBlocker, a lookup that fails
+// for any reason other than "not found" asks the approver to try again.
+func (p *Plugin) adminApprovalBlocker(req *adminRequest, requester *model.User, requesterErr *model.AppError) string {
+	if requesterErr != nil && requesterErr.StatusCode != http.StatusNotFound {
+		p.API.LogWarn("failed to load requester for Channel Admin approval", "user_id", req.RequesterID, "error", requesterErr.Error())
+		return approvalRetryText
+	}
+	if requester == nil || requester.DeleteAt != 0 {
+		return requesterInactiveText
+	}
+	if !requester.IsSystemAdmin() {
+		// Channel memberships are hard-deleted on leave, so a member that
+		// loads is current.
+		member, appErr := p.API.GetChannelMember(req.ChannelID, req.RequesterID)
+		if appErr != nil && appErr.StatusCode != http.StatusNotFound {
+			p.API.LogWarn("failed to check requester's channel membership for Channel Admin approval", "user_id", req.RequesterID, "channel_id", req.ChannelID, "error", appErr.Error())
+			return approvalRetryText
+		}
+		if appErr != nil || member == nil {
+			return "The requester is no longer a member of the channel. Deny this request instead."
+		}
+	}
+	return ""
+}
+
 // approvalRetryText is the private reply when approval can't be checked.
 const approvalRetryText = "Could not check the requester right now. Try again in a moment."
+
+// requesterInactiveText is the private reply when the requester's account is
+// gone or deactivated.
+const requesterInactiveText = "The requester's account is no longer active. Deny this request instead."
 
 // expiredText is the private reply to a click on an expired request.
 const expiredText = "This request has expired."
