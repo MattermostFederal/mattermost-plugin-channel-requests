@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Approving Requests — Channel Requests</title>
+    <title>Approving Requests | Channel Requests</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,6 +18,8 @@
             <a href="help.html">Overview &amp; Requesting</a>
             <a href="approvals.html" class="active">Approving Requests</a>
             <a href="admin.html">Admin Setup</a>
+            <a href="commands.html">Slash Command &amp; Agents</a>
+            <a href="troubleshooting.html">Troubleshooting</a>
         </nav>
     </aside>
 
@@ -80,7 +82,8 @@
             requester's account is no longer active, or they've left the channel (System Admins
             excepted), you'll see <em>The requester's account is no longer active.</em> or
             <em>The requester is no longer a member of the channel.</em> and the request stays
-            pending so you can deny it.
+            pending so you can deny it. See
+            <a href="troubleshooting.html#requester-left">Troubleshooting</a>.
         </p>
 
         <h3>Expired requests</h3>
@@ -88,7 +91,8 @@
             A request that wasn't reviewed within the configured <em>Request expiry (days)</em>
             can't be approved. Clicking either button on it replies <em>This request has
             expired.</em>, marks the card <em>⌛ Expired: not reviewed within N days.</em> and
-            sends the requester a direct message so they can submit it again.
+            sends the requester a direct message so they can submit it again. See
+            <a href="troubleshooting.html#expired">Troubleshooting</a>.
         </p>
 
         <!-- Screenshot: welcome message in the new channel mentioning added users -->
@@ -98,7 +102,7 @@
             <div class="alert-title">Auto-approved requests</div>
             <p>
                 Requests from <strong>System Admins</strong> and from users on the
-                <strong>auto-approve list</strong> skip this step — the channel is created
+                <strong>auto-approve list</strong> skip this step: the channel is created
                 immediately, with no Approve/Deny card.
             </p>
         </div>

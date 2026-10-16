@@ -71,6 +71,8 @@ heading structure.
 | `public/help/help.html` | Overview, opening the request form, filling it out | `server/command.go`, `webapp/src/RequestChannelModal.tsx`, `webapp/src/channelCreationOverride.ts`, `webapp/src/HeaderIcon.tsx` |
 | `public/help/approvals.html` | Who can approve, acting on a request, what happens on approve and deny | `server/http.go` (`handleAction`, `canApprove`), `server/request.go` |
 | `public/help/admin.html` | One entry per setting, and the domain prefix rules | `plugin.json` `settings_schema.settings`, `server/configuration.go`, `webapp/src/PrefixEditor.tsx` |
+| `public/help/commands.html` | Every `/channel-request` subcommand, the `create` options, their error replies, and the Agents tools | `server/command.go`, `server/mcp_tools.go`, `server/request.go`, `server/admin_request.go`, `server/pending.go` |
+| `public/help/troubleshooting.html` | One section per symptom: the message, its cause and the fix | Every user-visible error and log warning it quotes |
 | `public/help/styles.css` | Shared stylesheet. Rarely changes | |
 | `docs/CHANNEL_CREATION_GUIDE.md` | Requesting, approving and setting up new channels, for all three roles | Everything above |
 | `docs/CHANNEL_ADMIN_GUIDE.md` | Requesting and approving Channel Admin rights on an existing channel | `server/admin_request.go`, `webapp/src/RequestChannelAdminModal.tsx`, `webapp/src/membersPanelButton.ts` |
@@ -88,6 +90,9 @@ are documentation too: the System Console shows them. Keep them consistent with
 | New way to open the form, or a change to the form | `help.html`, and the requesting section of `docs/CHANNEL_CREATION_GUIDE.md` |
 | Who can approve, or what approval or denial does | `approvals.html`, and the approving section of the guide |
 | Channel Admin request flow | `docs/CHANNEL_ADMIN_GUIDE.md` |
+| New or changed `/channel-request` subcommand or option | `commands.html` (a section with `id="<subcommand>"`), the summary table in `help.html`, and the short list in `docs/CHANNEL_CREATION_GUIDE.md` if the subcommand is new |
+| New or changed Agents tool | `commands.html#agents` and the tool list in `troubleshooting.html#agents-missing` |
+| New error or warning a user or admin could hit | `troubleshooting.html`, if the fix isn't obvious from the message |
 | Changed user-facing message text | Every page that quotes it, verbatim |
 | A UI change visible in a screenshot | Note the stale image in `docs/images/` in the report; do not fake a screenshot |
 
@@ -103,7 +108,12 @@ are documentation too: the System Console shows them. Keep them consistent with
    own entry and nowhere else.
 4. **Quote messages verbatim.** Copy user-facing strings from the Go or TSX
    source rather than paraphrasing, so search finds them.
-5. **Hardcode no plugin id.** The webapp builds help links from `manifest.id`.
+5. **No em dashes** in `public/help/`, `docs/`, `README.md` or `plugin.json`.
+   Use a comma, a colon, a period or parentheses.
+6. **Hardcode no plugin id in the webapp.** It builds help links from `manifest.id`.
+   The `plugin.json` header link and the Agents tool names on the help pages are
+   the exceptions; `server/help_docs_test.go` checks both against the manifest
+   and the running MCP server.
 
 #### Adding a help page
 
@@ -111,7 +121,8 @@ are documentation too: the System Console shows them. Keep them consistent with
    breadcrumb. Move `class="active"` onto the new entry.
 2. Add the new page to the nav block of **all** the other pages. The block is
    identical everywhere except for which entry carries `class="active"`.
-3. Link to it from `help.html`.
+3. Add it to `helpPages` in `server/help_docs_test.go`.
+4. Link to it from `help.html`.
 
 ### 4. Verify
 
@@ -123,9 +134,13 @@ tar tzf dist/com.mattermostfederal.channel-requests-*.tar.gz | grep public/help
 grep -o 'href="[^"#]*' public/help/*.html | sort -u
 ```
 
-No test covers the help pages, so check by hand: every relative `href` resolves
-to a file in `public/help/`, every page's nav matches, and the prose reads well
-when `public/help/help.html` is opened over `file://`.
+`server/help_docs_test.go` (part of `make test`) checks that the page list
+matches `public/help/`, that every sidebar is complete with one active entry,
+that every link and `#anchor` resolves, that every subcommand and Agents tool is
+documented, that the System Console header links to the docs, that no page
+loads a script or remote asset, and that the docs and `plugin.json` contain no
+em dashes. It doesn't check the prose, so still open
+`public/help/help.html` over `file://` and read what you changed.
 
 ### 5. Report
 
