@@ -63,6 +63,15 @@ user is currently assigned.
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
 message when an approver responds.
 
+**Limits.** A System Admin sets how many requests you can have waiting for
+review at once (new channels and Channel Admins are counted separately). At the
+limit you'll see *you have N pending requests waiting for review; you can submit
+more once some are approved, denied or expire*. You can't have the same request
+pending twice: asking again for a name you're already waiting on shows *you
+already have a pending request for ~name in this team*. Requests that aren't
+reviewed within the configured number of days expire, and you'll get a direct
+message saying so.
+
 Requests need at least one domain prefix. Until a System Admin defines one, the
 form and the slash command show: *Channel requests aren't configured yet. Ask a
 System Admin to define at least one channel prefix in System Console → Plugins →
@@ -145,6 +154,18 @@ requester; agents can't approve or deny.
   Channel Admins, and posts a welcome message that @-mentions everyone added.
 - **Deny** — the request is closed and the requester is notified by DM.
 
+Approve checks the request again first. If the requester's account is no longer
+active, they've left the team, or the channel name no longer matches the
+configured prefixes, you'll get a private message saying so (for example *The
+requester is no longer a member of the team. Deny this request instead.*). The
+request stays pending and the card keeps its buttons, so deny it. If the
+requester can't be checked at that moment, you'll see *Could not check the
+requester right now. Try again in a moment.* instead.
+
+A request that wasn't reviewed within **Request expiry (days)** can't be
+approved: clicking either button replies *This request has expired.*, marks the
+card *⌛ Expired: not reviewed within N days.* and DMs the requester.
+
 ![The welcome message the bot posts in the new channel](images/mattermost-creation-welcome.png)
 
 Requests from users on the **auto-approve list** (and from System Admins) skip
@@ -166,7 +187,9 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 | **Channel domain prefixes** | The prefix list requesters pick from (see below). **At least one is required** — until one exists, requesters are told the plugin isn't configured and can't submit. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Auto-approve requests from these users** | Requests from these users skip approval. |
-| **Audit channel ID** | Optional. Posts an audit line for every approve/deny. |
+| **Pending requests per user** | How many requests of each kind (new channel, Channel Admin) one user can have waiting for review, up to `1000`. Default `5`; `0` means no limit. |
+| **Request expiry (days)** | Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most `3650`. Default `30`; `0` means requests never expire. A change applies to requests already pending too. |
+| **Audit channel ID** | Optional. Posts an audit line for every approve/deny. Must be an existing private channel; otherwise audit lines are skipped and a warning is logged. |
 | **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. |
 
 > To fully funnel non-admins through the request flow, remove the built-in

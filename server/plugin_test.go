@@ -12,6 +12,7 @@ import (
 func TestOnActivate_EnsuresBotAndRegistersCommand(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -32,6 +33,7 @@ func TestOnActivate_EnsuresBotAndRegistersCommand(t *testing.T) {
 func TestOnActivate_BotFailureStopsActivation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -48,6 +50,7 @@ func TestOnActivate_BotFailureStopsActivation(t *testing.T) {
 func TestOnActivate_MigrationFailureStillRegistersCommand(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -61,4 +64,20 @@ func TestOnActivate_MigrationFailureStillRegistersCommand(t *testing.T) {
 
 	require.NoError(t, p.OnActivate())
 	api.AssertCalled(t, "LogError", "channel-requests: failed to migrate settings to IDs", "error", mock.Anything)
+}
+
+func TestOnActivate_StoredRequestUpdateFailureIsLogged(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := &Plugin{}
+	p.SetAPI(api)
+
+	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
+	api.On("GetPluginConfig").Return(map[string]any{})
+	api.On("KVGet", kvPendingMigrated).Return(nil, testAppErr("kv down"))
+	api.On("RegisterCommand", mock.Anything).Return(nil)
+
+	require.NoError(t, p.OnActivate())
+	api.AssertCalled(t, "LogError", "channel-requests: failed to update stored requests", "error", mock.Anything)
 }

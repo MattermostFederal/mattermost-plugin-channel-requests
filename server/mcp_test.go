@@ -121,6 +121,7 @@ func TestOnActivate_LeavesMCPOffByDefault(t *testing.T) {
 	stub := stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -138,6 +139,7 @@ func TestOnActivate_StartsMCPServerWhenEnabled(t *testing.T) {
 	stub := stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -156,6 +158,7 @@ func TestOnActivate_CommandFailureStopsActivation(t *testing.T) {
 	stub := stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -178,6 +181,7 @@ func TestOnActivate_IncompleteManifestStopsActivation(t *testing.T) {
 
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -197,6 +201,7 @@ func TestOnActivate_RegistrationFailureIsLoggedNotFatal(t *testing.T) {
 	stub.registerErr = errors.New("agents unavailable")
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)

@@ -26,7 +26,9 @@ In **System Console → Plugins → Channel Requests**, set:
 - **Channel domain prefixes** — the prefixes requesters pick from, with descriptions and suffix rules. At least one is required.
 - **Team Admins can approve requests** — optional; lets Team Admins of the approval team act on channel-creation requests.
 - **Auto-approve requests from these users** — optional; these users' requests skip approval.
-- **Audit channel ID** — optional; every approve/deny is logged to this channel.
+- **Pending requests per user** — how many requests of each kind (new channel, Channel Admin) one user can have waiting for review. Default 5, up to 1000; 0 means no limit.
+- **Request expiry (days)** — pending requests older than this can no longer be approved. Default 30, at most 3650; 0 means requests never expire.
+- **Audit channel ID** — optional; every approve/deny is logged to this channel, which must be a private channel.
 - **Offer tools to Agents** — optional, off by default; lets the Mattermost Agents plugin file requests on a user's behalf.
 
 Requires Mattermost 11.3 or later.

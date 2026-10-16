@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -66,7 +67,23 @@ type channelRequest struct {
 	// approval, these users get channel_admin scheme roles in the newly
 	// created channel (in addition to being members).
 	AdminMemberIDs []string `json:"admin_member_ids"`
+	// CreatedAt is when the request was submitted, in milliseconds.
+	// Requests saved by older versions get it from migratePendingRequests.
+	CreatedAt int64 `json:"created_at,omitempty"`
 }
+
+// requestExpired reports whether a request created at createdAt (ms) is
+// older than days at now (ms). days == 0 means requests never expire. A
+// request with no CreatedAt (saved by an older version and not yet
+// migrated) is treated as new.
+func requestExpired(createdAt int64, days int, now int64) bool {
+	if days <= 0 || createdAt <= 0 {
+		return false
+	}
+	return now-createdAt > int64(days)*millisPerDay
+}
+
+const millisPerDay = int64(24 * time.Hour / time.Millisecond)
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
 // dialog or webapp modal) before a request is created.
@@ -296,6 +313,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		ChannelType:    in.ChannelType,
 		MemberIDs:      in.MemberIDs,
 		AdminMemberIDs: in.AdminMemberIDs,
+		CreatedAt:      model.GetMillis(),
 	}
 
 	// Bypass approval for:
@@ -315,7 +333,13 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
+	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}
+	if err := p.reservePending(pendingKindChannel, req.RequesterID, entry, config); err != nil {
+		return "", err
+	}
+
 	if err := p.storeRequest(req); err != nil {
+		p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 		p.API.LogError("failed to store channel request", "error", err.Error())
 		return "", errors.New("could not save your request; try again")
 	}
@@ -323,6 +347,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	if err := p.postApprovalRequest(req, requester); err != nil {
 		// Roll back the stored request so it isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
+		p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 		p.API.LogError("failed to post channel request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
@@ -359,10 +384,37 @@ func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest,
 	}
 }
 
+// auditChannelWarning is logged when AuditChannelID is set but unusable.
+const auditChannelWarning = "channel-requests: the audit channel must be an existing private channel; skipping audit posts"
+
+// auditChannel returns the configured audit channel, or an error when it
+// doesn't exist, is archived, or isn't a private channel.
+func (p *Plugin) auditChannel(config *configuration) (*model.Channel, error) {
+	channel, appErr := p.API.GetChannel(config.AuditChannelID)
+	if appErr != nil {
+		return nil, errors.Wrap(appErr, "audit channel not found")
+	}
+	if channel == nil {
+		return nil, errors.New("audit channel not found")
+	}
+	if channel.DeleteAt != 0 {
+		return nil, errors.New("audit channel is archived")
+	}
+	if channel.Type != model.ChannelTypePrivate {
+		return nil, errors.New("audit channel is not a private channel")
+	}
+	return channel, nil
+}
+
 // logAudit posts an audit-trail line to the configured audit channel.
-// No-op when AuditChannelID is empty.
+// No-op when AuditChannelID is empty; skipped with a warning when the
+// channel isn't an existing private channel.
 func (p *Plugin) logAudit(config *configuration, message string) {
-	if strings.TrimSpace(config.AuditChannelID) == "" {
+	if config.AuditChannelID == "" {
+		return
+	}
+	if _, err := p.auditChannel(config); err != nil {
+		p.API.LogWarn(auditChannelWarning, "channel_id", config.AuditChannelID, "error", err.Error())
 		return
 	}
 	if _, appErr := p.API.CreatePost(&model.Post{
@@ -537,14 +589,14 @@ func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, hea
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
 // it; once one does, the others' copies resolve to an "already handled" message.
 func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) error {
-	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Page: 0, PerPage: 100})
+	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Active: true, Page: 0, PerPage: 100})
 	if appErr != nil {
 		return errors.Wrap(appErr, "failed to list System Admins")
 	}
 
 	posted := 0
 	for _, admin := range admins {
-		if admin.Id == p.botUserID {
+		if !isNotifiableUser(admin) || admin.Id == p.botUserID {
 			continue
 		}
 		dm, appErr := p.API.GetDirectChannel(admin.Id, p.botUserID)
@@ -565,6 +617,12 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 		return errors.New("no System Admins are available to receive the approval request")
 	}
 	return nil
+}
+
+// isNotifiableUser reports whether u should receive approval notifications:
+// an active, local, human account.
+func isNotifiableUser(u *model.User) bool {
+	return u != nil && !u.IsBot && u.DeleteAt == 0 && !u.IsRemote()
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.

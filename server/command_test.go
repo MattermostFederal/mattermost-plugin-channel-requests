@@ -196,6 +196,7 @@ func TestExecuteCommand_CreateUnknownUsers(t *testing.T) {
 func TestExecuteCommand_CreateSubmitsForApproval(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
@@ -207,7 +208,7 @@ func TestExecuteCommand_CreateSubmitsForApproval(t *testing.T) {
 		api.On("GetUser", id).Return(&model.User{Id: id, Username: name}, nil)
 	}
 	var stored channelRequest
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
 	}).Return(nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
@@ -228,7 +229,9 @@ func TestExecuteCommand_CreateSubmitsForApproval(t *testing.T) {
 		ChannelType:    channelTypePrivate,
 		MemberIDs:      []string{alice, bob},
 		AdminMemberIDs: []string{carol},
+		CreatedAt:      stored.CreatedAt,
 	}, stored)
+	require.NotZero(t, stored.CreatedAt)
 }
 
 func TestExecuteCommand_CreateRejectedBySubmit(t *testing.T) {

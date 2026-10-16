@@ -56,7 +56,21 @@
                 "key": "AuditChannelID",
                 "display_name": "Audit channel ID (optional)",
                 "type": "text",
-                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
+                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance. It must be a private channel the bot can post in."
+            },
+            {
+                "key": "MaxPendingRequestsPerUser",
+                "display_name": "Pending requests per user",
+                "type": "text",
+                "default": "5",
+                "help_text": "How many requests of each kind (new channel, Channel Admin) one user can have waiting for review, up to 1000. 0 means no limit."
+            },
+            {
+                "key": "RequestExpiryDays",
+                "display_name": "Request expiry (days)",
+                "type": "text",
+                "default": "30",
+                "help_text": "Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most 3650. 0 means requests never expire. Applies to existing requests too."
             },
             {
                 "key": "EnableMCP",

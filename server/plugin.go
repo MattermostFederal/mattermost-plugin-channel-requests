@@ -45,6 +45,9 @@ func (p *Plugin) OnActivate() error {
 	if err := p.migrateLegacySettings(); err != nil {
 		p.API.LogError("channel-requests: failed to migrate settings to IDs", "error", err.Error())
 	}
+	if err := p.migratePendingRequests(); err != nil {
+		p.API.LogError("channel-requests: failed to update stored requests", "error", err.Error())
+	}
 
 	if err := p.API.RegisterCommand(getCommand()); err != nil {
 		return err

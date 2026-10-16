@@ -60,6 +60,30 @@
             </tbody>
         </table>
 
+        <h3>Requests that can't be approved as they stand</h3>
+        <p>
+            Before creating the channel, Approve checks the request again. If one of these
+            applies, you'll see a private message, the request stays pending and the card keeps
+            its buttons, so you can deny it:
+        </p>
+        <ul>
+            <li><em>The requester's account is no longer active. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again.</em></li>
+        </ul>
+        <p>
+            If the requester can't be checked at that moment, you'll see <em>Could not check the
+            requester right now. Try again in a moment.</em> instead.
+        </p>
+
+        <h3>Expired requests</h3>
+        <p>
+            A request that wasn't reviewed within the configured <em>Request expiry (days)</em>
+            can't be approved. Clicking either button on it replies <em>This request has
+            expired.</em>, marks the card <em>⌛ Expired: not reviewed within N days.</em> and
+            sends the requester a direct message so they can submit it again.
+        </p>
+
         <!-- Screenshot: welcome message in the new channel mentioning added users -->
         <!-- <img src="images/welcome-message.png" alt="Welcome message"> -->
 
