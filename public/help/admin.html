@@ -42,7 +42,7 @@
             <tbody>
                 <tr><td><code>Approval team</code></td><td>The team whose channel receives requests. <strong>Required.</strong></td></tr>
                 <tr><td><code>Approval channel</code></td><td>The channel where Approve/Deny cards are posted. <strong>Required.</strong></td></tr>
-                <tr><td><code>Channel domain prefixes</code></td><td>The prefix list requesters pick from (see below). Leave empty for free-form URLs.</td></tr>
+                <tr><td><code>Channel domain prefixes</code></td><td>The prefix list requesters pick from (see below). <strong>At least one is required</strong> — until one exists, requesters are told the plugin isn't configured and can't submit.</td></tr>
                 <tr><td><code>Team Admins can approve requests</code></td><td>When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team.</td></tr>
                 <tr><td><code>Auto-approve requests from these users</code></td><td>Requests from these users skip approval.</td></tr>
                 <tr><td><code>Audit channel ID</code></td><td>Optional. Posts an audit line for every approve/deny.</td></tr>

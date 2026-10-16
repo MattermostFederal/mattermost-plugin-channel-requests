@@ -23,7 +23,8 @@ This guide covers three roles:
 There are two ways to open the request form, and both open the same window. The
 option is **only shown to members who aren't already an admin** of the channel —
 if you're already a Channel Admin (or a System Admin), you can manage the channel
-directly and won't see it.
+directly and won't see it. You can also skip the form and use the
+[slash command](#3-from-the-slash-command).
 
 ### 1. From the Members panel
 
@@ -38,6 +39,18 @@ Click the channel name at the top-left, then **More actions → Request Channel
 Admin**. (Same form as the Members-panel button — use whichever is handier.)
 
 ![Request Channel Admin under the channel-name menu](images/mattermost-promotion-menu.png)
+
+### 3. From the slash command
+
+In the channel itself, type:
+
+```
+/channel-request admin @user [@user ...]
+```
+
+It asks for everyone you name to be made a Channel Admin of that channel, with
+the same rules and approval as the form. The command isn't hidden from people who
+are already admins, but they can manage the channel directly instead.
 
 ### Filling out the request
 
