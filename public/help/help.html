@@ -40,7 +40,7 @@
         </p>
 
         <h2>Opening the request form</h2>
-        <p>There are two ways to open the form. They both open the same window.</p>
+        <p>There are three ways to open the form. They all ask for the same details.</p>
 
         <h3>1. From the "+" in the sidebar</h3>
         <p>
@@ -57,6 +57,13 @@
         <!-- Screenshot: channel header Request Channel button -->
         <!-- <img src="images/request-header-button.png" alt="Request Channel header button"> -->
 
+        <h3>3. From the slash command</h3>
+        <p>
+            Type <code>/channel-request</code> in any channel to open the request dialog. To
+            request a channel without the form, see <a href="#slash-command">Using the slash
+            command</a> below.
+        </p>
+
         <h2>Filling out the request</h2>
         <!-- Screenshot: the full Request a Channel modal -->
         <!-- <img src="images/request-modal.png" alt="Request a Channel modal"> -->
@@ -66,7 +73,7 @@
                 <tr><th>Field</th><th>What it does</th></tr>
             </thead>
             <tbody>
-                <tr><td><code>Domain prefix</code></td><td>Appears only if your admin configured prefixes. Pick the category — the final URL is <code>&lt;prefix&gt;&lt;suffix&gt;</code>.</td></tr>
+                <tr><td><code>Domain prefix</code></td><td>Required. Pick the category your admin configured — the final URL is <code>&lt;prefix&gt;&lt;suffix&gt;</code>.</td></tr>
                 <tr><td><code>Channel name</code></td><td>The display name people see (e.g. <em>Marketing Team</em>).</td></tr>
                 <tr><td><code>URL name / suffix</code></td><td>Optional. The URL part after the prefix. Leave blank to auto-generate from the channel name. A live <strong>Preview</strong> shows the final URL.</td></tr>
                 <tr><td><code>Purpose</code></td><td>Optional short description of the channel.</td></tr>
@@ -92,6 +99,16 @@
             message when an approver responds.
         </p>
 
+        <div class="alert alert-warning">
+            <div class="alert-title">No prefixes configured</div>
+            <p>
+                Requests need at least one domain prefix. Until a System Admin defines one, the
+                form and the slash command show: <em>Channel requests aren't configured yet. Ask
+                a System Admin to define at least one channel prefix in System Console → Plugins
+                → Channel Requests.</em>
+            </p>
+        </div>
+
         <div class="alert alert-tip">
             <div class="alert-title">After approval</div>
             <p>
@@ -99,6 +116,71 @@
                 and a welcome message @-mentions everyone who was added so they know they're in.
             </p>
         </div>
+
+        <h2 id="slash-command">Using the slash command</h2>
+        <p>
+            <code>/channel-request</code> on its own opens the request form. Add a subcommand to
+            do the same things from the message box. Replies are only visible to you.
+        </p>
+
+        <table class="field-table">
+            <thead>
+                <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>/channel-request</code></td><td>Opens the channel request form.</td></tr>
+                <tr><td><code>/channel-request create &lt;prefix&gt; &lt;Channel name&gt; [options]</code></td><td>Requests a channel in the current team without the form. Options are listed below.</td></tr>
+                <tr><td><code>/channel-request admin @user [@user ...]</code></td><td>Asks for those channel members to be made Channel Admins of the channel you run it in.</td></tr>
+                <tr><td><code>/channel-request prefixes</code></td><td>Lists the channel prefixes you can use, with each one's description and suffix rule.</td></tr>
+                <tr><td><code>/channel-request help</code></td><td>Shows the usage message.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Options for <code>create</code></h3>
+        <p>
+            The prefix comes first, typed exactly as <code>/channel-request prefixes</code> lists
+            it (for example <code>team-</code>). Then comes the channel name, which can be
+            several words, then any options in any order. Each option takes the words up to the
+            next <code>--</code>.
+        </p>
+
+        <table class="field-table">
+            <thead>
+                <tr><th>Option</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>--suffix &lt;suffix&gt;</code></td><td>The URL part after the prefix, as one word. Leave it out to generate it from the channel name.</td></tr>
+                <tr><td><code>--purpose &lt;text&gt;</code></td><td>A short description of the channel.</td></tr>
+                <tr><td><code>--private</code></td><td>Makes the channel private. Without it the channel is public.</td></tr>
+                <tr><td><code>--members @user ...</code></td><td>Users who become regular members on approval.</td></tr>
+                <tr><td><code>--admins @user ...</code></td><td>Users who become Channel Admins on approval.</td></tr>
+            </tbody>
+        </table>
+
+        <p>For example:</p>
+<pre><code>/channel-request create team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
+/channel-request create ops- SRE On-call --suffix sre-oncall --private</code></pre>
+
+        <p>
+            The request goes through the same approval as the form, and you get the same
+            confirmation. If something is wrong, such as an unknown prefix, an unknown
+            <code>@user</code> or a suffix that breaks the prefix's rule, the reply says what,
+            and nothing is submitted.
+        </p>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Limits of the command</div>
+            <p>
+                A channel name or purpose can't contain a word that starts with <code>--</code>,
+                and extra spaces or line breaks in the purpose become single spaces. Use the form
+                if you need either.
+            </p>
+        </div>
+
+        <p>
+            For <code>admin</code>, run the command in the channel itself. Everyone you name must
+            already be a member of it.
+        </p>
     </main>
 </div>
 </body>

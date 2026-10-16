@@ -37,7 +37,9 @@ the + menu.
 
 ### 3. From the slash command
 
-Type `/channel-request` in any channel to open the request dialog.
+Type `/channel-request` in any channel to open the request dialog. To request a
+channel without the form, see
+[Requesting from the command line](#requesting-from-the-command-line) below.
 
 ### Filling out the request
 
@@ -45,7 +47,7 @@ Type `/channel-request` in any channel to open the request dialog.
 
 | Field | What it does |
 |-------|--------------|
-| **Domain prefix** | Appears only if your admin configured prefixes. Pick the category — the final URL is `<prefix><suffix>`. |
+| **Domain prefix** | Required. Pick the category your admin configured — the final URL is `<prefix><suffix>`. |
 | **Channel name** | The display name people see (e.g. *SRE Team*). Required. |
 | **URL suffix / URL name** | Optional. Leave blank to auto-generate from the channel name. A live **Preview** shows the final URL (e.g. `ops-sre-team`). |
 | **Purpose** | Optional short description of the channel. |
@@ -60,6 +62,53 @@ user is currently assigned.
 
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
 message when an approver responds.
+
+Requests need at least one domain prefix. Until a System Admin defines one, the
+form and the slash command show: *Channel requests aren't configured yet. Ask a
+System Admin to define at least one channel prefix in System Console → Plugins →
+Channel Requests.*
+
+### Requesting from the command line
+
+`/channel-request` on its own opens the request form. Add a subcommand to do the
+same things from the message box. Replies are only visible to you.
+
+| Command | What it does |
+|---------|--------------|
+| `/channel-request` | Opens the channel request form. |
+| `/channel-request create <prefix> <Channel name> [options]` | Requests a channel in the current team without the form. Options are listed below. |
+| `/channel-request admin @user [@user ...]` | Asks for those channel members to be made Channel Admins of the channel you run it in. See the [Channel Admin Requests guide](CHANNEL_ADMIN_GUIDE.md#3-from-the-slash-command). |
+| `/channel-request prefixes` | Lists the channel prefixes you can use, with each one's description and suffix rule. |
+| `/channel-request help` | Shows the usage message. |
+
+For `create`, the prefix comes first, typed exactly as `/channel-request prefixes`
+lists it (for example `team-`). Then comes the channel name, which can be several
+words, then any options in any order. Each option takes the words up to the next
+`--`.
+
+| Option | What it does |
+|--------|--------------|
+| `--suffix <suffix>` | The URL part after the prefix, as one word. Leave it out to generate it from the channel name. |
+| `--purpose <text>` | A short description of the channel. |
+| `--private` | Makes the channel private. Without it the channel is public. |
+| `--members @user ...` | Users who become regular members on approval. |
+| `--admins @user ...` | Users who become Channel Admins on approval. |
+
+For example:
+
+```
+/channel-request create team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
+/channel-request create ops- SRE On-call --suffix sre-oncall --private
+```
+
+The request goes through the same approval as the form, and you get the same
+confirmation. If something is wrong, such as an unknown prefix, an unknown
+`@user` or a suffix that breaks the prefix's rule, the reply says what, and
+nothing is submitted.
+
+A channel name or purpose can't contain a word that starts with `--`, and extra
+spaces or line breaks in the purpose become single spaces. Use the form if you
+need either.
 
 ---
 
@@ -94,7 +143,7 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 |---------|---------|
 | **Approval team** | The team whose channel receives requests. Required. |
 | **Approval channel** | The channel where Approve/Deny cards are posted. Required. |
-| **Channel domain prefixes** | The prefix list requesters pick from (see below). Leave empty for free-form URLs. |
+| **Channel domain prefixes** | The prefix list requesters pick from (see below). **At least one is required** — until one exists, requesters are told the plugin isn't configured and can't submit. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Auto-approve requests from these users** | Requests from these users skip approval. |
 | **Audit channel ID** | Optional. Posts an audit line for every approve/deny. |
