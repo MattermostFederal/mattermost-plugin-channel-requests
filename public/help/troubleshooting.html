@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Troubleshooting | Channel Requests</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Channel Requests</h2>
+            <span class="version">Plugin Documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Documentation</span>
+            <a href="help.html">Overview &amp; Requesting</a>
+            <a href="approvals.html">Approving Requests</a>
+            <a href="admin.html">Admin Setup</a>
+            <a href="commands.html">Slash Command &amp; Agents</a>
+            <a href="troubleshooting.html" class="active">Troubleshooting</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <a href="help.html">Docs</a>
+            <span class="separator">/</span>
+            Troubleshooting
+        </div>
+
+        <h1>Troubleshooting</h1>
+        <p class="tagline">What a message means, and what to do about it.</p>
+
+        <h2 id="not-configured">"Channel requests aren't configured yet"</h2>
+        <p>
+            The channel request form, <code>/channel-request</code>, <code>create</code>,
+            <code>prefixes</code> and the Agents <code>list_prefixes</code> tool show
+            <em>Channel requests aren't configured yet. Ask a System Admin to define at least
+            one channel prefix in System Console → Plugins → Channel Requests.</em> The Agents
+            <code>request_channel</code> tool
+            says <em>plugin is not configured: an admin must define at least one channel
+            prefix</em>.
+        </p>
+        <p>
+            <strong>Cause:</strong> no domain prefix is defined. Every request needs one.
+            <strong>Fix:</strong> a System Admin adds at least one prefix, for example with
+            <em>Load preset</em>. See <a href="admin.html">Admin Setup</a>.
+        </p>
+
+        <h2 id="requests-in-dms">Requests arrive as direct messages to System Admins</h2>
+        <p>
+            <strong>Cause:</strong> the approval channel isn't set, or the configured channel no
+            longer exists, is archived, or isn't in the approval team. Rather than drop the
+            request, the plugin sends it by direct message to every active System Admin. When a
+            channel is configured but can't be used, the server log also has the warning
+            <em>configured approval channel unavailable; falling back to System Admins</em>.
+        </p>
+        <p>
+            <strong>Fix:</strong> set <em>Approval team</em> and <em>Approval channel</em> in the
+            plugin settings to an existing channel in that team. Any one System Admin can act on
+            a DMed request; after that, the buttons on the other copies reply <em>This request
+            has already been handled.</em>
+        </p>
+        <p>
+            If no System Admin can receive the message either, the requester sees <em>could not
+            send your request to the approvers; try again or contact a System Admin</em>.
+        </p>
+
+        <h2 id="expired">"This request has expired"</h2>
+        <p>
+            <strong>Cause:</strong> the request wasn't reviewed within <em>Request expiry
+            (days)</em>. Approve and Deny both reply <em>This request has expired.</em>, the card
+            is marked <em>⌛ Expired: not reviewed within N days.</em>, and the requester gets a
+            direct message.
+        </p>
+        <p>
+            <strong>Fix:</strong> the requester submits it again. Raising the expiry also applies
+            to requests already pending; <code>0</code> turns expiry off. See
+            <a href="admin.html">Admin Setup</a>.
+        </p>
+
+        <h2 id="pending-limit">"You have N pending requests waiting for review"</h2>
+        <p>
+            <strong>Cause:</strong> the requester is at <em>Pending requests per user</em> for
+            that kind of request (new channels and Channel Admins are counted separately).
+            Expired requests no longer count.
+        </p>
+        <p>
+            <strong>Fix:</strong> wait for an approver to act on some, or for them to expire. A
+            System Admin can raise the limit, or set it to <code>0</code> for no limit.
+        </p>
+        <p>
+            A related message, <em>you already have a pending request for ~name in this team</em>
+            (or <em>…a pending Channel Admin request for these people in this channel</em>), means
+            the same request is already waiting. It doesn't need to be submitted twice.
+        </p>
+
+        <h2 id="requester-left">Approve says the requester is no longer active or a member</h2>
+        <p>
+            Approve checks the request again before acting. You'll see a private message, and the
+            request stays pending with its buttons:
+        </p>
+        <ul>
+            <li><em>The requester's account is no longer active. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the channel. Deny this request instead.</em> (Channel Admin requests)</li>
+            <li><em>The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again.</em></li>
+        </ul>
+        <p>
+            <strong>Fix:</strong> deny the request. Deny is never blocked. See
+            <a href="approvals.html">Approving Requests</a>.
+        </p>
+        <p>
+            For a Channel Admin request, if the nominees have left the channel by the time it's
+            approved, the card says <em>nobody was promoted: the nominees are no longer members</em>
+            and the requester is told.
+        </p>
+
+        <h2 id="try-again">"Try again" messages</h2>
+        <p>
+            <em>Could not check the requester right now. Try again in a moment.</em>, <em>could not
+            load your account; try again</em> and <em>could not save your request; try again</em>
+            mean a lookup or save failed for a moment.
+        </p>
+        <p>
+            <strong>Fix:</strong> try again. If it keeps happening, check the server log for an
+            error from the plugin.
+        </p>
+
+        <h2 id="audit-missing">No audit lines in the audit channel</h2>
+        <p>
+            <strong>Cause:</strong> <em>Audit channel ID</em> must be an existing, unarchived
+            private channel. Anything else (a public channel, a wrong ID, an archived channel) is
+            skipped, and the server log has the warning <em>the audit channel must be an existing
+            private channel; skipping audit posts</em>.
+        </p>
+        <p>
+            <strong>Fix:</strong> create a private channel, copy its ID (channel menu → View
+            Info), and paste it into the setting. If the channel is right but a post still
+            fails, the server log has <em>audit post failed</em> with the reason.
+        </p>
+
+        <h2 id="agents-missing">Agents tools not showing</h2>
+        <p>If an agent doesn't offer to file channel requests, check, in order:</p>
+        <ul>
+            <li><em>Offer tools to Agents</em> is on in the Channel Requests settings. It's off by default.</li>
+            <li>The Mattermost Agents plugin is installed and enabled.</li>
+            <li>
+                The tools are allowed in the Agents plugin's settings. They're listed with this
+                plugin's prefix: <code>com_mattermostfederal_channel-requests__list_prefixes</code>,
+                <code>com_mattermostfederal_channel-requests__request_channel</code> and
+                <code>com_mattermostfederal_channel-requests__request_channel_admin</code>.
+            </li>
+        </ul>
+        <p>
+            See <a href="commands.html#agents">Agents tools</a> for what each one does.
+        </p>
+    </main>
+</div>
+</body>
+</html>

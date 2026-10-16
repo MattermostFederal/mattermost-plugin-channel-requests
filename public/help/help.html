@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Channel Requests Documentation</title>
+    <title>Overview | Channel Requests</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,6 +18,8 @@
             <a href="help.html" class="active">Overview &amp; Requesting</a>
             <a href="approvals.html">Approving Requests</a>
             <a href="admin.html">Admin Setup</a>
+            <a href="commands.html">Slash Command &amp; Agents</a>
+            <a href="troubleshooting.html">Troubleshooting</a>
         </nav>
     </aside>
 
@@ -29,7 +31,7 @@
         </div>
 
         <h1>Channel Requests</h1>
-        <p class="tagline">Request a channel, get it approved, get everyone added — automatically.</p>
+        <p class="tagline">Request a channel, get it approved, get everyone added, automatically.</p>
 
         <h2>What it does</h2>
         <p>
@@ -77,7 +79,7 @@
                 <tr><th>Field</th><th>What it does</th></tr>
             </thead>
             <tbody>
-                <tr><td><code>Domain prefix</code></td><td>Required. Pick the category your admin configured — the final URL is <code>&lt;prefix&gt;&lt;suffix&gt;</code>.</td></tr>
+                <tr><td><code>Domain prefix</code></td><td>Required. Pick the category your admin configured. The final URL is <code>&lt;prefix&gt;&lt;suffix&gt;</code>.</td></tr>
                 <tr><td><code>Channel name</code></td><td>The display name people see (e.g. <em>Marketing Team</em>).</td></tr>
                 <tr><td><code>URL name / suffix</code></td><td>Optional. The URL part after the prefix. Leave blank to auto-generate from the channel name. A live <strong>Preview</strong> shows the final URL.</td></tr>
                 <tr><td><code>Purpose</code></td><td>Optional short description of the channel.</td></tr>
@@ -140,97 +142,33 @@
         <h2 id="slash-command">Using the slash command</h2>
         <p>
             <code>/channel-request</code> on its own opens the request form. Add a subcommand to
-            do the same things from the message box. Replies are only visible to you.
+            do the same things from the message box. Replies are only visible to you. See
+            <a href="commands.html">Slash Command &amp; Agents</a> for the full reference.
         </p>
 
         <table class="field-table">
             <thead>
-                <tr><th>Command</th><th>What it does</th></tr>
+                <tr><th>Subcommand</th><th>What it does</th></tr>
             </thead>
             <tbody>
-                <tr><td><code>/channel-request</code></td><td>Opens the channel request form.</td></tr>
-                <tr><td><code>/channel-request create &lt;prefix&gt; &lt;Channel name&gt; [options]</code></td><td>Requests a channel in the current team without the form. Options are listed below.</td></tr>
-                <tr><td><code>/channel-request admin @user [@user ...]</code></td><td>Asks for those channel members to be made Channel Admins of the channel you run it in.</td></tr>
-                <tr><td><code>/channel-request prefixes</code></td><td>Lists the channel prefixes you can use, with each one's description and suffix rule.</td></tr>
-                <tr><td><code>/channel-request help</code></td><td>Shows the usage message.</td></tr>
+                <tr><td><a href="commands.html#create"><code>create</code></a></td><td>Requests a channel without the form: <code>/channel-request create team- Marketing Team --members @alice @bob</code>.</td></tr>
+                <tr><td><a href="commands.html#admin"><code>admin</code></a></td><td>Asks for channel members to be made Channel Admins of the channel you run it in.</td></tr>
+                <tr><td><a href="commands.html#prefixes"><code>prefixes</code></a></td><td>Lists the channel prefixes you can use.</td></tr>
+                <tr><td><a href="commands.html#help"><code>help</code></a></td><td>Shows the usage message.</td></tr>
             </tbody>
         </table>
-
-        <h3>Options for <code>create</code></h3>
-        <p>
-            The prefix comes first, typed exactly as <code>/channel-request prefixes</code> lists
-            it (for example <code>team-</code>). Then comes the channel name, which can be
-            several words, then any options in any order. Each option takes the words up to the
-            next <code>--</code>.
-        </p>
-
-        <table class="field-table">
-            <thead>
-                <tr><th>Option</th><th>What it does</th></tr>
-            </thead>
-            <tbody>
-                <tr><td><code>--suffix &lt;suffix&gt;</code></td><td>The URL part after the prefix, as one word. Leave it out to generate it from the channel name.</td></tr>
-                <tr><td><code>--purpose &lt;text&gt;</code></td><td>A short description of the channel.</td></tr>
-                <tr><td><code>--private</code></td><td>Makes the channel private. Without it the channel is public.</td></tr>
-                <tr><td><code>--members @user ...</code></td><td>Users who become regular members on approval.</td></tr>
-                <tr><td><code>--admins @user ...</code></td><td>Users who become Channel Admins on approval.</td></tr>
-            </tbody>
-        </table>
-
-        <p>For example:</p>
-<pre><code>/channel-request create team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
-/channel-request create ops- SRE On-call --suffix sre-oncall --private</code></pre>
-
-        <p>
-            The request goes through the same approval as the form, and you get the same
-            confirmation. If something is wrong, such as an unknown prefix, an unknown
-            <code>@user</code> or a suffix that breaks the prefix's rule, the reply says what,
-            and nothing is submitted.
-        </p>
-
-        <div class="alert alert-info">
-            <div class="alert-title">Limits of the command</div>
-            <p>
-                A channel name or purpose can't contain a word that starts with <code>--</code>,
-                and extra spaces or line breaks in the purpose become single spaces. Use the form
-                if you need either.
-            </p>
-        </div>
-
-        <p>
-            For <code>admin</code>, run the command in the channel itself. Everyone you name must
-            already be a member of it.
-        </p>
 
         <h2 id="agents">Asking an AI agent</h2>
         <p>
             When a System Admin turns on <em>Offer tools to Agents</em>, an agent from the
-            Mattermost Agents plugin can file requests for you. Ask it in plain words, for
-            example "request a private channel called Marketing Team under <code>team-</code>
-            and add @alice". The agent acts as you, so the request follows the same rules as
-            the form: you must be a member of the team or channel, the prefix must be one your
-            admin configured, and the request goes to the approvers unless you are a System
-            Admin or on the auto-approve list.
+            Mattermost Agents plugin can list prefixes and file channel and Channel Admin
+            requests for you, under the same rules as the form. Agents can't approve or deny.
+            See <a href="commands.html#agents">Agents tools</a>.
         </p>
 
-        <table class="field-table">
-            <thead>
-                <tr><th>Tool</th><th>What it does</th></tr>
-            </thead>
-            <tbody>
-                <tr><td><code>list_prefixes</code></td><td>Lists the channel prefixes you can use, like <code>/channel-request prefixes</code>.</td></tr>
-                <tr><td><code>request_channel</code></td><td>Requests a new channel, like the form or <code>/channel-request create</code>.</td></tr>
-                <tr><td><code>request_channel_admin</code></td><td>Asks for channel members to be made Channel Admins, like <code>/channel-request admin</code>.</td></tr>
-            </tbody>
-        </table>
-
-        <div class="alert alert-info">
-            <div class="alert-title">Agents can't approve</div>
-            <p>
-                No agent can approve or deny a request. Those buttons stay with the people in
-                the approval channel.
-            </p>
-        </div>
+        <p>
+            Something not working? See <a href="troubleshooting.html">Troubleshooting</a>.
+        </p>
     </main>
 </div>
 </body>
