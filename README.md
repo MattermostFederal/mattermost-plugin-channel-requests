@@ -8,6 +8,7 @@ A Mattermost plugin that lets non-admins **request** new channels for approval i
 - **Admin approval**: Requests are posted to a configured approval channel with Approve / Deny buttons. System Admins can act, and so can Team Admins of the approval team when **Team Admins can approve requests** is on. Only a System Admin can approve their own request. Approving creates the channel and adds the requester + designated members; denying notifies the requester. Either way the requester gets a DM.
 - **Admin bypass**: Requests from System Admins and from users on the auto-approve list create the channel immediately.
 - **Configurable naming**: Admins define a list of channel prefixes (`team-`, `ops-`, ...), each with a description and a maximum suffix length. Requesters pick a prefix, and the channel URL is the prefix plus a suffix. At least one prefix is required before requests can be made.
+- **Agents tools**: When **Offer tools to Agents** is on, an agent from the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests for the user it's talking to, under the same rules. Agents can't approve or deny.
 - **Channel Admin requests**: On an existing channel, a non-admin member can request that someone be made a Channel Admin — via a "Request Admin" button in the Members panel, the channel-name menu, or `/channel-request admin @user`. The request is posted to the approval channel, @-mentioning the System Admins and the channel's Team Admins, who Approve / Deny.
 
 ## Documentation
@@ -26,6 +27,9 @@ In **System Console → Plugins → Channel Requests**, set:
 - **Team Admins can approve requests** — optional; lets Team Admins of the approval team act on channel-creation requests.
 - **Auto-approve requests from these users** — optional; these users' requests skip approval.
 - **Audit channel ID** — optional; every approve/deny is logged to this channel.
+- **Offer tools to Agents** — optional, off by default; lets the Mattermost Agents plugin file requests on a user's behalf.
+
+Requires Mattermost 11.3 or later.
 
 See the [user guide](docs/CHANNEL_CREATION_GUIDE.md#admin-setup) for details.
 

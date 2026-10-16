@@ -3,6 +3,7 @@ package main
 import (
 	"sync"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/external/pluginmcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/pkg/errors"
@@ -13,6 +14,14 @@ type Plugin struct {
 
 	configurationLock sync.RWMutex
 	configuration     *configuration
+
+	// mcpSyncLock serializes starting and stopping the MCP server.
+	// mcpServerLock guards mcpServer and mcpActive, which ServeHTTP reads.
+	// mcpActive is true between OnActivate and OnDeactivate.
+	mcpSyncLock   sync.Mutex
+	mcpServerLock sync.RWMutex
+	mcpServer     *pluginmcp.Server
+	mcpActive     bool
 
 	// botUserID is the user ID of the bot account used to post approval requests and notify
 	// requesters of the outcome.
@@ -37,5 +46,20 @@ func (p *Plugin) OnActivate() error {
 		p.API.LogError("channel-requests: failed to migrate settings to IDs", "error", err.Error())
 	}
 
-	return p.API.RegisterCommand(getCommand())
+	if err := p.API.RegisterCommand(getCommand()); err != nil {
+		return err
+	}
+
+	p.mcpServerLock.Lock()
+	p.mcpActive = true
+	p.mcpServerLock.Unlock()
+	if err := p.syncMCPServer(); err != nil {
+		return errors.Wrap(err, "failed to initialize the MCP server")
+	}
+	return nil
+}
+
+func (p *Plugin) OnDeactivate() error {
+	p.stopMCPServer()
+	return nil
 }

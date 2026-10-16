@@ -110,6 +110,24 @@ A channel name or purpose can't contain a word that starts with `--`, and extra
 spaces or line breaks in the purpose become single spaces. Use the form if you
 need either.
 
+### Requesting through an AI agent
+
+When a System Admin turns on **Offer tools to Agents**, an agent from the
+Mattermost Agents plugin can file requests for you. Ask it in plain words, for
+example "request a private channel called Marketing Team under `team-` and add
+@alice". The agent acts as you, so the request follows the same rules as the
+form: you must be a member of the team or channel, the prefix must be one your
+admin configured, and the request goes to the approvers unless you are a System
+Admin or on the auto-approve list.
+
+| Tool | What it does |
+|------|--------------|
+| `list_prefixes` | Lists the channel prefixes you can use, like `/channel-request prefixes`. |
+| `request_channel` | Requests a new channel, like the form or `/channel-request create`. |
+| `request_channel_admin` | Asks for channel members to be made Channel Admins, like `/channel-request admin`. See the [Channel Admin Requests guide](CHANNEL_ADMIN_GUIDE.md#4-through-an-ai-agent). |
+
+No agent can approve or deny a request.
+
 ---
 
 ## Approving requests
@@ -117,7 +135,9 @@ need either.
 Approvers (System Admins, plus Team Admins of the approval team if your admin
 enabled it) receive each request in the **approval channel** with **Approve**
 and **Deny** buttons. Only a System Admin can approve a request they made
-themselves. The card names the team the channel will be created in.
+themselves. The card names the team the channel will be created in. A request
+an AI agent filed for someone arrives the same way and names that person as the
+requester; agents can't approve or deny.
 
 ![A channel creation request card with Approve/Deny buttons](images/mattermost-creation-approval-card.png)
 
@@ -147,6 +167,7 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Auto-approve requests from these users** | Requests from these users skip approval. |
 | **Audit channel ID** | Optional. Posts an audit line for every approve/deny. |
+| **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. |
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Public/Private Channel** permission from the System User role (System
