@@ -46,6 +46,7 @@
                 <tr><td><code>Team Admins can approve requests</code></td><td>When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team.</td></tr>
                 <tr><td><code>Auto-approve requests from these users</code></td><td>Requests from these users skip approval.</td></tr>
                 <tr><td><code>Audit channel ID</code></td><td>Optional. Posts an audit line for every approve/deny.</td></tr>
+                <tr><td><code>Offer tools to Agents</code></td><td>Off by default. When on, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save.</td></tr>
             </tbody>
         </table>
 
@@ -54,6 +55,16 @@
             <p>
                 Until both are set, requests can't be routed. Set them before rolling the plugin
                 out to members.
+            </p>
+        </div>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Agents tools</div>
+            <p>
+                <em>Offer tools to Agents</em> needs the Mattermost Agents plugin. Once it's on,
+                the tools <code>list_prefixes</code>, <code>request_channel</code> and
+                <code>request_channel_admin</code> appear in the Agents plugin's own settings,
+                where you choose which of them agents may use.
             </p>
         </div>
 

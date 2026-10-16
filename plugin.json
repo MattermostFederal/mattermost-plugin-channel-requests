@@ -6,7 +6,7 @@
     "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
     "icon_path": "assets/icon.svg",
     "version": "0.3.0",
-    "min_server_version": "10.5.0",
+    "min_server_version": "11.3.0",
     "server": {
         "executables": {
             "linux-amd64": "server/dist/plugin-linux-amd64",
@@ -57,6 +57,13 @@
                 "display_name": "Audit channel ID (optional)",
                 "type": "text",
                 "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance."
+            },
+            {
+                "key": "EnableMCP",
+                "display_name": "Offer tools to Agents",
+                "type": "bool",
+                "default": false,
+                "help_text": "When true, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
             }
         ]
     }

@@ -52,6 +52,14 @@ It asks for everyone you name to be made a Channel Admin of that channel, with
 the same rules and approval as the form. The command isn't hidden from people who
 are already admins, but they can manage the channel directly instead.
 
+### 4. Through an AI agent
+
+If a System Admin has turned on **Offer tools to Agents**, you can ask an agent
+from the Mattermost Agents plugin to request it for you, naming the channel and
+the people. It uses the `request_channel_admin` tool and acts as you, with the
+same rules and approval as the form: you must be a member of the channel, and so
+must everyone you nominate.
+
 ### Filling out the request
 
 ![The Request a Channel Admin form](images/mattermost-promotion-modal.png)

@@ -43,7 +43,7 @@ type channelPrefix struct {
 //  2. Naming enforcement (structured prefix list — required)
 //  3. Approver policy (who can approve, auto-approve list)
 //  4. Notification preferences (DM + audit channel + welcome post)
-//  5. Rate limits
+//  5. Agents (MCP tools)
 type configuration struct {
 	// --- 1. Approval routing ---
 	// ApprovalTeam and ApprovalChannel hold IDs, not names, so renames
@@ -70,6 +70,11 @@ type configuration struct {
 
 	// --- 4. Audit ---
 	AuditChannelID string
+
+	// --- 5. Agents ---
+	// EnableMCP offers the request tools to the Mattermost Agents plugin.
+	// Off by default; syncMCPServer applies changes on save.
+	EnableMCP bool
 
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
@@ -141,6 +146,10 @@ func (p *Plugin) OnConfigurationChange() error {
 	configuration.autoApproveUserIDs = parseAutoApproveList(configuration.AutoApproveUserIDs, p.API.LogWarn)
 
 	p.setConfiguration(configuration)
+
+	if err := p.syncMCPServer(); err != nil {
+		p.API.LogError("channel-requests: failed to apply the MCP setting", "error", err.Error())
+	}
 
 	return nil
 }

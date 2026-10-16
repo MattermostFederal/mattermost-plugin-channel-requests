@@ -37,6 +37,10 @@ const (
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	if p.serveMCPIfMatch(w, r) {
+		return
+	}
+
 	switch r.URL.Path {
 	case routeDialog:
 		p.handleDialogSubmit(w, r)
