@@ -7,6 +7,7 @@ import type {EnabledRequestTypes} from './client';
 import {useDialogFocusTrap} from './dialogA11y';
 import {
     closeHubModal,
+    getChannelType,
     getCurrentChannelId,
     getCurrentTeamId,
     isCurrentUserTeamAdmin,
@@ -58,6 +59,8 @@ type RequestItem = {
     action: () => Action;
     enabled: boolean;
     hidden?: boolean;
+    /** When true, only show in public/private channels (not DM/GM). */
+    requiresTeamChannel?: boolean;
 };
 
 // Fail-closed for newer types until /api/v1/config responds — matches client.ts.
@@ -77,6 +80,8 @@ export const RequestHubModal = () => {
     const isOpen = useSelector(isHubModalOpen);
     const channelId = useSelector((state: GlobalState) => getCurrentChannelId(state));
     const teamId = useSelector((state: GlobalState) => getCurrentTeamId(state));
+    const channelType = useSelector((state: GlobalState) => getChannelType(state, channelId));
+    const inTeamChannel = channelType === 'O' || channelType === 'P';
     const alreadyTeamAdmin = useSelector((state: GlobalState) => isCurrentUserTeamAdmin(state, teamId));
     const [enabled, setEnabled] = useState<EnabledRequestTypes>(defaultEnabled);
     const close = () => dispatch(closeHubModal());
@@ -125,6 +130,7 @@ export const RequestHubModal = () => {
             description: 'Nominate a Channel Admin for the current channel.',
             action: () => openAdminRequestModal(channelId),
             enabled: enabled.channelAdmin,
+            requiresTeamChannel: true,
         },
         {
             icon: '🏢',
@@ -151,9 +157,10 @@ export const RequestHubModal = () => {
         {
             icon: '✉️',
             title: 'Request Guest Invite',
-            description: 'Request a guest invite link (optional email) for this team.',
+            description: 'Request a channel-scoped guest invitation email for this team.',
             action: openTeamGuestRequestModal,
             enabled: enabled.teamGuest,
+            requiresTeamChannel: true,
         },
         {
             icon: '🤖',
@@ -168,6 +175,7 @@ export const RequestHubModal = () => {
             description: 'Post messages into a channel from an external system.',
             action: openIncomingWebhookModal,
             enabled: enabled.webhook,
+            requiresTeamChannel: true,
         },
         {
             icon: '📤',
@@ -175,10 +183,15 @@ export const RequestHubModal = () => {
             description: 'Send channel messages to an external endpoint.',
             action: openOutgoingWebhookModal,
             enabled: enabled.webhook,
+            requiresTeamChannel: true,
         },
     ];
 
-    const visible = items.filter((item) => !item.hidden && item.enabled);
+    const visible = items.filter((item) =>
+        !item.hidden &&
+        item.enabled &&
+        (!item.requiresTeamChannel || inTeamChannel),
+    );
 
     return (
         <div style={overlayStyle} onClick={close}>

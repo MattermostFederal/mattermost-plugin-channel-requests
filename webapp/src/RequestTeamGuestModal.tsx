@@ -63,13 +63,18 @@ export const RequestTeamGuestModal = () => {
             setError('Open a channel in this team first — the guest needs at least one channel.');
             return;
         }
+        const guestEmail = email.trim();
+        if (!guestEmail || !guestEmail.includes('@')) {
+            setError('Enter a valid guest email. Mattermost will email a channel-scoped guest invitation on approve.');
+            return;
+        }
 
         setSubmitting(true);
         setError('');
         try {
             const result = await submitTeamGuestRequest({
                 team_id: teamId,
-                email: email.trim() || undefined,
+                email: guestEmail,
                 channel_ids: [channelId],
                 reason: reason.trim() || undefined,
             });
@@ -110,13 +115,13 @@ export const RequestTeamGuestModal = () => {
                         <p style={{opacity: 0.8}}>
                             {'Request a guest invite for '}
                             <strong>{teamDisplayName || 'this team'}</strong>
-                            {'. On approval you get a shareable invite link; optional email sends a Mattermost guest invitation. Guest Accounts must be enabled.'}
+                            {'. On approval, Mattermost emails a channel-scoped guest invitation (not a regular team invite link). Guest Accounts must be enabled.'}
                         </p>
                         <p style={{opacity: 0.72, fontSize: 13}}>
                             {'The current channel will be included as the guest\'s initial channel access.'}
                         </p>
                         <div style={fieldStyle}>
-                            <label htmlFor='rtg-email'>{'Guest email (optional)'}</label>
+                            <label htmlFor='rtg-email'>{'Guest email'}</label>
                             <input
                                 id='rtg-email'
                                 className='form-control'
@@ -125,6 +130,7 @@ export const RequestTeamGuestModal = () => {
                                 onChange={(e) => setEmail(e.target.value)}
                                 disabled={submitting}
                                 placeholder='guest@example.com'
+                                required={true}
                             />
                         </div>
                         <div style={fieldStyle}>

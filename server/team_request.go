@@ -23,9 +23,9 @@ type teamCreationRequest struct {
 	ID               string `json:"id"`
 	RequesterID      string `json:"requester_id"`
 	DisplayName      string `json:"display_name"`
-	Name             string `json:"name"`        // resolved URL slug
+	Name             string `json:"name"` // resolved URL slug
 	Description      string `json:"description"`
-	Type             string `json:"type"`        // "O" (open) or "I" (invite)
+	Type             string `json:"type"` // "O" (open) or "I" (invite)
 	RequestTeamAdmin bool   `json:"request_team_admin"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
@@ -110,6 +110,11 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 	if err := p.storeTeamRequest(req); err != nil {
 		return "", err
 	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvTeamRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot team request")
+	}
 
 	approvalPostID, approvalChannelID, err := p.postTeamCreationApprovalRequest(req, requester)
 	if err != nil {
@@ -123,8 +128,10 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeTeamRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store team request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store team request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("team request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -391,9 +398,12 @@ func (p *Plugin) openTeamCreationRequestDialog(triggerID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeTeamDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }

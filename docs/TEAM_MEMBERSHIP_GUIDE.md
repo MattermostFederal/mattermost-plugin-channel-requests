@@ -51,16 +51,16 @@ team). Guest channel picks must belong to that same team.
 
 | Field | Notes |
 |-------|--------|
-| Guest email | **Optional.** If set, Mattermost emails a guest invitation on approve. |
+| Guest email | **Required.** Mattermost emails a channel-scoped guest invitation on approve. |
 | Channels | At least one channel the guest should access (hub modal uses the current channel) |
 | Message / reason | Optional note for reviewers / invite email |
 
 ### On approve
 
-1. You always receive a **shareable team invite link** in the ticket DM — forward
-   it yourself if you did not provide an email.
-2. If you provided an email, Mattermost also sends a **guest invitation email**
-   (Guest Accounts must be enabled in System Console).
+Mattermost sends a **guest invitation email** to the address you provided
+(Guest Accounts must be enabled in System Console). This flow does **not** use
+the team's regular invite link (`/signup_user_complete/?id=…`), which would grant
+ordinary membership instead of guest access.
 
 ---
 

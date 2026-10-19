@@ -169,8 +169,11 @@ The DM includes:
 
 If something failed, the DM says what couldn't be created and what to do next.
 
-There is **no single-click System Admin bypass** for bot requests. System Admins
-can fill the system step, but a security approver must still fill the other.
+Slash-command submissions always go through both approval steps. System Admins
+who submit from the **webapp Request Hub / modal** (not ForceQueue) create the
+bot immediately and skip token/webhook extras — there is no independent security
+approval on that path. For queued tickets, System Admins can fill the system
+step, but a security approver must still fill the other.
 
 ---
 

@@ -154,7 +154,7 @@ func (p *Plugin) scheduleTokenPostDeletion(postID string) {
 	expiresAt := time.Now().Add(72 * time.Hour).Unix()
 	entry := tokenPostEntry{PostID: postID, ExpiresAt: expiresAt}
 
-	for attempts := 0; attempts < 3; attempts++ {
+	for range 3 {
 		raw, _ := p.API.KVGet(tokenPostRegistryKey)
 		var entries []tokenPostEntry
 		if raw != nil {
@@ -214,7 +214,7 @@ func (p *Plugin) cleanupExpiredTokenPosts() {
 }
 
 func (p *Plugin) removeTokenPostFromRegistry(postID string) {
-	for attempts := 0; attempts < 3; attempts++ {
+	for range 3 {
 		raw, _ := p.API.KVGet(tokenPostRegistryKey)
 		var entries []tokenPostEntry
 		if raw != nil {

@@ -309,7 +309,7 @@ function injectRequestTeamAddButton(store: Store): void {
 //   1. Intercepts native #create_teamTeamButton → Request a Team (non-admins).
 //   2. Injects a synthetic + when Mattermost hides create (no CREATE_TEAM).
 // Join (#select_teamTeamButton) is never intercepted.
-export function installTeamSidebarAddOverride(store: Store): void {
+export function installTeamSidebarAddOverride(store: Store): () => void {
     debug('installing team-sidebar + override');
 
     // Always restore a + when Mattermost hid Create Team (no CREATE_TEAM).
@@ -323,49 +323,46 @@ export function installTeamSidebarAddOverride(store: Store): void {
         injectRequestTeamAddButton(store);
     };
 
-    document.addEventListener(
-        'click',
-        (event) => {
-            if (isSystemAdmin(store)) {
+    const onClick = (event: MouseEvent) => {
+        if (isSystemAdmin(store)) {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        // Injected button handles its own click.
+        if (target.closest(`[${REQUEST_TEAM_ADD_MARK}]`)) {
+            return;
+        }
+
+        const createLink =
+            target.closest<HTMLAnchorElement>('#create_teamTeamButton') ??
+            target.closest<HTMLAnchorElement>('a[href*="create_team"]');
+        if (!createLink) {
+            return;
+        }
+
+        if (!createLink.closest('.team-sidebar, #teamSidebarWrapper')) {
+            if (!createLink.querySelector('.team-btn__add') && !createLink.id.includes('create_team')) {
                 return;
             }
-            const target = event.target as HTMLElement | null;
-            if (!target) {
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        fetchEnabledRequestTypes().then((enabled) => {
+            if (!enabled.team) {
+                debug('team requests disabled — ignoring team-sidebar + click');
                 return;
             }
-
-            // Injected button handles its own click.
-            if (target.closest(`[${REQUEST_TEAM_ADD_MARK}]`)) {
-                return;
-            }
-
-            const createLink =
-                target.closest<HTMLAnchorElement>('#create_teamTeamButton') ??
-                target.closest<HTMLAnchorElement>('a[href*="create_team"]');
-            if (!createLink) {
-                return;
-            }
-
-            if (!createLink.closest('.team-sidebar, #teamSidebarWrapper')) {
-                if (!createLink.querySelector('.team-btn__add') && !createLink.id.includes('create_team')) {
-                    return;
-                }
-            }
-
-            event.preventDefault();
-            event.stopImmediatePropagation();
-
-            fetchEnabledRequestTypes().then((enabled) => {
-                if (!enabled.team) {
-                    debug('team requests disabled — ignoring team-sidebar + click');
-                    return;
-                }
-                store.dispatch(openTeamCreationModal());
-                debug('routed team-sidebar + (create_team) to Request Team modal');
-            });
-        },
-        true,
-    );
+            store.dispatch(openTeamCreationModal());
+            debug('routed team-sidebar + (create_team) to Request Team modal');
+        });
+    };
+    document.addEventListener('click', onClick, true);
 
     let scheduled = false;
     const observer = new MutationObserver(() => {
@@ -381,13 +378,18 @@ export function installTeamSidebarAddOverride(store: Store): void {
     observer.observe(document.body, {childList: true, subtree: true});
 
     // Team rail often mounts after plugin init — retry a few times.
-    refresh();
-    setTimeout(refresh, 500);
-    setTimeout(refresh, 2000);
-    setTimeout(refresh, 5000);
+    const timers = [0, 500, 2000, 5000].map((ms) => window.setTimeout(refresh, ms));
+
+    return () => {
+        document.removeEventListener('click', onClick, true);
+        observer.disconnect();
+        timers.forEach((id) => window.clearTimeout(id));
+        removeInjectedRequestTeamAdd();
+        debug('removed team-sidebar + override');
+    };
 }
 
-export function installTeamMenuOverride(store: Store): void {
+export function installTeamMenuOverride(store: Store): () => void {
     debug('installing team-menu override');
 
     processTeamMenu(store);
@@ -413,7 +415,7 @@ export function installTeamMenuOverride(store: Store): void {
 
     // Warn once if the team dropdown was never found — likely means MM changed
     // its DOM structure and "Request a Team" / "Request Team Admin" are broken.
-    setTimeout(() => {
+    const warnTimer = window.setTimeout(() => {
         if (!menuFoundOnce) {
             console.warn(
                 '[mattermost-request-hub] Team sidebar dropdown not found after 10s. ' +
@@ -427,7 +429,7 @@ export function installTeamMenuOverride(store: Store): void {
     // disappears immediately after a server-side promotion rather than persisting
     // until the user reloads the page.
     let prevMyMembers: unknown = null;
-    store.subscribe(() => {
+    const unsubscribe = store.subscribe(() => {
         const state = store.getState() as GlobalState;
         const myMembers = state?.entities?.teams?.myMembers;
         if (myMembers !== prevMyMembers) {
@@ -438,38 +440,43 @@ export function installTeamMenuOverride(store: Store): void {
 
     // Capture-phase listener: intercepts clicks on the relabeled "Create a team"
     // item and routes them to the team creation request modal (when enabled).
-    document.addEventListener(
-        'click',
-        (event) => {
-            if (isSystemAdmin(store)) {
-                // System Admins keep the native Create Team flow — the plugin
-                // AllowTeamRequests toggle only gates the request/UI paths.
+    const onClick = (event: MouseEvent) => {
+        if (isSystemAdmin(store)) {
+            // System Admins keep the native Create Team flow — the plugin
+            // AllowTeamRequests toggle only gates the request/UI paths.
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
+
+        const intercepted = target.closest<HTMLElement>(`[${CREATE_TEAM_MARK}]`);
+        if (!intercepted) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+
+        // Honor AllowTeamRequests — don't open a doomed modal when disabled.
+        fetchEnabledRequestTypes().then((enabled) => {
+            if (!enabled.team) {
+                debug('team requests disabled — ignoring Create Team click');
                 return;
             }
-            const target = event.target as HTMLElement | null;
-            if (!target) {
-                return;
-            }
+            store.dispatch(openTeamCreationModal());
+            debug('routed "Create a team" click to Request Team modal');
+        });
+    };
+    document.addEventListener('click', onClick, true);
 
-            const intercepted = target.closest<HTMLElement>(`[${CREATE_TEAM_MARK}]`);
-            if (!intercepted) {
-                return;
-            }
-
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-
-            // Honor AllowTeamRequests — don't open a doomed modal when disabled.
-            fetchEnabledRequestTypes().then((enabled) => {
-                if (!enabled.team) {
-                    debug('team requests disabled — ignoring Create Team click');
-                    return;
-                }
-                store.dispatch(openTeamCreationModal());
-                debug('routed "Create a team" click to Request Team modal');
-            });
-        },
-        true,
-    );
+    return () => {
+        document.removeEventListener('click', onClick, true);
+        observer.disconnect();
+        unsubscribe();
+        window.clearTimeout(warnTimer);
+        debug('removed team-menu override');
+    };
 }

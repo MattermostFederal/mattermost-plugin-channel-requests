@@ -41,6 +41,8 @@ import type {GlobalState} from './store';
 import {installTeamMenuOverride, installTeamSidebarAddOverride} from './teamMenuOverride';
 
 export default class Plugin {
+    private disposers: Array<() => void> = [];
+
     public async initialize(registry: PluginRegistry, store: Store) {
         registry.registerReducer(reducer);
 
@@ -60,9 +62,12 @@ export default class Plugin {
         // initialize() and take the others down with it. safe() logs and
         // continues. The Members-panel injector is installed FIRST so it's
         // never blocked by an earlier registration failing.
-        const safe = (label: string, fn: () => void) => {
+        const safe = (label: string, fn: () => void | (() => void)) => {
             try {
-                fn();
+                const disposer = fn();
+                if (typeof disposer === 'function') {
+                    this.disposers.push(disposer);
+                }
             } catch (err) {
                 // eslint-disable-next-line no-console
                 console.error(`[channel-requests] ${label} failed to initialize`, err);
@@ -237,6 +242,17 @@ export default class Plugin {
                 PrefixEditor,
                 {showTitle: true},
             );
+        }
+    }
+
+    public uninitialize() {
+        for (const dispose of this.disposers.splice(0)) {
+            try {
+                dispose();
+            } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error('[channel-requests] disposer failed during uninitialize', err);
+            }
         }
     }
 }

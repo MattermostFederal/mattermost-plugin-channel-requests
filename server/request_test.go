@@ -42,16 +42,15 @@ func stubLogs(api *plugintest.API) {
 			api.On(method, args...).Maybe()
 		}
 	}
+	// CAS re-store of post IDs after approval/DM create — most queue tests
+	// don't care about the success path beyond "submitted".
+	api.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 }
 
 // testAppErr builds a throwaway *model.AppError for failure-path mocks.
 func testAppErr(msg string) *model.AppError {
 	return model.NewAppError("test", "test.error", nil, msg, http.StatusInternalServerError)
 }
-
-// strPtr returns a pointer to the given string. Used in tests that need to
-// set *string fields in model structs (e.g. ServiceSettings.SiteURL).
-func strPtr(s string) *string { return &s }
 
 func TestCreateChannelForRequest_AddsMembersAndPromotesAdmins(t *testing.T) {
 	api := &plugintest.API{}
@@ -423,7 +422,6 @@ func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "member of the team")
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
-
 
 func TestValidateRequestInput(t *testing.T) {
 	tooManyMembers := make([]string, maxMembersPerList+1)

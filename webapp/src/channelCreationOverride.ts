@@ -224,7 +224,7 @@ function processDocument(store: Store): void {
 //   2. Throttled document-scan on any body mutation.
 //   3. Capture-phase click listener that routes both the relabeled
 //      native item AND our injected item to the request modal.
-export function installChannelCreationOverride(store: Store): void {
+export function installChannelCreationOverride(store: Store): () => void {
     debug('installing channel-creation override');
 
     // Initial pass — covers the case where the menu was already open
@@ -262,47 +262,50 @@ export function installChannelCreationOverride(store: Store): void {
     // Capture-phase click routing. Matches:
     //   - Our injected item (by data attribute)
     //   - The relabeled native item (by id or REQUEST_LABEL text)
-    document.addEventListener(
-        'click',
-        (event) => {
-            if (isCurrentUserAdmin(store)) {
-                return;
-            }
-            const target = event.target as HTMLElement | null;
-            if (!target) {
-                return;
-            }
+    const onClick = (event: MouseEvent) => {
+        if (isCurrentUserAdmin(store)) {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
 
-            const injected = target.closest<HTMLElement>(`[${INJECTED_MARK}]`);
-            let match: HTMLElement | null = injected;
+        const injected = target.closest<HTMLElement>(`[${INJECTED_MARK}]`);
+        let match: HTMLElement | null = injected;
 
-            if (!match) {
-                const byId = target.closest<HTMLElement>(`#${NATIVE_ITEM_ID}`);
-                if (byId) {
-                    match = byId;
-                } else {
-                    // Text-match fallback for a relabeled native item that
-                    // lacks a stable id. Scope it to the "+" menu (via
-                    // findMenuRoot) so we don't hijack an unrelated element
-                    // elsewhere in the UI that happens to read
-                    // "Request new channel".
-                    const nearest = target.closest<HTMLElement>(ITEM_SELECTOR);
-                    if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL && findMenuRoot(nearest)) {
-                        match = nearest;
-                    }
+        if (!match) {
+            const byId = target.closest<HTMLElement>(`#${NATIVE_ITEM_ID}`);
+            if (byId) {
+                match = byId;
+            } else {
+                // Text-match fallback for a relabeled native item that
+                // lacks a stable id. Scope it to the "+" menu (via
+                // findMenuRoot) so we don't hijack an unrelated element
+                // elsewhere in the UI that happens to read
+                // "Request new channel".
+                const nearest = target.closest<HTMLElement>(ITEM_SELECTOR);
+                if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL && findMenuRoot(nearest)) {
+                    match = nearest;
                 }
             }
+        }
 
-            if (!match) {
-                return;
-            }
+        if (!match) {
+            return;
+        }
 
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-            store.dispatch(openRequestModal());
-            debug('routed click to Request modal', {viaInjected: Boolean(injected)});
-        },
-        true,
-    );
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+        store.dispatch(openRequestModal());
+        debug('routed click to Request modal', {viaInjected: Boolean(injected)});
+    };
+    document.addEventListener('click', onClick, true);
+
+    return () => {
+        document.removeEventListener('click', onClick, true);
+        observer.disconnect();
+        debug('removed channel-creation override');
+    };
 }

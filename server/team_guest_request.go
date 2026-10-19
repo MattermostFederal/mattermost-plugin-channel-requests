@@ -17,13 +17,13 @@ const (
 
 // teamGuestRequest is a pending request for a guest invite to a team.
 // Routes to mattermost-team-requests; only System Admins may approve.
-// On approve: always return a shareable team invite link; optionally email
-// guests via InviteGuestsToTeam when Email is set.
+// On approve: emails a channel-scoped guest invitation via InviteGuestsToTeam
+// (never the regular team InviteId signup link — that grants full membership).
 type teamGuestRequest struct {
 	ID          string   `json:"id"`
 	RequesterID string   `json:"requester_id"`
 	TeamID      string   `json:"team_id"`
-	Email       string   `json:"email,omitempty"`
+	Email       string   `json:"email"`
 	ChannelIDs  []string `json:"channel_ids"`
 	Reason      string   `json:"reason,omitempty"`
 
@@ -46,8 +46,8 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
-	if email != "" && !strings.Contains(email, "@") {
-		return "", errors.New("guest email looks invalid")
+	if email == "" || !strings.Contains(email, "@") {
+		return "", errors.New("a valid guest email is required")
 	}
 
 	team, appErr := p.API.GetTeam(teamID)
@@ -86,17 +86,21 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 
 	config := p.getConfiguration()
 	if !forceQueue && requester.IsSystemAdmin() {
-		link, inviteErr := p.fulfillTeamGuestRequest(req, requester.Id)
-		if inviteErr != nil {
+		if inviteErr := p.fulfillTeamGuestRequest(req, requester.Id); inviteErr != nil {
 			return "", inviteErr
 		}
 		p.logAudit(config, fmt.Sprintf("TEAM GUEST: @%s invited guest to team %s (email=%q)",
 			requester.Username, team.DisplayName, email))
-		return fmt.Sprintf("Guest invite ready for **%s**.\n\nShareable link: %s", team.DisplayName, link), nil
+		return fmt.Sprintf("Guest invitation emailed to **%s** for team **%s**.", email, team.DisplayName), nil
 	}
 
 	if err := p.storeTeamGuestRequest(req); err != nil {
 		return "", err
+	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvTeamGuestRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot team guest request")
 	}
 
 	approvalPostID, approvalChannelID, err := p.postTeamGuestApprovalRequest(req, requester, team)
@@ -111,8 +115,10 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeTeamGuestRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store team guest request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamGuestRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store team guest request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("team guest request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -152,46 +158,33 @@ func (p *Plugin) sendTeamGuestTicketCreatedDM(req *teamGuestRequest, requester *
 	return created.Id, dm.Id
 }
 
-// teamInviteLink builds the shareable signup URL from the team's InviteId.
-func (p *Plugin) teamInviteLink(team *model.Team) (string, error) {
-	if team == nil || team.InviteId == "" {
-		return "", errors.New("team invite ID is not available")
+// fulfillTeamGuestRequest emails a channel-scoped guest invitation via the
+// acting admin's session. Does not return or use the team's regular InviteId
+// signup URL (that path grants ordinary membership, not guest access).
+func (p *Plugin) fulfillTeamGuestRequest(req *teamGuestRequest, actingAdminID string) error {
+	if req == nil || strings.TrimSpace(req.Email) == "" {
+		return errors.New("a guest email is required")
 	}
-	base := strings.TrimRight(p.siteURL(), "/")
-	if base == "" {
-		return "", errors.New("SiteURL is not configured")
-	}
-	return fmt.Sprintf("%s/signup_user_complete/?id=%s", base, team.InviteId), nil
-}
-
-// fulfillTeamGuestRequest returns the shareable invite link and optionally
-// emails a guest invitation using the acting admin's session.
-func (p *Plugin) fulfillTeamGuestRequest(req *teamGuestRequest, actingAdminID string) (inviteLink string, err error) {
-	team, appErr := p.API.GetTeam(req.TeamID)
-	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load team")
-	}
-	link, linkErr := p.teamInviteLink(team)
-	if linkErr != nil {
-		return "", linkErr
-	}
-
-	if req.Email == "" {
-		return link, nil
+	if _, appErr := p.API.GetTeam(req.TeamID); appErr != nil {
+		return errors.Wrap(appErr, "failed to load team")
 	}
 
 	adminSession, sessErr := p.API.CreateSession(&model.Session{UserId: actingAdminID})
 	if sessErr != nil {
-		return link, fmt.Errorf("invite link ready, but could not send guest email (%s)", sessErr.Error())
+		return fmt.Errorf("could not send guest email (%s)", sessErr.Error())
 	}
-	defer p.API.RevokeSession(adminSession.Id)
+	defer func() {
+		if revErr := p.API.RevokeSession(adminSession.Id); revErr != nil {
+			p.API.LogWarn("failed to revoke admin session after guest invite", "error", revErr.Error())
+		}
+	}()
 
 	client := model.NewAPIv4Client(p.internalBaseURL())
 	client.SetToken(adminSession.Token)
 	if _, inviteErr := client.InviteGuestsToTeam(context.Background(), req.TeamID, []string{req.Email}, req.ChannelIDs, req.Reason); inviteErr != nil {
-		return link, fmt.Errorf("invite link ready, but guest email invite failed (%s). Guest Accounts may be disabled", inviteErr.Error())
+		return fmt.Errorf("guest email invite failed (%s). Guest Accounts may be disabled", inviteErr.Error())
 	}
-	return link, nil
+	return nil
 }
 
 func (p *Plugin) postTeamGuestApprovalRequest(req *teamGuestRequest, requester *model.User, team *model.Team) (postID, channelID string, err error) {
@@ -205,14 +198,10 @@ func (p *Plugin) postTeamGuestApprovalRequest(req *teamGuestRequest, requester *
 }
 
 func (p *Plugin) teamGuestApprovalAttachment(req *teamGuestRequest, requester *model.User, team *model.Team) *model.MessageAttachment {
-	emailValue := "(none — shareable link only)"
-	if req.Email != "" {
-		emailValue = req.Email
-	}
 	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Team", Value: team.DisplayName, Short: true},
-		{Title: "Guest email", Value: emailValue, Short: true},
+		{Title: "Guest email", Value: req.Email, Short: true},
 		{Title: "Channels", Value: strings.Join(req.ChannelIDs, ", "), Short: false},
 	}
 	if req.Reason != "" {
@@ -282,18 +271,18 @@ func (p *Plugin) openTeamGuestRequestDialog(triggerID, teamID string) error {
 		CallbackId: teamGuestDialogCallbackID,
 		Title:      "Request Guest Invite",
 		IntroductionText: fmt.Sprintf(
-			"Request a guest invite for **%s**. Provide an email to have Mattermost send the invite, or leave it blank and forward the shareable link yourself after approval. Guest Accounts must be enabled.",
+			"Request a guest invite for **%s**. On approval, Mattermost emails a channel-scoped guest invitation. Guest Accounts must be enabled.",
 			teamName,
 		),
 		SubmitLabel: "Submit request",
 		State:       teamID,
 		Elements: []model.DialogElement{
 			{
-				DisplayName: "Guest email (optional)",
+				DisplayName: "Guest email",
 				Name:        "email",
 				Type:        "text",
-				Optional:    true,
-				HelpText:    "If set, Mattermost emails a guest invitation on approve. If blank, you get a shareable team invite link to send yourself.",
+				Optional:    false,
+				HelpText:    "Required. Mattermost emails a guest invitation to this address on approve (not a regular team invite link).",
 			},
 			{
 				DisplayName: "Channels",
@@ -313,9 +302,12 @@ func (p *Plugin) openTeamGuestRequestDialog(triggerID, teamID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeTeamGuestDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }

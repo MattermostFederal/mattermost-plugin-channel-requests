@@ -12,7 +12,7 @@ import (
 func TestSubmitTeamGuestRequest_Disabled(t *testing.T) {
 	p := newTestPlugin(&plugintest.API{})
 	p.setConfiguration(&configuration{AllowTeamGuestRequests: false})
-	_, err := p.submitTeamGuestRequest("u_req", "team1", "", []string{"ch1"}, "", false)
+	_, err := p.submitTeamGuestRequest("u_req", "team1", "a@b.com", []string{"ch1"}, "", false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "disabled")
 }
@@ -25,16 +25,12 @@ func TestSubmitTeamGuestRequest_RequiresChannel(t *testing.T) {
 	require.Contains(t, err.Error(), "channel")
 }
 
-func TestTeamInviteLink(t *testing.T) {
-	api := &plugintest.API{}
-	p := newTestPlugin(api)
-	api.On("GetConfig").Return(&model.Config{
-		ServiceSettings: model.ServiceSettings{SiteURL: strPtr("https://mm.example.com")},
-	})
-
-	link, err := p.teamInviteLink(&model.Team{InviteId: "abc123"})
-	require.NoError(t, err)
-	require.Equal(t, "https://mm.example.com/signup_user_complete/?id=abc123", link)
+func TestSubmitTeamGuestRequest_RequiresEmail(t *testing.T) {
+	p := newTestPlugin(&plugintest.API{})
+	p.setConfiguration(&configuration{AllowTeamGuestRequests: true})
+	_, err := p.submitTeamGuestRequest("u_req", "team1", "", []string{"ch1"}, "", false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "email")
 }
 
 func TestSubmitTeamGuestRequest_QueuesForApproval(t *testing.T) {
@@ -49,6 +45,7 @@ func TestSubmitTeamGuestRequest_QueuesForApproval(t *testing.T) {
 	api.On("GetTeamMember", "team1", "u_req").Return(&model.TeamMember{TeamId: "team1", UserId: "u_req"}, nil)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	api.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
 
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
 	api.On("GetChannelByName", "appteam-id", "mattermost-team-requests", false).

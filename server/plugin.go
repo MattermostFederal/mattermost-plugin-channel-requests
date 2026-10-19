@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -85,11 +86,16 @@ func (p *Plugin) OnActivate() error {
 	return nil
 }
 
-// readBundleAsset reads a file from the plugin's bundled assets directory.
+// readBundleAsset reads a known file from the plugin's bundled assets directory.
+// name must be a basename we ship (no path separators) — callers pass constants.
 func (p *Plugin) readBundleAsset(name string) ([]byte, error) {
+	if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") {
+		return nil, errors.New("invalid asset name")
+	}
 	bundlePath, appErr := p.API.GetBundlePath()
 	if appErr != nil {
 		return nil, appErr
 	}
-	return os.ReadFile(filepath.Join(bundlePath, "assets", name))
+	// name is validated as a basename above; not attacker-controlled path input.
+	return os.ReadFile(filepath.Join(bundlePath, "assets", name)) //nolint:gosec // G304: basename-only, fixed by caller
 }

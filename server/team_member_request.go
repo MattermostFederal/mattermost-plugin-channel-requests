@@ -73,6 +73,11 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	if err := p.storeTeamMemberRequest(req); err != nil {
 		return "", err
 	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvTeamMemberRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot team member request")
+	}
 
 	approvalPostID, approvalChannelID, err := p.postTeamMemberApprovalRequest(req, requester, team)
 	if err != nil {
@@ -86,8 +91,10 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeTeamMemberRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store team member request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamMemberRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store team member request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("team member request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -245,9 +252,12 @@ func (p *Plugin) openTeamMemberRequestDialog(triggerID, teamID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeTeamMemberDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }

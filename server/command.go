@@ -214,11 +214,14 @@ func (p *Plugin) openChannelAdminRequestDialog(triggerID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeChannelAdminDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }
 
 func (p *Plugin) executeBotRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {

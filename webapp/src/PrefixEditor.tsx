@@ -32,10 +32,6 @@ type PrefixRow = {
 const DEFAULT_MAX_LENGTH = 48;
 const MIN_MAX_LENGTH = 2;
 const MAX_MAX_LENGTH = 48;
-// Previous shipped default. Persisted configs keep |24 across uploads;
-// bump those rows to DEFAULT_MAX_LENGTH so System Console matches the
-// server-side migration (custom lengths other than 24 are left alone).
-const LEGACY_DEFAULT_MAX_LENGTH = 24;
 
 // Preset packs — populate the table with sensible starter values.
 // Clicking one UPSERTS its rows: prefixes already in the table are
@@ -110,21 +106,13 @@ function parseRows(raw: string): PrefixRow[] {
         let maxLength = DEFAULT_MAX_LENGTH;
         if (raw3 !== '') {
             if ((/^\d+$/).test(raw3)) {
-                let n = parseInt(raw3, 10);
-                if (n === LEGACY_DEFAULT_MAX_LENGTH) {
-                    n = DEFAULT_MAX_LENGTH;
-                }
-                maxLength = clampLength(n);
+                maxLength = clampLength(parseInt(raw3, 10));
             } else {
                 // Legacy regex — try to extract the upper bound from
                 // "{2,N}" so a converted setting keeps the same limit.
                 const m = raw3.match(/\{\s*\d+\s*,\s*(\d+)\s*\}/);
                 if (m) {
-                    let n = parseInt(m[1], 10);
-                    if (n === LEGACY_DEFAULT_MAX_LENGTH) {
-                        n = DEFAULT_MAX_LENGTH;
-                    }
-                    maxLength = clampLength(n);
+                    maxLength = clampLength(parseInt(m[1], 10));
                 }
             }
         }
@@ -181,24 +169,6 @@ export const PrefixEditor: React.FC<Props> = ({id, value, disabled, onChange, se
     useEffect(() => {
         setRows(parseRows(value ?? ''));
     }, [value]);
-
-    // If persisted value still has the legacy |24 default, rewrite via
-    // onChange + setSaveNeeded so System Console shows 48 even when the
-    // server-side migration hasn't persisted yet (or Save is still pending).
-    useEffect(() => {
-        if (disabled) {
-            return;
-        }
-        const raw = value ?? '';
-        if (!raw.includes(`|${LEGACY_DEFAULT_MAX_LENGTH}`)) {
-            return;
-        }
-        const next = serializeRows(parseRows(raw));
-        if (next !== raw) {
-            onChange(id, next);
-            setSaveNeeded?.();
-        }
-    }, [value, id, onChange, setSaveNeeded, disabled]);
 
     // Ensure the preview always has a valid selected prefix.
     useEffect(() => {

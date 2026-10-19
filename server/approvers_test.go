@@ -11,12 +11,12 @@ import (
 )
 
 func TestAttributeValueIsSet(t *testing.T) {
-	set := func(s string) bool { return attributeValueIsSet(json.RawMessage(s)) }
+	textField := &model.PropertyField{Type: model.PropertyFieldTypeText}
+	set := func(s string) bool { return attributeValueIsSet(json.RawMessage(s), textField) }
 
-	// Set values.
+	// Set values (text / bool / array).
 	require.True(t, set(`"yes"`))
 	require.True(t, set(`"security"`))
-	require.True(t, set(`"opt-abc123"`))
 	require.True(t, set(`["a","b"]`))
 	require.True(t, set(`true`))
 
@@ -30,10 +30,32 @@ func TestAttributeValueIsSet(t *testing.T) {
 	require.False(t, set(`false`))
 }
 
+func TestAttributeValueIsSet_SelectResolvesOptionNames(t *testing.T) {
+	yesID := model.NewId()
+	noID := model.NewId()
+	field := &model.PropertyField{
+		Type: model.PropertyFieldTypeSelect,
+		Attrs: model.StringInterface{
+			model.PropertyFieldAttributeOptions: []*model.CustomProfileAttributesSelectOption{
+				{ID: yesID, Name: "Yes"},
+				{ID: noID, Name: "No"},
+			},
+		},
+	}
+
+	require.True(t, attributeValueIsSet(json.RawMessage(`"`+yesID+`"`), field))
+	require.False(t, attributeValueIsSet(json.RawMessage(`"`+noID+`"`), field))
+	// Opaque ID with no matching option must not authorize.
+	require.False(t, attributeValueIsSet(json.RawMessage(`"opt-unknown"`), field))
+}
+
 // mockApproverAttr wires the three Property API calls for one attribute lookup.
 func mockApproverAttr(api *plugintest.API, attrName, userID string, values []*model.PropertyValue) {
 	api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(&model.PropertyGroup{ID: "grp"}, nil)
-	api.On("GetPropertyFieldByName", "grp", "", attrName).Return(&model.PropertyField{ID: "fld-" + attrName}, nil)
+	api.On("GetPropertyFieldByName", "grp", "", attrName).Return(&model.PropertyField{
+		ID:   "fld-" + attrName,
+		Type: model.PropertyFieldTypeText,
+	}, nil)
 	api.On("SearchPropertyValues", "grp", mock.MatchedBy(func(opts model.PropertyValueSearchOpts) bool {
 		return opts.TargetType == model.PropertyValueTargetTypeUser &&
 			len(opts.TargetIDs) == 1 && opts.TargetIDs[0] == userID &&

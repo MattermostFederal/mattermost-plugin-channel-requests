@@ -1,5 +1,5 @@
 import type React from 'react';
-import {useRef} from 'react';
+import {useEffect, useRef} from 'react';
 
 // Selector for the elements that can hold focus inside a dialog. Used by the
 // focus trap to find the first/last stop. Mirrors the common WAI-ARIA
@@ -9,15 +9,41 @@ const FOCUSABLE_SELECTOR =
 
 // useDialogFocusTrap wires the keyboard affordances every request modal needs:
 // Escape closes the dialog, and Tab / Shift+Tab are trapped so focus cycles
-// within the modal instead of escaping to the page behind the overlay. It
-// returns a ref to attach to the dialog element and the keydown handler to
-// put on it.
+// within the modal instead of escaping to the page behind the overlay. On open
+// it moves focus into the dialog (first focusable, else the dialog root) and
+// restores the previously focused element on close.
 //
 // The handler yields to children that already consumed the Tab (the
 // MemberPicker uses Tab to complete the highlighted candidate and calls
 // preventDefault), so autocomplete completion still works inside the trap.
 export function useDialogFocusTrap(onClose: () => void) {
     const dialogRef = useRef<HTMLDivElement>(null);
+    const previouslyFocused = useRef<HTMLElement | null>(null);
+
+    useEffect(() => {
+        const root = dialogRef.current;
+        if (!root) {
+            return undefined;
+        }
+        previouslyFocused.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+
+        const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+        const target = focusable[0] ?? root;
+        // Defer so the dialog is in the DOM before focus moves (hub → child modal).
+        const timer = window.setTimeout(() => {
+            target.focus();
+        }, 0);
+
+        return () => {
+            window.clearTimeout(timer);
+            const prev = previouslyFocused.current;
+            if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+                prev.focus();
+            }
+        };
+    }, []);
 
     const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Escape') {

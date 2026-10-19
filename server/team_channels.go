@@ -171,7 +171,7 @@ func (p *Plugin) ensureRootApprovalChannel() *model.Channel {
 // Managed sidebar category for every plugin ticket / approval channel.
 // Prior labels are renamed in-place so upgrades don't leave duplicate empty categories.
 const (
-	sidebarCategoryName = "Mattermost: Request Hub"
+	sidebarCategoryName       = "Mattermost: Request Hub"
 	kvSidebarCategoryMigrated = "migration_sidebar_category_v3"
 )
 
@@ -181,15 +181,7 @@ var sidebarCategoryNameLegacy = []string{
 }
 
 func isManagedSidebarCategory(name string) bool {
-	if name == sidebarCategoryName {
-		return true
-	}
-	for _, legacy := range sidebarCategoryNameLegacy {
-		if name == legacy {
-			return true
-		}
-	}
-	return false
+	return name == sidebarCategoryName || slices.Contains(sidebarCategoryNameLegacy, name)
 }
 
 // addChannelToPermissionsCategory ensures the given channel appears at the top
@@ -216,13 +208,7 @@ func (p *Plugin) addChannelToPermissionsCategory(userID, teamID, channelID strin
 			cat.DisplayName = sidebarCategoryName
 			changed = true
 		}
-		already := false
-		for _, id := range cat.Channels {
-			if id == channelID {
-				already = true
-				break
-			}
-		}
+		already := slices.Contains(cat.Channels, channelID)
 		if !already {
 			cat.Channels = append([]string{channelID}, cat.Channels...)
 			changed = true
@@ -305,8 +291,8 @@ func (p *Plugin) ensureNamedApprovalChannel(name, displayName, purpose string) *
 		return nil
 	}
 
-	if ch, appErr := p.API.GetChannelByName(team.Id, name, false); appErr == nil {
-		return ch
+	if existing, lookupErr := p.API.GetChannelByName(team.Id, name, false); lookupErr == nil {
+		return existing
 	}
 
 	ch, appErr := p.API.CreateChannel(&model.Channel{
@@ -492,11 +478,6 @@ func (p *Plugin) addTeamApproversToChannel(teamID, channelID string) {
 			return
 		}
 	}
-}
-
-// addTeamAdminsToChannel is kept as a thin alias for older call sites / tests.
-func (p *Plugin) addTeamAdminsToChannel(teamID, channelID string) {
-	p.addTeamApproversToChannel(teamID, channelID)
 }
 
 // postChannelWelcomeMessage posts an orientation message in the newly-created

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -287,9 +288,9 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	// Bypass approval for System Admins — unless ForceQueue (slash-command
 	// dialog) which always produces an approval card.
 	if !in.ForceQueue && requester.IsSystemAdmin() {
-		channel, err := p.createChannelForRequest(req)
-		if err != nil {
-			return "", err
+		channel, createErr := p.createChannelForRequest(req)
+		if createErr != nil {
+			return "", createErr
 		}
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
@@ -301,8 +302,13 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 
 	// Store the request before posting the approval message so the approve/deny
 	// handlers can find it by ID the moment the post is live.
-	if err := p.storeRequest(req); err != nil {
-		return "", err
+	if storeErr := p.storeRequest(req); storeErr != nil {
+		return "", storeErr
+	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot channel request")
 	}
 
 	approvalPostID, approvalChannelID, err := p.postApprovalRequest(req, requester)
@@ -322,8 +328,10 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	// Re-store with the post IDs filled in. Best-effort: if this fails the ticket
 	// still works (approve/deny still finds the request), but thread forwarding and
 	// threaded outcome notifications won't work for this ticket.
-	if storeErr := p.storeRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("channel request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -723,10 +731,8 @@ func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName 
 			if cat == nil || !strings.EqualFold(cat.DisplayName, categoryName) {
 				continue
 			}
-			for _, id := range cat.Channels {
-				if id == channelID {
-					return nil // already in this category
-				}
+			if slices.Contains(cat.Channels, channelID) {
+				return nil // already in this category
 			}
 			cat.Channels = append(cat.Channels, channelID)
 			if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
@@ -760,4 +766,3 @@ func (p *Plugin) mentionList(userIDs []string) string {
 	}
 	return strings.Join(mentions, ", ")
 }
-

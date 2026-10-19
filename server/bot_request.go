@@ -121,6 +121,11 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 	if err := p.storeBotRequest(req); err != nil {
 		return "", err
 	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvBotRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot bot request")
+	}
 
 	approvalPostID, approvalChannelID, err := p.postBotApprovalRequest(req, requester)
 	if err != nil {
@@ -134,8 +139,10 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeBotRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store bot request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvBotRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store bot request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("bot request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -366,9 +373,12 @@ func (p *Plugin) openBotRequestDialog(triggerID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeBotDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }

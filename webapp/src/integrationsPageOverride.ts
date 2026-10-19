@@ -15,6 +15,7 @@ import type {GlobalState} from './store';
 // and the main card grid in a single listener.
 //
 // System Admins are never intercepted — they get the native flow.
+// Returns a disposer that removes the listener (call from Plugin.uninitialize).
 
 const debug = makeDebug('integrations-page');
 
@@ -26,51 +27,53 @@ function isSystemAdmin(store: Store): boolean {
     return roles.split(' ').includes('system_admin');
 }
 
-export function installIntegrationsPageOverride(store: Store): void {
+export function installIntegrationsPageOverride(store: Store): () => void {
     debug('installing integrations-page override');
 
-    document.addEventListener(
-        'click',
-        (event) => {
-            if (isSystemAdmin(store)) {
-                return;
-            }
+    const onClick = (event: MouseEvent) => {
+        if (isSystemAdmin(store)) {
+            return;
+        }
 
-            const target = event.target as HTMLElement | null;
-            if (!target) {
-                return;
-            }
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
 
-            // Walk up from the click target to find the nearest anchor.
-            // Cards on the Integrations landing page are typically <a> wrappers,
-            // and sidebar items are also <a> links — so this covers both.
-            const link = target.closest<HTMLAnchorElement>('a');
-            if (!link) {
-                return;
-            }
+        // Walk up from the click target to find the nearest anchor.
+        // Cards on the Integrations landing page are typically <a> wrappers,
+        // and sidebar items are also <a> links — so this covers both.
+        const link = target.closest<HTMLAnchorElement>('a');
+        if (!link) {
+            return;
+        }
 
-            const href = link.getAttribute('href') ?? '';
+        const href = link.getAttribute('href') ?? '';
 
-            let action = null;
-            if (href.includes('/integrations/incoming_webhooks') || href.includes('/integrations/add_incoming_webhook')) {
-                action = openIncomingWebhookModal();
-                debug('intercepted incoming webhook click');
-            } else if (href.includes('/integrations/outgoing_webhooks') || href.includes('/integrations/add_outgoing_webhook')) {
-                action = openOutgoingWebhookModal();
-                debug('intercepted outgoing webhook click');
-            } else if (href.includes('/integrations/bot_accounts') || href.includes('/integrations/add_bot_account')) {
-                action = openBotRequestModal();
-                debug('intercepted bot accounts click');
-            }
+        let action = null;
+        if (href.includes('/integrations/incoming_webhooks') || href.includes('/integrations/add_incoming_webhook')) {
+            action = openIncomingWebhookModal();
+            debug('intercepted incoming webhook click');
+        } else if (href.includes('/integrations/outgoing_webhooks') || href.includes('/integrations/add_outgoing_webhook')) {
+            action = openOutgoingWebhookModal();
+            debug('intercepted outgoing webhook click');
+        } else if (href.includes('/integrations/bot_accounts') || href.includes('/integrations/add_bot_account')) {
+            action = openBotRequestModal();
+            debug('intercepted bot accounts click');
+        }
 
-            if (!action) {
-                return;
-            }
+        if (!action) {
+            return;
+        }
 
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            store.dispatch(action);
-        },
-        true,
-    );
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        store.dispatch(action);
+    };
+
+    document.addEventListener('click', onClick, true);
+    return () => {
+        document.removeEventListener('click', onClick, true);
+        debug('removed integrations-page override');
+    };
 }

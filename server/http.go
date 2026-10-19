@@ -50,15 +50,15 @@ const (
 
 	// Webapp-driven REST endpoints — no triggerID required. Used by React
 	// modals that collect form data and POST directly to the plugin.
-	routeSubmitTeamCreationWebapp       = "/api/v1/submit_team_creation"
-	routeSubmitTeamAdminWebapp          = "/api/v1/submit_team_admin_request"
-	routeSubmitTeamMemberWebapp         = "/api/v1/submit_team_member_request"
-	routeSubmitTeamGuestWebapp          = "/api/v1/submit_team_guest_request"
-	routeSubmitBotWebapp                = "/api/v1/submit_bot_request"
-	routeSubmitIncomingWebhookWebapp    = "/api/v1/submit_incoming_webhook_request"
-	routeSubmitOutgoingWebhookWebapp    = "/api/v1/submit_outgoing_webhook_request"
-	routeSidebarCategories              = "/api/v1/sidebar_categories" // ?team_id=... — list caller's sidebar categories
-	routeConfig                         = "/api/v1/config"
+	routeSubmitTeamCreationWebapp    = "/api/v1/submit_team_creation"
+	routeSubmitTeamAdminWebapp       = "/api/v1/submit_team_admin_request"
+	routeSubmitTeamMemberWebapp      = "/api/v1/submit_team_member_request"
+	routeSubmitTeamGuestWebapp       = "/api/v1/submit_team_guest_request"
+	routeSubmitBotWebapp             = "/api/v1/submit_bot_request"
+	routeSubmitIncomingWebhookWebapp = "/api/v1/submit_incoming_webhook_request"
+	routeSubmitOutgoingWebhookWebapp = "/api/v1/submit_outgoing_webhook_request"
+	routeSidebarCategories           = "/api/v1/sidebar_categories" // ?team_id=... — list caller's sidebar categories
+	routeConfig                      = "/api/v1/config"
 
 	// fieldPrefix is the dialog element name for the domain-prefix
 	// dropdown. Kept alongside the other field* constants in request.go.
@@ -1327,23 +1327,15 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 
 	var outcome string
 	if approve {
-		link, fulfillErr := p.fulfillTeamGuestRequest(req, actingUser.Id)
-		if fulfillErr != nil && link == "" {
+		if fulfillErr := p.fulfillTeamGuestRequest(req, actingUser.Id); fulfillErr != nil {
 			if restoreErr := p.API.KVSet(kvTeamGuestRequestPrefix+req.ID, rawReq); restoreErr != nil {
 				p.API.LogError("failed to restore team guest request", "error", restoreErr.Error())
 			}
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fulfillErr.Error()})
 			return
 		}
-		note := ""
-		if fulfillErr != nil {
-			note = " (" + fulfillErr.Error() + ")"
-		}
-		outcome = fmt.Sprintf("✅ Approved by @%s. Guest invite for %s.%s\nInvite link: %s", actingUser.Username, teamRef, note, link)
-		text := fmt.Sprintf("Approved by @%s. Guest invite for %s is ready.\n\n**Shareable invite link:** %s\n\nForward this link to the guest, or use the emailed invitation if you provided an email.", actingUser.Username, teamRef, link)
-		if fulfillErr != nil {
-			text += "\n\nNote: " + fulfillErr.Error()
-		}
+		outcome = fmt.Sprintf("✅ Approved by @%s. Guest invitation emailed to %s for %s.", actingUser.Username, req.Email, teamRef)
+		text := fmt.Sprintf("Approved by @%s. A guest invitation was emailed to **%s** for %s (channel-scoped guest access).", actingUser.Username, req.Email, teamRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
 			Color: colorApproved,
 			Title: "Guest Invite Request Approved",
@@ -1633,7 +1625,11 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			p.API.LogWarn("failed to create admin session — token/webhook extras will be skipped", "error", sessErr.Error())
 		} else {
 			authToken = adminSession.Token
-			defer p.API.RevokeSession(adminSession.Id)
+			defer func() {
+				if revErr := p.API.RevokeSession(adminSession.Id); revErr != nil {
+					p.API.LogWarn("failed to revoke admin session after bot extras", "error", revErr.Error())
+				}
+			}()
 		}
 
 		var tokenValue string

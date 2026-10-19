@@ -97,6 +97,11 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	if err := p.storeAdminRequest(req); err != nil {
 		return "", err
 	}
+	rawBefore, err := json.Marshal(req)
+	if err != nil {
+		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
+		return "", errors.Wrap(err, "failed to snapshot admin request")
+	}
 
 	approvalPostID, approvalChannelID, err := p.postAdminApprovalRequest(req, requester, channel)
 	if err != nil {
@@ -112,8 +117,10 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeAdminRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store admin request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvAdminRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store admin request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("admin request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,

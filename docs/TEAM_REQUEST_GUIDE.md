@@ -171,8 +171,8 @@ is created immediately.
 
 ### Team Admin
 
-Team Admin requests post to the **root approval channel** (same channel as
-channel / Channel Admin requests). System Admins Approve or Deny.
+Team Admin requests post to **`mattermost-team-requests`** (same channel as team
+creation requests), not the root channel-request queue. System Admins Approve or Deny.
 
 ![A Team Admin request card with Approve/Deny](images/team-admin-request/mattermost-team-admin-approval-card.png)
 
@@ -192,9 +192,8 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (or
 | **Allow team requests** | Enables **Request a Team** entry points. Default **off**. |
 | **Allow team admin requests** | Enables **Request Team Admin** entry points. Default **off**. |
 
-Team creation cards always go to **`mattermost-team-requests`**. Team Admin
-cards go to the configured root approval channel. See the
-[Admin Guide](admin-guide.md) for the full settings reference.
+Team creation and Team Admin cards both go to **`mattermost-team-requests`**.
+See the [Admin Guide](admin-guide.md) for the full settings reference.
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Team** permission from roles that shouldn't create teams natively

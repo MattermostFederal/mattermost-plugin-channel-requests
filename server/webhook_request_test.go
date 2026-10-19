@@ -183,7 +183,7 @@ func TestCreateWebhookForRequest_IncomingReturnsURL(t *testing.T) {
 	p := newTestPlugin(api)
 
 	api.On("GetConfig").Return(&model.Config{
-		ServiceSettings: model.ServiceSettings{SiteURL: strPtr(ts.URL)},
+		ServiceSettings: model.ServiceSettings{SiteURL: new(ts.URL)},
 	})
 	// createWebhookForRequest creates a short-lived session for the admin and
 	// revokes it immediately after the REST API call.
@@ -213,7 +213,7 @@ func TestCreateWebhookForRequest_OutgoingReturnsConfirmation(t *testing.T) {
 	p := newTestPlugin(api)
 
 	api.On("GetConfig").Return(&model.Config{
-		ServiceSettings: model.ServiceSettings{SiteURL: strPtr(ts.URL)},
+		ServiceSettings: model.ServiceSettings{SiteURL: new(ts.URL)},
 	})
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess2", Token: "tok2"}, nil)
 	api.On("RevokeSession", "sess2").Return(nil)
@@ -266,7 +266,7 @@ func TestCreateWebhookForRequest_APIErrorPropagates(t *testing.T) {
 	p := newTestPlugin(api)
 
 	api.On("GetConfig").Return(&model.Config{
-		ServiceSettings: model.ServiceSettings{SiteURL: strPtr(ts.URL)},
+		ServiceSettings: model.ServiceSettings{SiteURL: new(ts.URL)},
 	})
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess3", Token: "bad-token"}, nil)
 	api.On("RevokeSession", "sess3").Return(nil)

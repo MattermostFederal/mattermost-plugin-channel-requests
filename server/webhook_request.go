@@ -84,6 +84,11 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 	if err := p.storeWebhookRequest(req); err != nil {
 		return "", err
 	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvWebhookRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot webhook request")
+	}
 
 	approvalPostID, approvalChannelID, err := p.postWebhookApprovalRequest(req, requester, channel)
 	if err != nil {
@@ -97,8 +102,10 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if storeErr := p.storeWebhookRequest(req); storeErr != nil {
-		p.API.LogWarn("failed to re-store webhook request with post IDs", "request_id", req.ID, "error", storeErr.Error())
+	if ok, casErr := p.kvUpdateIfUnchanged(kvWebhookRequestPrefix+req.ID, rawBefore, req); casErr != nil {
+		p.API.LogWarn("failed to re-store webhook request with post IDs", "request_id", req.ID, "error", casErr.Error())
+	} else if !ok {
+		p.API.LogWarn("webhook request already claimed before post IDs were written", "request_id", req.ID)
 	} else {
 		p.storeTicketLookups(threadAnchor{
 			ApprovalPostID:    approvalPostID,
@@ -167,7 +174,11 @@ func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string
 	if appErr != nil {
 		return "", "", errors.Wrap(appErr, "failed to create admin session for webhook creation")
 	}
-	defer p.API.RevokeSession(session.Id)
+	defer func() {
+		if revErr := p.API.RevokeSession(session.Id); revErr != nil {
+			p.API.LogWarn("failed to revoke admin session after webhook op", "error", revErr.Error())
+		}
+	}()
 
 	// Use the internal localhost URL to avoid the loopback routing issue in
 	// cloud deployments where the public SiteURL routes through a load balancer
@@ -228,7 +239,11 @@ func (p *Plugin) deleteWebhook(webhookType, hookID, adminUserID string) error {
 	if appErr != nil {
 		return errors.Wrap(appErr, "failed to create admin session for webhook deletion")
 	}
-	defer p.API.RevokeSession(session.Id)
+	defer func() {
+		if revErr := p.API.RevokeSession(session.Id); revErr != nil {
+			p.API.LogWarn("failed to revoke admin session after webhook op", "error", revErr.Error())
+		}
+	}()
 
 	client := model.NewAPIv4Client(internalURL)
 	client.SetToken(session.Token)
@@ -406,11 +421,14 @@ func (p *Plugin) openIncomingWebhookDialog(triggerID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeIncomingWebhookDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }
 
 // openOutgoingWebhookDialog opens the request dialog for an outgoing webhook.
@@ -453,9 +471,12 @@ func (p *Plugin) openOutgoingWebhookDialog(triggerID string) error {
 			},
 		},
 	}
-	return p.API.OpenInteractiveDialog(model.OpenDialogRequest{
+	if appErr := p.API.OpenInteractiveDialog(model.OpenDialogRequest{
 		TriggerId: triggerID,
 		URL:       fmt.Sprintf("/plugins/%s%s", manifest.Id, routeOutgoingWebhookDialog),
 		Dialog:    dialog,
-	})
+	}); appErr != nil {
+		return appErr
+	}
+	return nil
 }

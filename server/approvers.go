@@ -104,7 +104,7 @@ func (p *Plugin) userIsApprover(user *model.User, attrName string) (bool, error)
 	}
 
 	for _, v := range values {
-		if v != nil && attributeValueIsSet(v.Value) {
+		if v != nil && attributeValueIsSet(v.Value, field) {
 			return true, nil
 		}
 	}
@@ -112,20 +112,25 @@ func (p *Plugin) userIsApprover(user *model.User, attrName string) (bool, error)
 }
 
 // attributeValueIsSet reports whether a CPA value marks the user as an approver.
+//
 // CPA values are JSON: "opt-id" (select), ["a","b"] (multiselect), "text", or a
-// bool. We treat a value as "set" when it's a non-empty, non-false-y string; a
-// non-empty array; or boolean true. Absent/empty/false-y means not an approver,
-// so admins should use an attribute that is only set for approvers (e.g. a
-// yes/no select, or an LDAP/SAML-synced attribute present only for the pool).
-func attributeValueIsSet(raw json.RawMessage) bool {
+// bool. For select/multiselect the stored string is an option ID — we resolve it
+// to the option's display name via field metadata and only treat affirmative
+// labels as set, so a "No" option cannot authorize. Text/bool keep non-empty /
+// non-false-y rules. Prefer a Yes/No select (option named Yes) or an attribute
+// present only for the approver pool.
+func attributeValueIsSet(raw json.RawMessage, field *model.PropertyField) bool {
 	if len(raw) == 0 {
 		return false
 	}
 
+	if field != nil && field.Type.SupportsOptions() {
+		return selectAttributeIsAffirmative(raw, field)
+	}
+
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		t := strings.TrimSpace(strings.ToLower(s))
-		return t != "" && t != "false" && t != "no" && t != "0"
+		return stringLooksAffirmative(s)
 	}
 
 	var arr []any
@@ -139,4 +144,52 @@ func attributeValueIsSet(raw json.RawMessage) bool {
 	}
 
 	return false
+}
+
+func selectAttributeIsAffirmative(raw json.RawMessage, field *model.PropertyField) bool {
+	options := selectOptionsByID(field)
+	if len(options) == 0 {
+		return false
+	}
+
+	var id string
+	if err := json.Unmarshal(raw, &id); err == nil {
+		name, ok := options[id]
+		return ok && stringLooksAffirmative(name)
+	}
+
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err == nil {
+		for _, optID := range ids {
+			if name, ok := options[optID]; ok && stringLooksAffirmative(name) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
+}
+
+func selectOptionsByID(field *model.PropertyField) map[string]string {
+	out := map[string]string{}
+	if field == nil {
+		return out
+	}
+	cpa, err := model.NewCPAFieldFromPropertyField(field)
+	if err != nil || cpa == nil {
+		return out
+	}
+	for _, opt := range cpa.Attrs.Options {
+		if opt == nil || opt.ID == "" {
+			continue
+		}
+		out[opt.ID] = opt.Name
+	}
+	return out
+}
+
+func stringLooksAffirmative(s string) bool {
+	t := strings.TrimSpace(strings.ToLower(s))
+	return t != "" && t != "false" && t != "no" && t != "0" && t != "n" && t != "off"
 }
