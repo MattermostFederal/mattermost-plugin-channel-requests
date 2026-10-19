@@ -1,6 +1,7 @@
 ---
 name: add-backend-tests
 description: Systematically find Go backend test coverage gaps and add exhaustive unit/integration tests. Use when you want to improve Go test coverage, add missing tests, or harden existing test suites.
+user-invocable: true
 ---
 
 # Add Backend Tests
@@ -20,7 +21,7 @@ This skill uses a plan-then-execute workflow:
 
 ## Step 1: Measure Current Coverage (in plan mode)
 
-Run the coverage target (typically `make coverage-backend` or `make coverage`) and capture the output. This runs `go test -coverprofile` then `go tool cover -func` to show per-function coverage.
+Run `make coverage-backend` and capture the output. It runs `go test $(GO_TEST_FLAGS) -coverprofile=server/coverage.txt ./server/...` (`GO_TEST_FLAGS` defaults to `-race`) and then `go tool cover -func` to show per-function coverage.
 
 ```bash
 make coverage-backend 2>&1
@@ -40,7 +41,7 @@ To check the per-file gate, aggregate the per-function output from `go tool cove
 **Excluded from the per-file check** (these should not block the exit gate):
 - `*_test.go` (test files do not appear in coverage output anyway)
 - Generated files: `server/manifest.go`, any file with `// Code generated` header
-- `main.go` entrypoints and trivial files with only constants or package-level vars
+- `server/main.go` and trivial files with only constants or package-level vars
 
 When you exit because both gates pass, report the overall percentage and confirm no file is below the per-file floor. When you proceed because a file is below 80%, list the offending files and continue to the priority list.
 
@@ -67,7 +68,7 @@ For each function in your priority list:
 1. **Read the source file** to understand the function's logic, branches, and error paths
 2. **Read the existing test file** (if one exists) to see what's already covered
 3. **Identify untested paths**: error returns, edge cases, branch conditions, concurrent scenarios
-4. **Note dependencies**: what needs mocking (API calls, KV store, plugin API)
+4. **Note dependencies**: which `plugin.API` calls need `api.On(...)` expectations (KV store, users, teams, channels, posts)
 
 Build a concrete test plan before writing any code. For each test, know:
 - The specific branch/path being tested
@@ -89,30 +90,43 @@ Exit plan mode and wait for user approval before proceeding to Step 3.
 
 ### Test Infrastructure
 
-Mattermost plugins typically use `github.com/mattermost/mattermost/server/public/plugin/plugintest` for mocking the plugin API:
+**Use the test double this project already has. Do not introduce a second one, and do not add a mocking dependency.** Everything under `server/` is `package main`, and the tests use `plugintest.API` with testify:
+
+- `newTestPlugin(api)` in `server/request_test.go` builds a `Plugin` around a `*plugintest.API` with a bot user id and a default configuration. Use it; set `p.configuration` (or call `p.setConfiguration`) when a test needs different settings.
+- `stubLogs(api)` accepts any `LogError`/`LogWarn`/`LogInfo`/`LogDebug` call. Call it whenever the code under test may log, so an unexpected log does not panic the mock.
+- `testAppErr(msg)` builds a `*model.AppError` for forcing API failure paths.
+- `actionBody(t, requestID)` in `server/http_test.go` builds the JSON body of an interactive-button callback for the approve and deny routes.
+- Assertions use `github.com/stretchr/testify/require`; argument matching uses `mock.Anything` and `mock.MatchedBy`.
+
+Read the largest existing `*_test.go` beside the code under test before writing anything, and reuse its helpers rather than duplicating them.
 
 ```go
 api := &plugintest.API{}
-api.On("LogError", mock.Anything, mock.Anything, mock.Anything).Return()
-api.On("GetTeamByName", "team-a").Return(&model.Team{Id: "team-id"}, nil)
+stubLogs(api)
 defer api.AssertExpectations(t)
+p := newTestPlugin(api)
 
-p := &Plugin{}
-p.SetAPI(api)
+api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
 ```
 
-**HTTP handler testing:**
+**Prove a call did not happen** when the test is about a guard (authorization, validation, a disabled feature):
+
 ```go
-req := httptest.NewRequest(http.MethodGet, "/api/v1/example", nil)
-req.Header.Set("Mattermost-User-ID", "user123")
-w := httptest.NewRecorder()
-
-p.ServeHTTP(nil, w, req)
-
-assert.Equal(t, http.StatusOK, w.Code)
+api.AssertNotCalled(t, "SearchUsers", mock.Anything)
 ```
 
-**KV store mocking**: if the plugin defines its own KV store interface, implement a test double that satisfies the interface and override only the methods the function under test actually calls. Interface-based KV stores are much easier to mock than calling `p.API.KVSet` directly.
+**KV store paths.** Requests are stored under `kvRequestPrefix` and claimed with `KVCompareAndDelete` so two approvers cannot both act on one request. Cover the lost-race branch (`KVCompareAndDelete` returning `false, nil`) as well as the error branch.
+
+**HTTP handler testing.** Call the handler directly, or go through `p.ServeHTTP` when the test is about routing. Identity comes from the `Mattermost-User-Id` header, which `requireUserID` reads; always cover the missing-header 401:
+
+```go
+req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=a&team_id=t1", nil)
+req.Header.Set("Mattermost-User-Id", "u1")
+w := httptest.NewRecorder()
+p.handleUserAutocomplete(w, req)
+
+require.Equal(t, http.StatusOK, w.Code)
+```
 
 ### Testing Patterns to Follow
 
@@ -139,11 +153,11 @@ tests := []struct {
 for _, tt := range tests {
     t.Run(tt.name, func(t *testing.T) {
         got, err := Transform(tt.input)
-        if tt.wantErr {
-            require.Error(t, err)
-        } else {
-            require.NoError(t, err)
-            assert.Equal(t, tt.want, got)
+        if (err != nil) != tt.wantErr {
+            t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+        }
+        if got != tt.want {
+            t.Errorf("got %q, want %q", got, tt.want)
         }
     })
 }
@@ -153,7 +167,7 @@ for _, tt := range tests {
 
 - **Tests behavior, not implementation**: assert on observable outcomes (HTTP status, return values, mock expectations), not internal state
 - **One logical assertion per subtest**: test one path/branch per t.Run
-- **Descriptive names**: `TestHandleFoo_NotFound_Returns404` not `TestHandleFoo3`
+- **Descriptive names that state the invariant**, in this repo's `TestSubject_Behavior` style: `TestHandleUserAutocomplete_NonMemberGetsEmpty`, not `TestHandleFoo3`
 - **Isolated**: each subtest sets up its own state, no shared mutable state between subtests
 - **Fast**: prefer mocks over real I/O
 - **No synthetic/mock data to fix failures**: if a test fails, fix the code or the test logic, never fabricate data
@@ -183,8 +197,8 @@ Start with the largest completely-untested files. Write a full test file for eac
 **Phase 2, Remaining 0% functions (Tier 2):**
 Individual uncovered functions in files that already have partial test coverage. Add subtests to the existing test file following its established mock patterns.
 
-**Phase 3, KV store and dependency mocks:**
-Functions that read/write via the plugin API or a KV store interface. Create mock implementations that override only the methods the function under test actually calls.
+**Phase 3, KV store and dependency doubles:**
+Functions that read or write requests in the KV store (`storeRequest`, `loadRequest`, `storeAdminRequest`, `loadAdminRequest`) and the approve and deny handlers that claim them. Set `api.On` expectations for exactly the calls each path makes, including the failure and lost-race returns.
 
 **Phase 4, Branch coverage (Tiers 3-4, low coverage functions):**
 Functions that have tests but miss important branches. Read existing tests carefully to avoid duplication.
@@ -193,7 +207,7 @@ Functions that have tests but miss important branches. Read existing tests caref
 Message parsing (malformed input, boundary conditions), API handlers (concurrent requests, large payloads), configuration changes (nil config, invalid values).
 
 **Phase 6, Interface extraction for testability (if needed):**
-If a dependency uses a concrete type that cannot be mocked, extract an interface to enable unit testing.
+Everything here goes through `p.API`, which `plugintest.API` already mocks. Only extract an interface if a new dependency outside `plugin.API` appears, and ask first.
 
 ## Step 5: Validate After Each Phase
 
@@ -227,7 +241,8 @@ Report the before/after coverage delta per package and overall.
 ## Common Pitfalls
 
 - **Testing the mock, not the code**: ensure your mock setup actually forces the code path you intend. If a mock returns nil where the real code would return data, you may be testing a different branch.
-- **Forgetting `defer api.AssertExpectations(t)`**: without this, unmet mock expectations silently pass.
+- **Forgetting `defer api.AssertExpectations(t)`**: without it, unmet mock expectations silently pass.
+- **Forgetting `stubLogs(api)`**: an unexpected log call panics the mock with a confusing message.
 - **Not reading existing tests first**: you'll write duplicates or miss established patterns.
 - **Over-mocking**: if a function is pure logic with no dependencies, test it directly without mocks.
 - **Ignoring goroutine cleanup**: any test that spawns goroutines must cancel the context and wait for completion to avoid test pollution.

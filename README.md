@@ -18,13 +18,14 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 
 ## Documentation
 
-- [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md)
-- [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md)
+- [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**
+- [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**
 - [Team Requests](docs/TEAM_REQUEST_GUIDE.md) — create team / Team Admin
 - [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md) — add members / guest invite link
 - [Bot Accounts](docs/BOT_REQUEST_GUIDE.md)
 - [Webhooks](docs/WEBHOOK_REQUEST_GUIDE.md)
 - [Admin Guide](docs/admin-guide.md)
+- [Releasing](docs/RELEASING.md) — how to cut a release
 
 In Mattermost, **`/mattermost-request-hub docs`** opens the bundled HTML guide.
 
@@ -35,6 +36,13 @@ make dist    # builds dist/com.mattermostfederal.mattermost-plugin-request-hub-*
 make deploy  # optional: deploy to a running Mattermost server
 ```
 
+## Common commands
+
+- `make dist` — build the plugin bundle
+- `make check-style` — lint Go and webapp code
+- `make test` — run tests
+- `make deploy` — deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
+
 ## Configuration
 
 **System Console → Plugins → Mattermost Request Hub**
@@ -43,6 +51,34 @@ make deploy  # optional: deploy to a running Mattermost server
 - Enable the request types you need (team member / guest default off)
 - Configure channel domain prefixes for channel creation
 - For guests: enable Guest Accounts on the server before relying on emailed invites
+
+> To fully funnel non-admins through the request flow, remove the built-in **Create Public/Private Channel** permission from the System User role (System Console → User Management → Permissions). Mattermost's plugin API cannot veto native channel creation.
+
+## PR preview environments
+
+Add the `preview` label to a pull request to stand up a throwaway Mattermost server with that PR's bundle installed. The URL is posted on the PR. Removing the label or closing the PR tears it down.
+
+`.github/workflows/preview.yml` is a thin copy of the shared workflow in the private `MattermostFederal/pr-preview` repo, checked out at its protected `v1` tag. It never checks out or runs PR code: it waits for `build.yml` to pass on the PR's head commit and deploys the `plugin-bundle` artifact that run uploaded. A fork PR deploys only the commit that was labeled; a later push tears the preview down until a maintainer re-applies the label.
+
+What the preview does beyond installing the bundle lives in `.preview/`, which pr-preview reads from the PR's base branch, so a change to it reaches previews only after it merges. `deploy.sh` runs after the bundle is installed: it creates `~channel-requests` in team `test`, points the plugin's approval settings at it, and removes the built-in create-channel permissions from non-admins so they go through the request flow. Keep it in step with `make docker-setup` and `make deploy`. A `mattermost.env` file there would add `MM_*` settings to the server; none are needed today.
+
+One-time setup:
+
+- create the label: `gh label create preview`
+- make sure the org variables `PREVIEW_CHECKOUT_APP_ID` and `PREVIEW_AWS_ROLE_ARN` and the org secrets `PREVIEW_CHECKOUT_APP_PRIVATE_KEY` and `PREVIEW_ADMIN_SECRET` are visible to this repo
+- optionally set `PREVIEW_APP` (hostname prefix, default is the repo name without `mattermost-plugin-`) or `PREVIEW_MM_IMAGE_TAG` in the workflow's `env:` block
+
+## Vulnerability scanning
+
+This plugin ships with a CycloneDX SBOM and grype-based vulnerability audit:
+
+- `make sbom` — generate CycloneDX SBOMs for the Go server and npm webapp into `dist/sbom/`
+- `make sbom-scan` — run grype against the SBOMs and fail on high or critical CVEs
+- `make sbom-audit` — `sbom` then `sbom-scan` in one step
+
+Suppress known-false-positive findings by adding entries to `.grype.yaml` with a short reason. Typical reasons include: dev-only transitive dependency (not in the shipped bundle) or runtime dependency that Mattermost externalizes (e.g. react, redux).
+
+See the [Mattermost plugin developer docs](https://developers.mattermost.com/extend/plugins/) for more information.
 
 ## License
 

@@ -5,6 +5,7 @@
 # Build is gated:
 #   - Grype: --fail-on high blocks HIGH/CRITICAL CVEs
 #   - CodeQL: make security-gate fails on error-level SARIF findings
+#   - govulncheck: fails on known vulnerabilities in code the plugin calls
 #   - SARIF upload to Code Scanning: required, no bypass
 #
 # REQUIREMENT: GitHub Code Scanning must be enabled on the repo.
@@ -48,7 +49,7 @@ jobs:
         run: make sbom
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
           path: dist/sbom/
@@ -58,7 +59,7 @@ jobs:
       # for GitHub code scanning. `make sbom-scan` emits table output
       # only — useful for humans, not for the code scanning API.
       - name: Scan SBOM with Grype (SARIF output)
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v6.7.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v6.7.0
         id: grype-scan
         with:
           sbom: dist/sbom/server-sbom.json
@@ -77,14 +78,14 @@ jobs:
       - name: Upload Grype SARIF to code scanning
         if: always() && steps.grype-scan.outputs.sarif != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.30.0
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v3.30.0
         with:
           sarif_file: ${{ steps.grype-scan.outputs.sarif }}
           category: grype
 
       - name: Upload Grype SARIF as workflow artifact
         if: always() && steps.grype-scan.outputs.sarif != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: grype-sarif
           path: ${{ steps.grype-scan.outputs.sarif }}
@@ -109,7 +110,7 @@ jobs:
         run: go run ./build/manifest apply
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.30.0
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v3.30.0
         with:
           languages: go
           # Index from repo root so root-package files (main.go,
@@ -118,14 +119,14 @@ jobs:
           # package inside it, not a separate module.
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.30.0
+        uses: github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d # v3.30.0
 
       # Split analysis from upload so each step's success/failure has
       # one clear meaning. `upload: never` writes SARIF locally; the
       # explicit security-gate step then enforces the finding threshold,
       # and the upload step pushes results to GitHub Code Scanning.
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.30.0
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v3.30.0
         id: codeql-analyze
         with:
           category: codeql-go
@@ -148,15 +149,33 @@ jobs:
       - name: Upload CodeQL SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v3.30.0
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v3.30.0
         with:
           sarif_file: codeql-results
           category: codeql-go
 
       - name: Upload CodeQL SARIF as workflow artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codeql-sarif
           path: codeql-results/
           retention-days: 30
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Same check `make release` gates on, so a finding shows up on the PR
+      # rather than at release time.
+      - name: Run govulncheck
+        run: make govulncheck

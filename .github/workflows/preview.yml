@@ -1,0 +1,204 @@
+# Label a PR `preview` to deploy its bundle to a throwaway Mattermost
+# server; removing the label or closing the PR tears it down. Thin copy of
+# the shared workflow in MattermostFederal/pr-preview (pinned to its v1 tag),
+# matching mattermost-plugin-template. It never checks out PR code: it waits
+# for build.yml to pass on the PR head and deploys the plugin-bundle artifact
+# that run uploaded, so build.yml must keep uploading exactly one
+# dist/*.tar.gz under that name.
+#
+# It also packs .preview/ from the PR's base commit (never the head) as the
+# deploy hook, matching mattermost-plugin-opscenter.
+name: PR Preview
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, synchronize, closed]
+
+permissions: {}
+
+env:
+  PR_PREVIEW_REF: refs/tags/v1
+  PREVIEW_APP: ""
+  PREVIEW_MM_IMAGE_TAG: ""
+
+jobs:
+  fetch:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      have_bundle: ${{ steps.intake.outputs.have_bundle }}
+      fetch_error: ${{ steps.intake.outputs.fetch_error }}
+    steps:
+      - name: Wait for Build and validate its bundle
+        id: intake
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          echo "have_bundle=false" >> "$GITHUB_OUTPUT"
+          fail() { echo "fetch_error=$1" >> "$GITHUB_OUTPUT"; echo "::notice::$1"; exit 0; }
+
+          pr="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")"
+          state="$(jq -r .state <<<"$pr")"
+          labeled="$(jq -r '[.labels[].name] | index("preview") != null' <<<"$pr")"
+          sha="$(jq -r .head.sha <<<"$pr")"
+          head_repo="$(jq -r '.head.repo.full_name // ""' <<<"$pr")"
+          { [ "$state" = "open" ] && [ "$labeled" = "true" ]; } || fail "preview not requested"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "unexpected head sha"
+          [ "$sha" = "$EVENT_HEAD_SHA" ] || fail "the pull request head moved after this event"
+          if [ "$head_repo" != "$GH_REPO" ]; then
+            { [ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL" = "preview" ]; } \
+              || fail "a fork deploys only when the preview label is applied; remove and re-apply it to deploy ${sha:0:12}"
+          fi
+
+          deadline=$((SECONDS + 1800))
+          run_id=""
+          conclusion=""
+          while [ $SECONDS -lt $deadline ]; do
+            runs="$(gh api "repos/$GH_REPO/actions/runs?event=pull_request&head_sha=$sha&per_page=50" 2>/dev/null || echo '{"workflow_runs":[]}')"
+            # shellcheck disable=SC2016
+            run="$(jq -c --arg hr "$head_repo" '[.workflow_runs[] | select(.path == ".github/workflows/build.yml" and .head_repository.full_name == $hr and .status == "completed")] | first // empty' <<<"$runs")"
+            if [ -n "$run" ]; then
+              run_id="$(jq -r .id <<<"$run")"
+              conclusion="$(jq -r .conclusion <<<"$run")"
+              break
+            fi
+            sleep 30
+          done
+          [ -n "$run_id" ] || fail "Build did not finish for ${sha:0:12} within 30 minutes"
+          [ "$conclusion" = "success" ] || fail "Build concluded ${conclusion} for ${sha:0:12}, so there is no bundle"
+
+          artifacts="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" --jq '[.artifacts[] | select(.name == "plugin-bundle" and .expired == false)]')"
+          [ "$(jq length <<<"$artifacts")" -eq 1 ] || fail "expected exactly one plugin-bundle artifact"
+          size="$(jq -r '.[0].size_in_bytes' <<<"$artifacts")"
+          artifact_id="$(jq -r '.[0].id' <<<"$artifacts")"
+          [ "$size" -le 262144000 ] || fail "plugin-bundle is ${size} bytes, over the 250 MB cap"
+
+          intake="$RUNNER_TEMP/intake"
+          mkdir -p "$intake"
+          gh api "repos/$GH_REPO/actions/artifacts/$artifact_id/zip" > "$intake/artifact.zip"
+          entries="$(zipinfo -1 "$intake/artifact.zip")"
+          [ "$(wc -l <<<"$entries")" -eq 1 ] || fail "artifact must contain exactly one file"
+          [[ "$entries" =~ ^[A-Za-z0-9._-]+\.tar\.gz$ ]] || fail "artifact entry has an unexpected name"
+          unzip -p "$intake/artifact.zip" "$entries" > "$intake/bundle.tar.gz"
+
+          listing="$(timeout 60 tar -tzvf "$intake/bundle.tar.gz" | head -c 1048576)"
+          if printf '%s\n' "$listing" | awk '{print substr($1,1,1)}' | grep -qv '^[-d]$'; then
+            fail "bundle contains members that are not regular files or directories"
+          fi
+          timeout 60 tar -tzf "$intake/bundle.tar.gz" > "$intake/members" || fail "bundle members could not be listed"
+          if grep -qE '(^/|(^|/)\.\.(/|$))' "$intake/members"; then
+            fail "bundle contains an absolute path or a parent directory reference"
+          fi
+          topdir="$(cut -d/ -f1 "$intake/members" | sort -u)"
+          [ "$(wc -l <<<"$topdir")" -eq 1 ] || fail "bundle must have exactly one top-level directory"
+          [[ "$topdir" =~ ^[A-Za-z0-9._-]{3,190}$ ]] || fail "bundle top-level directory is not a valid plugin id"
+          manifest="$(timeout 60 tar -xzOf "$intake/bundle.tar.gz" --occurrence=1 "${topdir}/plugin.json" | head -c 65536)"
+          id="$(jq -r '.id // empty' <<<"$manifest")"
+          version="$(jq -r '.version // empty' <<<"$manifest")"
+          [ "$id" = "$topdir" ] || fail "plugin id does not match the bundle directory"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || fail "plugin version is not semver"
+
+          out="$RUNNER_TEMP/preview-bundle"
+          mkdir -p "$out"
+          mv "$intake/bundle.tar.gz" "$out/bundle.tar.gz"
+          printf 'PLUGIN_ID=%s\nPLUGIN_VERSION=%s\nBUNDLE_SHA=%s\n' "$id" "$version" "$sha" > "$out/manifest.env"
+          echo "have_bundle=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.intake.outputs.have_bundle == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          sparse-checkout: .preview
+          persist-credentials: false
+
+      - name: Add the base branch's preview hook
+        if: steps.intake.outputs.have_bundle == 'true'
+        run: |
+          set -euo pipefail
+          hook=base/.preview
+          [ -d "$hook" ] || exit 0
+          if find "$hook" -mindepth 1 ! -type f ! -type d | grep -q .; then
+            echo "::warning::.preview holds something other than regular files and directories; deploying without the hook"
+            exit 0
+          fi
+          if [ "$(du -sk "$hook" | cut -f1)" -gt 1024 ]; then
+            echo "::warning::.preview is over 1 MB; deploying without the hook"
+            exit 0
+          fi
+          cp -R "$hook" "$RUNNER_TEMP/preview-bundle/hook"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.intake.outputs.have_bundle == 'true'
+        with:
+          name: preview-bundle
+          path: ${{ runner.temp }}/preview-bundle
+          retention-days: 1
+          if-no-files-found: error
+
+  reconcile:
+    needs: fetch
+    if: ${{ !cancelled() && github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ github.workflow }}-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          app-id: ${{ vars.PREVIEW_CHECKOUT_APP_ID }}
+          private-key: ${{ secrets.PREVIEW_CHECKOUT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: pr-preview
+          permission-contents: read
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/pr-preview
+          ref: ${{ env.PR_PREVIEW_REF }}
+          token: ${{ steps.app.outputs.token }}
+          path: pr-preview
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.fetch.outputs.have_bundle == 'true'
+        with:
+          name: preview-bundle
+          path: ${{ runner.temp }}/preview-bundle
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.PREVIEW_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Reconcile the preview with the pull request
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_SENDER: ${{ github.event.sender.login }}
+          EVENT_SENDER_ID: ${{ github.event.sender.id }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUNDLE_DIR: ${{ runner.temp }}/preview-bundle
+          FETCH_ERROR: ${{ needs.fetch.outputs.fetch_error }}
+          PREVIEW_ADMIN_SECRET: ${{ secrets.PREVIEW_ADMIN_SECRET }}
+        run: pr-preview/scripts/preview reconcile
