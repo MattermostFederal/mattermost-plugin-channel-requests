@@ -1,6 +1,10 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
+import type {Action} from 'redux';
 
+import {fetchEnabledRequestTypes} from './client';
+import type {EnabledRequestTypes} from './client';
+import {useDialogFocusTrap} from './dialogA11y';
 import {
     closeHubModal,
     getCurrentChannelId,
@@ -49,8 +53,18 @@ type RequestItem = {
     icon: string;
     title: string;
     description: string;
-    action: () => void;
+    action: () => Action;
+    enabled: boolean;
     hidden?: boolean;
+};
+
+const defaultEnabled: EnabledRequestTypes = {
+    channel: true,
+    channelAdmin: true,
+    team: false,
+    teamAdmin: false,
+    bot: false,
+    webhook: false,
 };
 
 export const RequestHubModal = () => {
@@ -59,16 +73,31 @@ export const RequestHubModal = () => {
     const channelId = useSelector((state: GlobalState) => getCurrentChannelId(state));
     const teamId = useSelector((state: GlobalState) => getCurrentTeamId(state));
     const alreadyTeamAdmin = useSelector((state: GlobalState) => isCurrentUserTeamAdmin(state, teamId));
+    const [enabled, setEnabled] = useState<EnabledRequestTypes>(defaultEnabled);
+    const close = () => dispatch(closeHubModal());
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    useEffect(() => {
+        if (!isOpen) {
+            return;
+        }
+        let cancelled = false;
+        fetchEnabledRequestTypes().then((types) => {
+            if (!cancelled) {
+                setEnabled(types);
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen]);
 
     if (!isOpen) {
         return null;
     }
 
-    const close = () => dispatch(closeHubModal());
-
-    const open = (action: () => void) => {
+    const open = (action: () => Action) => {
         close();
-        // Close hub first so the specific modal renders cleanly on top.
         dispatch(action());
     };
 
@@ -78,24 +107,28 @@ export const RequestHubModal = () => {
             title: 'Request a Channel',
             description: 'Ask for a new public or private channel to be created.',
             action: openRequestModal,
+            enabled: enabled.channel,
         },
         {
             icon: '⭐',
             title: 'Request Channel Admin',
             description: 'Nominate a Channel Admin for the current channel.',
             action: () => openAdminRequestModal(channelId),
+            enabled: enabled.channelAdmin,
         },
         {
             icon: '🏢',
             title: 'Request a Team',
             description: 'Ask for a new team to be created.',
             action: openTeamCreationModal,
+            enabled: enabled.team,
         },
         {
             icon: '🔑',
             title: 'Request Team Admin',
             description: 'Request Team Admin privileges for your current team.',
             action: openTeamAdminRequestModal,
+            enabled: enabled.teamAdmin,
             hidden: alreadyTeamAdmin,
         },
         {
@@ -103,29 +136,41 @@ export const RequestHubModal = () => {
             title: 'Request a Bot',
             description: 'Request a bot account, access token, or webhook.',
             action: openBotRequestModal,
+            enabled: enabled.bot,
         },
         {
             icon: '📥',
             title: 'Request Incoming Webhook',
             description: 'Post messages into a channel from an external system.',
             action: openIncomingWebhookModal,
+            enabled: enabled.webhook,
         },
         {
             icon: '📤',
             title: 'Request Outgoing Webhook',
             description: 'Send channel messages to an external endpoint.',
             action: openOutgoingWebhookModal,
+            enabled: enabled.webhook,
         },
     ];
 
-    const visible = items.filter((item) => !item.hidden);
+    const visible = items.filter((item) => !item.hidden && item.enabled);
 
     return (
         <div style={overlayStyle} onClick={close}>
-            <div style={dialogStyle} onClick={(e) => e.stopPropagation()}>
+            <div
+                ref={dialogRef}
+                style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='hub-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
                     <div>
-                        <h3 style={{marginTop: 0, marginBottom: 4}}>{'Request Hub'}</h3>
+                        <h3 id='hub-title' style={{marginTop: 0, marginBottom: 4}}>{'Request Hub'}</h3>
                         <p style={{margin: 0, opacity: 0.72, fontSize: 14}}>
                             {'Choose a request type. Each request is reviewed by the appropriate admins.'}
                         </p>
@@ -139,26 +184,32 @@ export const RequestHubModal = () => {
                     </button>
                 </div>
 
-                <div style={gridStyle}>
-                    {visible.map((item) => (
-                        <button
-                            key={item.title}
-                            style={cardStyle}
-                            onClick={() => open(item.action)}
-                            onMouseEnter={(e) => {
-                                (e.currentTarget as HTMLButtonElement).style.background =
-                                    'var(--center-channel-color-08, rgba(61,60,64,0.08))';
-                            }}
-                            onMouseLeave={(e) => {
-                                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                            }}
-                        >
-                            <span style={{fontSize: 24}}>{item.icon}</span>
-                            <span style={{fontWeight: 600, fontSize: 14}}>{item.title}</span>
-                            <span style={{fontSize: 13, opacity: 0.7, lineHeight: 1.4}}>{item.description}</span>
-                        </button>
-                    ))}
-                </div>
+                {visible.length === 0 ? (
+                    <p style={{marginTop: 24, opacity: 0.72}}>
+                        {'No request types are currently enabled. Ask a System Admin to enable them in System Console → Plugins → Mattermost Permissions.'}
+                    </p>
+                ) : (
+                    <div style={gridStyle}>
+                        {visible.map((item) => (
+                            <button
+                                key={item.title}
+                                style={cardStyle}
+                                onClick={() => open(item.action)}
+                                onMouseEnter={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background =
+                                        'var(--center-channel-color-08, rgba(61,60,64,0.08))';
+                                }}
+                                onMouseLeave={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                                }}
+                            >
+                                <span style={{fontSize: 24}}>{item.icon}</span>
+                                <span style={{fontWeight: 600, fontSize: 14}}>{item.title}</span>
+                                <span style={{fontSize: 13, opacity: 0.7, lineHeight: 1.4}}>{item.description}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );

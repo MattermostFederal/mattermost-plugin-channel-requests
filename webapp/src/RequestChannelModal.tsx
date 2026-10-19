@@ -7,6 +7,7 @@ import type {ChannelPrefix, SidebarCategory} from './client';
 import {MemberPicker, parseUsernames} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
+import {useDialogFocusTrap} from './dialogA11y';
 
 // Slugify mirrors the server-side slugify() so the live preview shows
 // the exact URL the server will produce. Keep in sync with
@@ -149,6 +150,7 @@ export const RequestChannelModal = () => {
         reset();
         dispatch(closeRequestModal());
     };
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
 
     const submit = async () => {
         if (!displayName.trim()) {
@@ -196,10 +198,16 @@ export const RequestChannelModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='rc-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 style={{marginTop: 0}}>{'Request a Channel'}</h3>
+                <h3 id='rc-title' style={{marginTop: 0}}>{'Request a Channel'}</h3>
                 <p style={{opacity: 0.72}}>
                     {'Your request will be sent to an admin for approval. '}
                     <a
@@ -240,6 +248,7 @@ export const RequestChannelModal = () => {
                             <div>
                                 <div
                                     className='alert alert-danger'
+                                role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {'Could not load channel request settings. Please try again.'}
@@ -460,6 +469,7 @@ export const RequestChannelModal = () => {
                             {error ? (
                                 <div
                                     className='alert alert-danger'
+                                role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {error}

@@ -10,6 +10,7 @@ import {
     isIncomingWebhookModalOpen,
 } from './store';
 import type {GlobalState} from './store';
+import {useDialogFocusTrap} from './dialogA11y';
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.5)',
@@ -44,6 +45,7 @@ export const RequestIncomingWebhookModal = () => {
         setError(''); setSuccess(''); setSubmitting(false);
     };
     const close = () => { reset(); dispatch(closeIncomingWebhookModal()); };
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
 
     const submit = async () => {
         if (!displayName.trim()) { setError('A display name is required.'); return; }
@@ -65,8 +67,17 @@ export const RequestIncomingWebhookModal = () => {
 
     return (
         <div style={overlayStyle} onClick={close}>
-            <div style={dialogStyle} onClick={(e) => e.stopPropagation()}>
-                <h3 style={{marginTop: 0}}>{'Request an Incoming Webhook'}</h3>
+            <div
+                ref={dialogRef}
+                style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='riw-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <h3 id='riw-title' style={{marginTop: 0}}>{'Request an Incoming Webhook'}</h3>
                 <p style={{opacity: 0.72}}>{'Incoming webhook requests are reviewed by System Admins.'}</p>
 
                 {success ? (
@@ -117,7 +128,8 @@ export const RequestIncomingWebhookModal = () => {
                                 onChange={(e) => setDescription(e.target.value)}
                             />
                         </div>
-                        {error ? <div className='alert alert-danger' style={{marginBottom: 16}}>{error}</div> : null}
+                        {error ? <div className='alert alert-danger'
+                                role='alert' style={{marginBottom: 16}}>{error}</div> : null}
                         <div style={{textAlign: 'right'}}>
                             <button className='btn btn-tertiary' style={{marginRight: 8}} onClick={close} disabled={submitting}>{'Cancel'}</button>
                             <button className='btn btn-primary' onClick={submit} disabled={submitting}>

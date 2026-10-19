@@ -19,6 +19,10 @@ type Plugin struct {
 	// botUserID is the user ID of the bot account used to post approval requests and notify
 	// requesters of the outcome.
 	botUserID string
+
+	// Test seams for webhook create/delete side effects (nil in production).
+	createWebhookFn func(req *webhookRequest, adminUserID string) (dmMsg, hookID string, err error)
+	deleteWebhookFn func(webhookType, hookID string) error
 }
 
 func (p *Plugin) OnActivate() error {

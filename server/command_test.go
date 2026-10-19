@@ -12,7 +12,7 @@ import (
 func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{}) // no prefixes configured
+	p.setConfiguration(&configuration{AllowChannelRequests: true}) // enabled, but no prefixes
 
 	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
 
@@ -26,7 +26,10 @@ func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 func TestExecuteCommand_OpensDialogWhenConfigured(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(&configuration{
+		AllowChannelRequests: true,
+		prefixes:             []channelPrefix{{Prefix: "team-"}},
+	})
 
 	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
 

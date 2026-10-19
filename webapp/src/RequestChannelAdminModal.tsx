@@ -5,6 +5,7 @@ import {submitAdminRequest} from './client';
 import {MemberPicker} from './MemberPicker';
 import {closeAdminRequestModal, getAdminModalChannelId, getChannelDisplayName, getCurrentTeamId} from './store';
 import type {GlobalState} from './store';
+import {useDialogFocusTrap} from './dialogA11y';
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -60,6 +61,7 @@ export const RequestChannelAdminModal = () => {
         reset();
         dispatch(closeAdminRequestModal());
     };
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
 
     const submit = async () => {
         const nominees = nomineesText.
@@ -96,10 +98,16 @@ export const RequestChannelAdminModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='rca-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 style={{marginTop: 0}}>{'Request a Channel Admin'}</h3>
+                <h3 id='rca-title' style={{marginTop: 0}}>{'Request a Channel Admin'}</h3>
                 <p style={{opacity: 0.72}}>
                     {'Request that someone be made a Channel Admin'}
                     {channelName ? <>{' for '}<strong>{channelName}</strong></> : null}
@@ -141,6 +149,7 @@ export const RequestChannelAdminModal = () => {
                         {error ? (
                             <div
                                 className='alert alert-danger'
+                                role='alert'
                                 style={{marginBottom: 16}}
                             >
                                 {error}

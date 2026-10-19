@@ -19,8 +19,64 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Mattermost Permissions\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all via /mattermost-permissions or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team and channel below, then set up channel domain prefixes.",
+        "header": "## Mattermost Permissions\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all via /mattermost-permissions or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n**Bot and webhook requests use two-step approval** — one security approver and one system approver, identified by the User Attributes configured below.\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team below, then set up channel domain prefixes.",
         "settings": [
+            {
+                "key": "AllowChannelRequests",
+                "display_name": "Allow channel requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new channels. Turn this off to hide channel-request entry points and reject submissions."
+            },
+            {
+                "key": "AllowChannelAdminRequests",
+                "display_name": "Allow channel admin requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, members can request Channel Admin promotion on an existing channel."
+            },
+            {
+                "key": "AllowTeamRequests",
+                "display_name": "Allow team requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request the creation of new teams for admin approval."
+            },
+            {
+                "key": "AllowTeamAdminRequests",
+                "display_name": "Allow team admin requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request Team Admin promotion on a team they belong to."
+            },
+            {
+                "key": "AllowBotTokenRequests",
+                "display_name": "Allow bot account requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request a bot account (optional token and webhooks). Bot requests require two-step approval (security + system)."
+            },
+            {
+                "key": "AllowWebhookRequests",
+                "display_name": "Allow webhook requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request incoming or outgoing webhooks. Webhook requests require two-step approval (security + system)."
+            },
+            {
+                "key": "SecurityApproverAttribute",
+                "display_name": "Security approver attribute",
+                "type": "text",
+                "default": "security_approver",
+                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a security-step approver for two-step bot and webhook requests. Manage attributes in System Console → User Management → Attributes."
+            },
+            {
+                "key": "SystemApproverAttribute",
+                "display_name": "System approver attribute",
+                "type": "text",
+                "default": "system_approver",
+                "help_text": "Name of the User Attribute that marks a user as a system/admin-step approver for two-step requests. System Admins also qualify for this step automatically."
+            },
             {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
@@ -30,32 +86,25 @@
                 "key": "PerTeamApprovalChannels",
                 "display_name": "Per-team approval channels",
                 "type": "bool",
-                "help_text": "When enabled, the plugin auto-creates a dedicated approval channel in every team (named by the setting below). Channel and admin-promotion requests route to the requester's team channel instead of the global approval channel above. Team Admins are added to their team's channel at creation time. Enabling this setting immediately creates channels for all existing teams."
+                "help_text": "When enabled, the plugin auto-creates a dedicated approval channel in every team. Channel and admin-promotion requests route to the requester's team channel instead of the global approval channel. Enabling this setting immediately creates channels for all existing teams."
             },
             {
                 "key": "AllowTeamAdminApprovers",
                 "display_name": "Team Admins can approve requests",
                 "type": "bool",
-                "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny in addition to System Admins."
+                "help_text": "When enabled, Team Admins of the approval team can click Approve/Deny on channel and channel-admin requests in addition to System Admins."
             },
             {
                 "key": "ChannelNamePrefixes",
                 "display_name": "Channel domain prefixes",
                 "type": "custom",
-                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
+                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix."
             },
             {
                 "key": "AutoApproveUserIDs",
                 "display_name": "Auto-approve requests from these users",
                 "type": "custom",
                 "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
-            },
-            {
-                "key": "BotReviewGroup",
-                "display_name": "Bot request security review group",
-                "type": "text",
-                "placeholder": "security-team",
-                "help_text": "Mattermost User Group name (without @) to @-mention on every bot account request. Members of this group are notified alongside System Admins. Leave blank to notify System Admins only."
             }
         ]
     }

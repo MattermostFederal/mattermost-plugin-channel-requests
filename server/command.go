@@ -74,6 +74,9 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 }
 
 func (p *Plugin) executeChannelRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
+		return ephemeralResponse(channelRequestsDisabledMsg), nil
+	}
 	if !p.getConfiguration().UsesPrefixList() {
 		return ephemeralResponse("Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Mattermost Permissions."), nil
 	}
@@ -85,6 +88,9 @@ func (p *Plugin) executeChannelRequestCommand(args *model.CommandArgs) (*model.C
 }
 
 func (p *Plugin) executeChannelAdminRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeChannelAdmin) {
+		return ephemeralResponse(channelAdminRequestsDisabledMsg), nil
+	}
 	if err := p.openChannelAdminRequestDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open channel-admin request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the Channel Admin request form. Please try again."), nil
@@ -93,6 +99,9 @@ func (p *Plugin) executeChannelAdminRequestCommand(args *model.CommandArgs) (*mo
 }
 
 func (p *Plugin) executeTeamAdminRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeamAdmin) {
+		return ephemeralResponse(teamAdminRequestsDisabledMsg), nil
+	}
 	if err := p.openTeamAdminRequestDialog(args.TriggerId, args.TeamId); err != nil {
 		p.API.LogError("failed to open team-admin request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the Team Admin request form. Please try again."), nil
@@ -101,6 +110,9 @@ func (p *Plugin) executeTeamAdminRequestCommand(args *model.CommandArgs) (*model
 }
 
 func (p *Plugin) executeTeamCreationRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeam) {
+		return ephemeralResponse(teamRequestsDisabledMsg), nil
+	}
 	if err := p.openTeamCreationRequestDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open team creation request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the team creation request form. Please try again."), nil
@@ -142,6 +154,9 @@ func (p *Plugin) openChannelAdminRequestDialog(triggerID string) error {
 }
 
 func (p *Plugin) executeBotRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeBot) {
+		return ephemeralResponse(botRequestsDisabledMsg), nil
+	}
 	if err := p.openBotRequestDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open bot request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the bot request form. Please try again."), nil
@@ -150,6 +165,9 @@ func (p *Plugin) executeBotRequestCommand(args *model.CommandArgs) (*model.Comma
 }
 
 func (p *Plugin) executeIncomingWebhookRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeWebhook) {
+		return ephemeralResponse(webhookRequestsDisabledMsg), nil
+	}
 	if err := p.openIncomingWebhookDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open incoming webhook request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the incoming webhook request form. Please try again."), nil
@@ -158,6 +176,9 @@ func (p *Plugin) executeIncomingWebhookRequestCommand(args *model.CommandArgs) (
 }
 
 func (p *Plugin) executeOutgoingWebhookRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeWebhook) {
+		return ephemeralResponse(webhookRequestsDisabledMsg), nil
+	}
 	if err := p.openOutgoingWebhookDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open outgoing webhook request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the outgoing webhook request form. Please try again."), nil

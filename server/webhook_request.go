@@ -22,9 +22,8 @@ const (
 
 // webhookRequest is a pending request to create an incoming or outgoing webhook.
 // Webhooks cross the network boundary, so all requests — including those from
-// System Admins — go through the dedicated webhook approval channel and require
-// an explicit Approve click. This ensures the approving admin's session token
-// is available at creation time (no stored credentials needed).
+// System Admins — go through two-step approval. Creation uses the final
+// approver's session (no stored credentials).
 type webhookRequest struct {
 	ID          string `json:"id"`
 	RequesterID string `json:"requester_id"`
@@ -39,6 +38,8 @@ type webhookRequest struct {
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
 	DMRootPostID      string `json:"dm_root_post_id,omitempty"`
 	DMChannelID       string `json:"dm_channel_id,omitempty"`
+
+	twoStepState
 }
 
 // submitWebhookRequest validates input and queues a webhook request in the
@@ -107,9 +108,9 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 		})
 	}
 
-	msg := "Your webhook request has been submitted for approval. You'll be notified once a System Admin responds."
+	msg := "Your webhook request has been submitted for approval. It needs a security approval and a system approval."
 	if requester.IsSystemAdmin() {
-		msg = "Your webhook request has been posted to the webhook approval channel. As a System Admin you can approve it immediately."
+		msg = "Your webhook request has been posted for two-step approval. As a System Admin you can fill the system step; a security approver must fill the other."
 	}
 	return msg, nil
 }
@@ -143,24 +144,27 @@ func (p *Plugin) sendWebhookTicketCreatedDM(req *webhookRequest, requester *mode
 }
 
 // createWebhookForRequest creates the webhook via the Mattermost REST API using
-// a short-lived session for the approving admin. Mattermost relays interactive
-// button clicks server-side, so the admin's browser token is never present in
-// the Authorization header — instead we create a session here and revoke it
-// immediately after the API call. No credentials are stored anywhere.
-func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string) (string, error) {
+// a short-lived session for the approving admin. Returns a user-facing DM
+// message and the created hook ID (empty for outgoing) so callers can delete
+// an undelivered incoming-hook secret.
+func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string) (dmMsg, hookID string, err error) {
 	if strings.TrimSpace(adminUserID) == "" {
-		return "", errors.New("admin session token is missing — cannot create webhook")
+		return "", "", errors.New("admin session token is missing — cannot create webhook")
 	}
 
 	internalURL := p.internalBaseURL()
 	publicURL := p.siteURL()
 	if internalURL == "" || publicURL == "" {
-		return "", errors.New("site URL is not configured — cannot create webhook")
+		return "", "", errors.New("site URL is not configured — cannot create webhook")
+	}
+
+	if p.createWebhookFn != nil {
+		return p.createWebhookFn(req, adminUserID)
 	}
 
 	session, appErr := p.API.CreateSession(&model.Session{UserId: adminUserID})
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to create admin session for webhook creation")
+		return "", "", errors.Wrap(appErr, "failed to create admin session for webhook creation")
 	}
 	defer p.API.RevokeSession(session.Id)
 
@@ -180,10 +184,10 @@ func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string
 			Description: req.Description,
 		})
 		if apiErr != nil {
-			return "", errors.Wrap(apiErr, "failed to create incoming webhook")
+			return "", "", errors.Wrap(apiErr, "failed to create incoming webhook")
 		}
 		return fmt.Sprintf("Your incoming webhook **%s** was approved. Your webhook URL:\n`%s/hooks/%s`",
-			hook.DisplayName, publicURL, hook.Id), nil
+			hook.DisplayName, publicURL, hook.Id), hook.Id, nil
 
 	case webhookTypeOutgoing:
 		hook, _, apiErr := client.CreateOutgoingWebhook(ctx, &model.OutgoingWebhook{
@@ -195,13 +199,51 @@ func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string
 			ContentType:  "application/json",
 		})
 		if apiErr != nil {
-			return "", errors.Wrap(apiErr, "failed to create outgoing webhook")
+			return "", "", errors.Wrap(apiErr, "failed to create outgoing webhook")
 		}
-		return fmt.Sprintf("Your outgoing webhook **%s** was approved and is now active.", hook.DisplayName), nil
+		return fmt.Sprintf("Your outgoing webhook **%s** was approved and is now active.", hook.DisplayName), hook.Id, nil
 
 	default:
-		return "", errors.Errorf("unknown webhook type: %s", req.WebhookType)
+		return "", "", errors.Errorf("unknown webhook type: %s", req.WebhookType)
 	}
+}
+
+// deleteWebhook removes a hook created by createWebhookForRequest. Used when
+// the requester DM fails after creation so we don't leave an unowned secret.
+// adminUserID is the approver whose session is used for the REST delete.
+func (p *Plugin) deleteWebhook(webhookType, hookID, adminUserID string) error {
+	if strings.TrimSpace(hookID) == "" {
+		return nil
+	}
+	if p.deleteWebhookFn != nil {
+		return p.deleteWebhookFn(webhookType, hookID)
+	}
+
+	internalURL := p.internalBaseURL()
+	if internalURL == "" {
+		return errors.New("site URL is not configured — cannot delete webhook")
+	}
+	session, appErr := p.API.CreateSession(&model.Session{UserId: adminUserID})
+	if appErr != nil {
+		return errors.Wrap(appErr, "failed to create admin session for webhook deletion")
+	}
+	defer p.API.RevokeSession(session.Id)
+
+	client := model.NewAPIv4Client(internalURL)
+	client.SetToken(session.Token)
+	ctx := context.Background()
+
+	switch webhookType {
+	case webhookTypeIncoming:
+		if _, err := client.DeleteIncomingWebhook(ctx, hookID); err != nil {
+			return errors.Wrap(err, "failed to delete incoming webhook")
+		}
+	case webhookTypeOutgoing:
+		if _, err := client.DeleteOutgoingWebhook(ctx, hookID); err != nil {
+			return errors.Wrap(err, "failed to delete outgoing webhook")
+		}
+	}
+	return nil
 }
 
 // siteURL returns the Mattermost instance's public site URL, used for
@@ -234,31 +276,15 @@ func (p *Plugin) internalBaseURL() string {
 
 func (p *Plugin) postWebhookApprovalRequest(req *webhookRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
 	webhookCh := p.ensureWebhookApprovalChannel()
-	header := p.webhookApprovalHeader()
 	return p.postApprovalAttachment(
 		p.webhookApprovalAttachment(req, requester, channel),
-		header,
+		p.webhookApprovalHeader(),
 		webhookCh,
 	)
 }
 
-// webhookApprovalHeader builds the @-mention header for webhook requests.
-// Reuses BotReviewGroup (security team) since webhooks have the same
-// network-boundary concerns as bot accounts.
 func (p *Plugin) webhookApprovalHeader() string {
-	config := p.getConfiguration()
-	group := strings.TrimSpace(config.BotReviewGroup)
-	adminMentions := p.systemAdminMentions()
-
-	suffix := " — a webhook request needs security and System Admin review."
-	if group == "" {
-		return adminMentions + suffix
-	}
-	groupMention := "@" + strings.TrimPrefix(group, "@")
-	if adminMentions == "@channel" {
-		return groupMention + " @channel" + suffix
-	}
-	return groupMention + " " + adminMentions + suffix
+	return "@channel — a webhook request needs review (requires a security approval and a system approval)."
 }
 
 func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model.User, channel *model.Channel) *model.MessageAttachment {
@@ -272,6 +298,7 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 		{Title: "Type", Value: typeLabel, Short: true},
 		{Title: "Target channel", Value: fmt.Sprintf("~%s", channel.Name), Short: true},
 		{Title: "Display name", Value: req.DisplayName, Short: true},
+		{Title: "Approvals", Value: p.twoStepStatusValue(req.twoStepState), Short: false},
 	}
 
 	var details []string
@@ -292,10 +319,19 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 	}
 }
 
+func (p *Plugin) webhookApprovalAttachmentWithNotice(req *webhookRequest, requester *model.User, channel *model.Channel, notice string) *model.MessageAttachment {
+	att := p.webhookApprovalAttachment(req, requester, channel)
+	att.Color = "#D24B4E"
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
+}
+
 func (p *Plugin) webhookApprovalActions(requestID, siteURL string) []*model.PostAction {
 	return []*model.PostAction{
 		{
-			Id: "approve", Name: "Approve", Type: model.PostActionTypeButton, Style: "primary",
+			Id: "approve", Name: approveButtonLabel, Type: model.PostActionTypeButton, Style: "primary",
 			Integration: &model.PostActionIntegration{
 				URL:     siteURL + routeApproveWebhook,
 				Context: map[string]any{actionContextRequestID: requestID},
@@ -342,7 +378,7 @@ func (p *Plugin) openIncomingWebhookDialog(triggerID string) error {
 	dialog := model.Dialog{
 		CallbackId:       "incoming_webhook_request",
 		Title:            "Request an Incoming Webhook",
-		IntroductionText: "Incoming webhooks let external services post messages into a Mattermost channel. Requires System Admin approval.",
+		IntroductionText: "Incoming webhooks let external services post messages into a Mattermost channel. Requires a security approval and a system approval.",
 		SubmitLabel:      "Submit request",
 		Elements: []model.DialogElement{
 			{
@@ -381,7 +417,7 @@ func (p *Plugin) openOutgoingWebhookDialog(triggerID string) error {
 	dialog := model.Dialog{
 		CallbackId:       "outgoing_webhook_request",
 		Title:            "Request an Outgoing Webhook",
-		IntroductionText: "Outgoing webhooks send channel messages to an external service. Requires System Admin approval.",
+		IntroductionText: "Outgoing webhooks send channel messages to an external service. Requires a security approval and a system approval.",
 		SubmitLabel:      "Submit request",
 		Elements: []model.DialogElement{
 			{

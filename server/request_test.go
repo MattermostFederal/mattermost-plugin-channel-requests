@@ -17,10 +17,16 @@ import (
 const channelAdminRoles = "channel_user channel_admin"
 
 // newTestPlugin wires a Plugin up to a mock API with a known bot user.
+// Channel and channel-admin request types default to enabled so existing
+// tests match plugin.json defaults without each case setting toggles.
 func newTestPlugin(api *plugintest.API) *Plugin {
 	p := &Plugin{}
 	p.SetAPI(api)
 	p.botUserID = "bot-user-id"
+	p.setConfiguration(&configuration{
+		AllowChannelRequests:      true,
+		AllowChannelAdminRequests: true,
+	})
 	return p
 }
 

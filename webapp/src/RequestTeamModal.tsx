@@ -4,6 +4,7 @@ import {useDispatch, useSelector} from 'react-redux';
 import {submitTeamCreationRequest} from './client';
 import {closeTeamCreationModal, getCurrentTeamId, isTeamCreationModalOpen} from './store';
 import type {GlobalState} from './store';
+import {useDialogFocusTrap} from './dialogA11y';
 
 // Slugify mirrors server/team_request.go slugify() so the live URL preview
 // matches exactly what the server will produce.
@@ -78,6 +79,7 @@ export const RequestTeamModal = () => {
         reset();
         dispatch(closeTeamCreationModal());
     };
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
 
     const submit = async () => {
         if (!displayName.trim()) {
@@ -116,10 +118,16 @@ export const RequestTeamModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='rt-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 style={{marginTop: 0}}>{'Request a New Team'}</h3>
+                <h3 id='rt-title' style={{marginTop: 0}}>{'Request a New Team'}</h3>
                 <p style={{opacity: 0.72}}>
                     {'System Admin approval is required to create a new team.'}
                 </p>
@@ -214,6 +222,7 @@ export const RequestTeamModal = () => {
                         {error ? (
                             <div
                                 className='alert alert-danger'
+                                role='alert'
                                 style={{marginBottom: 16}}
                             >
                                 {error}

@@ -74,7 +74,7 @@ func TestSubmitBotRequest_RegularUserQueuesInBotChannel(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowBotTokenRequests: true})
 
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
@@ -83,10 +83,6 @@ func TestSubmitBotRequest_RegularUserQueuesInBotChannel(t *testing.T) {
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id", DisplayName: "App Team"}, nil)
 	api.On("GetChannelByName", "appteam-id", "mattermost-bot-requests", false).
 		Return(&model.Channel{Id: "bots-ch"}, nil)
-
-	// systemAdminMentions
-	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
-	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 
 	var approvalPost *model.Post
 	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool {

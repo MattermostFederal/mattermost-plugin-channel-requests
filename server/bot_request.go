@@ -20,9 +20,8 @@ const (
 )
 
 // botRequest is a pending request to create a new bot account. Because bots
-// carry integration credentials and system-wide access, these requests always
-// route to the root approval channel, ping the configured security review
-// group, and can only be approved by System Admins.
+// carry integration credentials and system-wide access, these requests route
+// to the bot approval channel and require two-step approval (security + system).
 type botRequest struct {
 	ID          string `json:"id"`
 	RequesterID string `json:"requester_id"`
@@ -45,6 +44,10 @@ type botRequest struct {
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
 	DMRootPostID      string `json:"dm_root_post_id,omitempty"`
 	DMChannelID       string `json:"dm_channel_id,omitempty"`
+
+	// twoStepState tracks security + system approvals. Missing fields on
+	// older KV records unmarshal as empty (both steps still required).
+	twoStepState
 }
 
 // botRequestInput carries the caller-supplied fields for a new bot request.
@@ -64,15 +67,20 @@ type botRequestInput struct {
 }
 
 // submitBotRequest validates the input and either creates the bot immediately
-// (System Admins) or stores a pending request routed to the root approval
-// channel with a security group ping.
+// (System Admins) or stores a pending request for two-step approval.
 func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (string, error) {
-	username := strings.TrimSpace(strings.TrimPrefix(input.Username, "@"))
+	username := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(input.Username, "@")))
 	if username == "" {
-		return "", errors.New("a bot username is required")
+		return "", errors.New("A bot username is required.")
+	}
+	if len(username) < 3 || len(username) > 22 {
+		return "", errors.New("Bot username must be 3-22 characters.")
+	}
+	if !model.IsValidUsername(username) {
+		return "", errors.New("Bot username must be lowercase letters, numbers, and . - _ (3-22 characters).")
 	}
 	if strings.TrimSpace(input.DisplayName) == "" {
-		return "", errors.New("a display name is required")
+		return "", errors.New("A display name is required.")
 	}
 
 	requester, appErr := p.API.GetUser(requesterID)
@@ -134,7 +142,7 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		})
 	}
 
-	return "Your bot account request has been submitted for approval. You'll be notified once a System Admin responds.", nil
+	return "Your bot account request has been submitted for approval. It needs a security approval and a system approval. You'll be notified as each step completes.", nil
 }
 
 // sendBotTicketCreatedDM opens a DM and posts a card mirroring the bot
@@ -185,7 +193,6 @@ func (p *Plugin) createBotForRequest(req *botRequest) (*model.Bot, error) {
 }
 
 // postBotApprovalRequest posts to the dedicated bot-requests approval channel.
-// Only System Admins may approve.
 func (p *Plugin) postBotApprovalRequest(req *botRequest, requester *model.User) (postID, channelID string, err error) {
 	ch := p.ensureBotApprovalChannel()
 	return p.postApprovalAttachment(
@@ -195,23 +202,8 @@ func (p *Plugin) postBotApprovalRequest(req *botRequest, requester *model.User) 
 	)
 }
 
-// botApprovalHeader builds the @-mention header for a bot approval post.
-// When BotReviewGroup is configured, that group is mentioned first so its
-// members are notified alongside System Admins.
 func (p *Plugin) botApprovalHeader() string {
-	config := p.getConfiguration()
-	group := strings.TrimSpace(config.BotReviewGroup)
-	adminMentions := p.systemAdminMentions()
-
-	suffix := " — a bot account request needs security and System Admin review."
-	if group == "" {
-		return adminMentions + suffix
-	}
-	groupMention := "@" + strings.TrimPrefix(group, "@")
-	if adminMentions == "@channel" {
-		return groupMention + " @channel" + suffix
-	}
-	return groupMention + " " + adminMentions + suffix
+	return "@channel — a bot account request needs review (requires a security approval and a system approval)."
 }
 
 func (p *Plugin) botApprovalAttachment(req *botRequest, requester *model.User) *model.MessageAttachment {
@@ -246,6 +238,10 @@ func (p *Plugin) botApprovalAttachment(req *botRequest, requester *model.User) *
 		details = append(details, fmt.Sprintf("**Outgoing webhook:** `%s` → %s (callback: `%s`)", name, p.channelDisplayRef(req.OutgoingWebhookChannelID), req.OutgoingWebhookCallbackURL))
 	}
 
+	fields = append(fields, &model.MessageAttachmentField{
+		Title: "Approvals", Value: p.twoStepStatusValue(req.twoStepState), Short: false,
+	})
+
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
 		Title:   "Bot account request",
@@ -256,10 +252,19 @@ func (p *Plugin) botApprovalAttachment(req *botRequest, requester *model.User) *
 	}
 }
 
+func (p *Plugin) botApprovalAttachmentWithNotice(req *botRequest, requester *model.User, notice string) *model.MessageAttachment {
+	att := p.botApprovalAttachment(req, requester)
+	att.Color = "#D24B4E"
+	att.Fields = append([]*model.MessageAttachmentField{
+		{Title: "⚠️ Action needed", Value: notice, Short: false},
+	}, att.Fields...)
+	return att
+}
+
 func (p *Plugin) botApprovalActions(requestID, siteURL string) []*model.PostAction {
 	return []*model.PostAction{
 		{
-			Id: "approve", Name: "Approve", Type: model.PostActionTypeButton, Style: "primary",
+			Id: "approve", Name: approveButtonLabel, Type: model.PostActionTypeButton, Style: "primary",
 			Integration: &model.PostActionIntegration{
 				URL:     siteURL + routeApproveBot,
 				Context: map[string]any{actionContextRequestID: requestID},
@@ -321,7 +326,7 @@ func (p *Plugin) openBotRequestDialog(triggerID string) error {
 	dialog := model.Dialog{
 		CallbackId:       botDialogCallbackID,
 		Title:            "Request a Bot Account",
-		IntroductionText: "Bot account requests are reviewed by System Admins and the security team.",
+		IntroductionText: "Bot account requests need a security approval and a system approval.",
 		SubmitLabel:      "Submit request",
 		Elements: []model.DialogElement{
 			{
@@ -329,8 +334,8 @@ func (p *Plugin) openBotRequestDialog(triggerID string) error {
 				Name:        fieldBotUsername,
 				Type:        "text",
 				Placeholder: "my-integration-bot",
-				HelpText:    "The bot's @handle. Lowercase letters, numbers, and hyphens only.",
-				MaxLength:   64,
+				HelpText:    "The bot's @handle. Lowercase letters, numbers, and . - _ (3-22 characters).",
+				MaxLength:   22,
 			},
 			{
 				DisplayName: "Display name",

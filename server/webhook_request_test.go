@@ -96,7 +96,7 @@ func TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts"}, nil)
 	api.On("GetUser", "u_admin").Return(&model.User{Id: "u_admin", Username: "admin", Roles: "system_user system_admin"}, nil)
@@ -104,8 +104,6 @@ func TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses(t *testing.T) {
 
 	stubWebhookChannel(api, "appteam", "wh-ch")
 
-	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
-	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 	api.On("CreatePost", mock.MatchedBy(func(p *model.Post) bool { return p.ChannelId == "wh-ch" })).
 		Return(&model.Post{Id: "approval-1"}, nil)
 	api.On("GetDirectChannel", "u_admin", "bot-user-id").Return(&model.Channel{Id: "dm-ch"}, nil)
@@ -114,8 +112,8 @@ func TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses(t *testing.T) {
 	msg, err := p.submitWebhookRequest("u_admin", webhookTypeIncoming, "ch1", "Monitoring Alerts", "", "")
 
 	require.NoError(t, err)
-	// The message should point the admin to the approval channel, not confirm creation.
-	require.Contains(t, msg, "webhook approval channel")
+	// System Admins still queue for two-step approval (no create bypass).
+	require.Contains(t, msg, "two-step approval")
 	// No REST API call made — webhook not created yet.
 	api.AssertNotCalled(t, "CreateIncomingWebhook", mock.Anything)
 }
@@ -125,16 +123,13 @@ func TestSubmitWebhookRequest_RegularUserQueuesInWebhookChannel(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
 	stubWebhookChannel(api, "appteam", "wh-ch")
-
-	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
-	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 
 	var approvalPost *model.Post
 	api.On("CreatePost", mock.MatchedBy(func(p *model.Post) bool { return p.ChannelId == "wh-ch" })).
@@ -157,7 +152,7 @@ func TestSubmitWebhookRequest_OutgoingQueuesWithCallbackURL(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "ops"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
@@ -165,8 +160,6 @@ func TestSubmitWebhookRequest_OutgoingQueuesWithCallbackURL(t *testing.T) {
 
 	stubWebhookChannel(api, "appteam", "wh-ch")
 
-	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
-	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
 	api.On("CreatePost", mock.MatchedBy(func(p *model.Post) bool { return p.ChannelId == "wh-ch" })).
 		Return(&model.Post{Id: "approval-1"}, nil)
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm-ch"}, nil)
@@ -197,7 +190,7 @@ func TestCreateWebhookForRequest_IncomingReturnsURL(t *testing.T) {
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess1", Token: "tok1"}, nil)
 	api.On("RevokeSession", "sess1").Return(nil)
 
-	msg, err := p.createWebhookForRequest(&webhookRequest{
+	msg, hookID, err := p.createWebhookForRequest(&webhookRequest{
 		WebhookType: webhookTypeIncoming,
 		ChannelID:   "ch1",
 		TeamID:      "team1",
@@ -205,6 +198,7 @@ func TestCreateWebhookForRequest_IncomingReturnsURL(t *testing.T) {
 	}, "test-admin-user-id")
 
 	require.NoError(t, err)
+	require.Equal(t, "stub-incoming-id", hookID)
 	require.Contains(t, msg, "stub-incoming-id")
 	require.Contains(t, msg, "/hooks/")
 }
@@ -224,7 +218,7 @@ func TestCreateWebhookForRequest_OutgoingReturnsConfirmation(t *testing.T) {
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess2", Token: "tok2"}, nil)
 	api.On("RevokeSession", "sess2").Return(nil)
 
-	msg, err := p.createWebhookForRequest(&webhookRequest{
+	msg, _, err := p.createWebhookForRequest(&webhookRequest{
 		WebhookType: webhookTypeOutgoing,
 		ChannelID:   "ch1",
 		TeamID:      "team1",
@@ -238,7 +232,7 @@ func TestCreateWebhookForRequest_OutgoingReturnsConfirmation(t *testing.T) {
 
 func TestCreateWebhookForRequest_FailsWithEmptyToken(t *testing.T) {
 	p := newTestPlugin(&plugintest.API{})
-	_, err := p.createWebhookForRequest(&webhookRequest{WebhookType: webhookTypeIncoming}, "")
+	_, _, err := p.createWebhookForRequest(&webhookRequest{WebhookType: webhookTypeIncoming}, "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "admin session token is missing")
 }
@@ -253,7 +247,7 @@ func TestCreateWebhookForRequest_FailsWithNoSiteURL(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: nil},
 	})
 
-	_, err := p.createWebhookForRequest(&webhookRequest{WebhookType: webhookTypeIncoming}, "tok")
+	_, _, err := p.createWebhookForRequest(&webhookRequest{WebhookType: webhookTypeIncoming}, "tok")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "site URL is not configured")
 }
@@ -277,7 +271,7 @@ func TestCreateWebhookForRequest_APIErrorPropagates(t *testing.T) {
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess3", Token: "bad-token"}, nil)
 	api.On("RevokeSession", "sess3").Return(nil)
 
-	_, err := p.createWebhookForRequest(&webhookRequest{
+	_, _, err := p.createWebhookForRequest(&webhookRequest{
 		WebhookType: webhookTypeIncoming,
 		ChannelID:   "ch1",
 		TeamID:      "team1",

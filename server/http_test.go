@@ -239,7 +239,10 @@ func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(&configuration{
+		AllowChannelRequests: true,
+		prefixes:             []channelPrefix{{Prefix: "team-"}},
+	})
 
 	// The header says "realuser"; the body tries to forge a sysadmin.
 	api.On("GetUser", "realuser").Return(&model.User{Id: "realuser", Roles: "system_user"}, nil)

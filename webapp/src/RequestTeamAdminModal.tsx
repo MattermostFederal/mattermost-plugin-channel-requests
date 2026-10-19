@@ -9,6 +9,7 @@ import {
     isTeamAdminRequestModalOpen,
 } from './store';
 import type {GlobalState} from './store';
+import {useDialogFocusTrap} from './dialogA11y';
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -54,6 +55,7 @@ export const RequestTeamAdminModal = () => {
         reset();
         dispatch(closeTeamAdminRequestModal());
     };
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
 
     const submit = async () => {
         if (!teamId) {
@@ -86,10 +88,16 @@ export const RequestTeamAdminModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='rta-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 style={{marginTop: 0}}>{'Request Team Admin'}</h3>
+                <h3 id='rta-title' style={{marginTop: 0}}>{'Request Team Admin'}</h3>
 
                 {success ? (
                     <div>
@@ -122,6 +130,7 @@ export const RequestTeamAdminModal = () => {
                         {error ? (
                             <div
                                 className='alert alert-danger'
+                                role='alert'
                                 style={{marginBottom: 16}}
                             >
                                 {error}

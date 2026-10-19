@@ -79,6 +79,52 @@ export async function fetchSidebarCategories(teamId: string): Promise<SidebarCat
     return Array.isArray(body) ? body : [];
 }
 
+// EnabledRequestTypes mirrors /api/v1/config — which request kinds the admin
+// has enabled. Used to hide hub tiles and other entry points.
+export type EnabledRequestTypes = {
+    channel: boolean;
+    channelAdmin: boolean;
+    team: boolean;
+    teamAdmin: boolean;
+    bot: boolean;
+    webhook: boolean;
+};
+
+// fetchEnabledRequestTypes fails open (channel + channelAdmin on) so a
+// transient config-load failure never hides a working feature. The server
+// re-checks toggles authoritatively on every submission.
+export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
+    const failOpen: EnabledRequestTypes = {
+        channel: true,
+        channelAdmin: true,
+        team: false,
+        teamAdmin: false,
+        bot: false,
+        webhook: false,
+    };
+    try {
+        const response = await fetch(`/plugins/${manifest.id}/api/v1/config`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        });
+        if (!response.ok) {
+            return failOpen;
+        }
+        const body = await response.json();
+        return {
+            channel: Boolean(body?.channel),
+            channelAdmin: Boolean(body?.channel_admin),
+            team: Boolean(body?.team),
+            teamAdmin: Boolean(body?.team_admin),
+            bot: Boolean(body?.bot),
+            webhook: Boolean(body?.webhook),
+        };
+    } catch {
+        return failOpen;
+    }
+}
+
 // getCSRFToken reads the CSRF token Mattermost sets as a cookie, required for authenticated
 // state-changing requests to plugin endpoints.
 function getCSRFToken(): string {

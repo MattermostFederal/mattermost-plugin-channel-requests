@@ -11,6 +11,17 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Request type identifiers. Each names a kind of request users can
+// submit and maps to a per-type admin toggle via RequestEnabled.
+const (
+	requestTypeChannel      = "channel"
+	requestTypeChannelAdmin = "channel_admin"
+	requestTypeTeam         = "team"
+	requestTypeTeamAdmin    = "team_admin"
+	requestTypeWebhook      = "webhook"
+	requestTypeBot          = "bot"
+)
+
 // channelPrefix is one entry in the admin-configured list of allowed
 // domain prefixes. The requester picks a prefix by ID from a dropdown;
 // the server enforces that the final channel name starts with the
@@ -78,12 +89,23 @@ type configuration struct {
 	// IDs on the server side, since usernames are what admins recognize.)
 	AutoApproveUserIDs string
 
-	// --- 4. Security ---
+	// --- 4. Requestable types (per-type feature toggles) ---
+	// AllowChannelRequests / AllowChannelAdminRequests default to true
+	// (upgrade-preserving). Newer types default to false so admins opt in.
+	AllowChannelRequests      bool
+	AllowChannelAdminRequests bool
+	AllowTeamRequests         bool
+	AllowTeamAdminRequests    bool
+	AllowBotTokenRequests     bool // covers full bot-account requests
+	AllowWebhookRequests      bool
 
-	// BotReviewGroup is the name of a Mattermost User Group (without @)
-	// that is @-mentioned on every bot account request alongside System
-	// Admins. Leave blank to notify System Admins only.
-	BotReviewGroup string
+	// --- 5. Multi-step approver pools (attribute-based) ---
+	// SecurityApproverAttribute and SystemApproverAttribute name the User
+	// Attributes (custom profile attributes in the access_control group)
+	// that mark eligibility for the security and system steps of two-step
+	// bot and webhook approvals. See approvers.go.
+	SecurityApproverAttribute string
+	SystemApproverAttribute   string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix
@@ -116,6 +138,27 @@ func (c *configuration) Prefixes() []channelPrefix {
 // admin-configured auto-approve list.
 func (c *configuration) AutoApproveContains(userID string) bool {
 	return slices.Contains(c.autoApproveUserIDs, userID)
+}
+
+// RequestEnabled reports whether the given request type is currently
+// enabled for users to submit. Unknown types return false.
+func (c *configuration) RequestEnabled(requestType string) bool {
+	switch requestType {
+	case requestTypeChannel:
+		return c.AllowChannelRequests
+	case requestTypeChannelAdmin:
+		return c.AllowChannelAdminRequests
+	case requestTypeTeam:
+		return c.AllowTeamRequests
+	case requestTypeTeamAdmin:
+		return c.AllowTeamAdminRequests
+	case requestTypeWebhook:
+		return c.AllowWebhookRequests
+	case requestTypeBot:
+		return c.AllowBotTokenRequests
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) getConfiguration() *configuration {
