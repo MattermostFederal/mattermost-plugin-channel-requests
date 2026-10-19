@@ -1,4 +1,4 @@
-# Admin Guide — Mattermost Permissions Plugin
+# Admin Guide — Mattermost Request Hub Plugin
 
 This guide covers plugin configuration, the approval workflow, and how each request type is handled. For end-user guides, see the linked request-type docs at the bottom.
 
@@ -6,7 +6,7 @@ This guide covers plugin configuration, the approval workflow, and how each requ
 
 ## Initial setup
 
-Configure the plugin in **System Console → Plugins → Mattermost Permissions**.
+Configure the plugin in **System Console → Plugins → Mattermost Request Hub**.
 
 ### Per-type toggles
 
@@ -16,10 +16,12 @@ Each request type can be enabled independently. Defaults after install:
 |--------|---------|
 | Channel requests | On |
 | Channel admin requests | On |
-| Team requests | Off |
-| Team admin requests | Off |
-| Bot account requests | Off |
-| Webhook requests | Off |
+| Team requests | On |
+| Team admin requests | On |
+| Team member requests | On |
+| Team guest requests | Off |
+| Bot account requests | On |
+| Webhook requests | On |
 
 Disabled types are hidden from the Request Hub and slash commands, and the server rejects submissions.
 
@@ -46,8 +48,7 @@ Create and assign these attributes in **System Console → User Management → A
 |---------|---------|
 | **Channel domain prefixes** | Restrict channel URL naming to a defined prefix list. Requesters pick a prefix from a dropdown; the final URL is `<prefix><suffix>`. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve or deny channel creation and channel admin requests (not team/bot/webhook). |
-| **Auto-approve requests from these users** | Named users bypass approval for channel creation only. |
-| **Per-team approval channels** | When on, channel and channel-admin requests route to a per-team approval channel instead of the root channel. |
+| **Per-team approval channels** | Default **on**. Auto-creates `mattermost-channel-requests` in each team that has a Team Admin or System Admin member. Channel / Channel Admin requests from that team go there (not the primary approval team's root channel). All ticket channels (including **Mattermost: Team Requests**) are kept in a managed sidebar category **Mattermost: Request Hub**. |
 
 ### Locking down native channel creation
 
@@ -61,10 +62,11 @@ The plugin creates and manages four dedicated private channels in the configured
 
 | Channel | What routes here |
 |---------|-----------------|
-| Configured approval channel | Channel creation requests, channel admin requests, team admin requests |
-| `mattermost-permissions-teams` | Team creation requests |
-| `mattermost-permissions-bots` | Bot account requests (including associated tokens and webhooks) |
-| `mattermost-permissions-webhooks` | Standalone incoming and outgoing webhook requests |
+| `mattermost-channel-requests` (root or per-team) | Channel creation, Channel Admin |
+| `mattermost-team-requests` | Team creation, Team Admin, team member add, guest invite |
+| `mattermost-bot-requests` | Bot account requests (including associated tokens and webhooks) |
+| `mattermost-webhook-requests` | Standalone incoming and outgoing webhook requests |
+| `mattermost-audit-requests` | Audit log |
 
 If a channel is accidentally archived, the plugin recreates it on next activation.
 
@@ -100,12 +102,24 @@ Bot and webhook cards use **two-step** approval. The card shows security and sys
 
 When a request is submitted, the bot sends the requester a DM with a thread for that request. Admins can communicate with the requester through the approval thread:
 
-- A reply in the **approval thread** is relayed to the requester's **DM thread**.
-- A reply in the requester's **DM thread** is relayed to the **approval thread**.
+- A reply in the **approval thread** is relayed to the requester's **DM thread** as `Message from @reviewer: …`.
+- A reply in the requester's **DM thread** is relayed to the **approval thread** as `Reply from @requester: …`.
 
-This lets reviewers ask clarifying questions and get responses without leaving the approval channel, and without the requester needing access to the approval channel.
+This lets reviewers ask clarifying questions (for example, *Why do you need this new team?*) and get responses without leaving the approval channel, and without the requester needing access to the approval channel. Conversation happens in Mattermost's **Thread** right-hand sidebar (Reply on the card) — not as new top-level posts. Threads remain linked after approve/deny for follow-up. Root-level DMs to the bot (outside a ticket thread) get a nudge to reply inside the specific request.
 
-[Screenshot: An approval thread with a reviewer reply, showing the relay indicator]
+![Approver asks in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
+
+![Requester sees the question in their DM Thread RHS and replies](images/shared/mattermost-thread-requester-dm.png)
+
+![Requester's reply appears back in the approval Thread RHS](images/shared/mattermost-thread-relay-back.png)
+
+End-user guides document the same flow with request-type examples:
+
+- [Channel](CHANNEL_CREATION_GUIDE.md#messaging-while-a-request-is-pending)
+- [Channel Admin](CHANNEL_ADMIN_GUIDE.md#messaging-while-a-request-is-pending)
+- [Team](TEAM_REQUEST_GUIDE.md#messaging-while-a-request-is-pending)
+- [Bot](BOT_REQUEST_GUIDE.md#messaging-while-a-request-is-pending)
+- [Webhook](WEBHOOK_REQUEST_GUIDE.md#messaging-while-a-request-is-pending)
 
 ---
 
@@ -140,7 +154,7 @@ If you set channel domain prefixes, requesters must pick a prefix from a dropdow
 Each row has:
 - **Prefix** — the fixed URL segment (e.g. `ops-`, `prod-`)
 - **Description** — shown in the dropdown to help requesters choose
-- **Max suffix length** — caps how many characters the requester can append (2–32)
+- **Max suffix length** — caps how many characters the requester can append (2–48; presets default to 48)
 
 Use **Load preset** to populate from a starter pack. The **Live preview** at the bottom shows what a given prefix and suffix combination produces.
 
@@ -150,11 +164,27 @@ Use **Load preset** to populate from a starter pack. The **Live preview** at the
 
 ## Per-team approval channels
 
-When **Per-team approval channels** is enabled, each new team created through the plugin gets a private `{team-url}-approvals` channel. Channel creation and channel admin requests from members of that team route to that team's channel instead of the root approval channel.
+When **Per-team approval channels** is enabled (default), the plugin ensures a
+`mattermost-channel-requests` channel in every team that has at least one
+**Team Admin** or **System Admin** as a member. Channel creation and Channel
+Admin requests from that team route there instead of the primary approval
+team's root channel.
 
-This is useful when you have multiple independent teams with their own admin pools and don't want all requests landing in one shared channel.
+Teams with no local Team Admin / System Admin fall back to the root approval
+channel (card labeled `For Team: …`).
 
-System Admins are seeded into each per-team channel when it's created.
+Team Admins and System Admins who belong to the team are seeded into the
+per-team channel and placed under the managed sidebar category
+**Mattermost: Request Hub**. The dedicated **Mattermost: Team Requests**
+channel (team-creation tickets) gets the same category treatment. On plugin
+activate, a one-time migration forces all existing ticket/approval channels
+(root, bot, webhook, team-creation, audit, and per-team) into that category
+for current members (renaming a short-lived `Mattermost Requests` label if
+present).
+
+> Upgrades that already saved `PerTeamApprovalChannels = false` keep that
+> value — turn the setting back **on** in System Console if channel requests
+> are still landing only in the primary team.
 
 ---
 
@@ -162,19 +192,23 @@ System Admins are seeded into each per-team channel when it's created.
 
 | Request type | Entry points | Approval channel | Bypass? |
 |---|---|---|---|
-| Channel creation | Sidebar +, channel header button, More actions, slash cmd | Root channel or per-team channel | System Admins + auto-approve list |
-| Channel Admin | More actions, Members panel button, slash cmd | Root channel or per-team channel | System Admins + auto-approve list |
-| Team Admin | More actions, slash cmd | Root channel | System Admins |
-| Team creation | More actions, team sidebar menu | `mattermost-permissions-teams` | System Admins |
-| Bot account (+ token + webhooks) | More actions, Integrations page | `mattermost-permissions-bots` | Two-step: security + system attributes |
-| Incoming webhook (standalone) | More actions, Integrations page | `mattermost-permissions-webhooks` | **None** — always queued |
-| Outgoing webhook (standalone) | More actions, Integrations page | `mattermost-permissions-webhooks` | **None** — always queued |
+| Channel creation | Sidebar +, channel header button, More actions, slash cmd | Root channel or per-team channel | System Admins |
+| Channel Admin | More actions, Members panel button, slash cmd | Root channel or per-team channel | System Admins |
+| Team Admin | More actions, slash cmd | `mattermost-team-requests` | System Admins |
+| Team creation | More actions, team sidebar menu | `mattermost-team-requests` | System Admins |
+| Team member add | More actions, Request Hub, slash | `mattermost-team-requests` | System Admins |
+| Guest invite | More actions, Request Hub, slash | `mattermost-team-requests` | System Admins |
+| Bot account (+ token + webhooks) | More actions, Integrations page | `mattermost-bot-requests` | Two-step: security + system attributes |
+| Incoming webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | **None** — always queued |
+| Outgoing webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | **None** — always queued |
 
 ---
 
 ## Related guides
 
-- [Requesting a new channel](request-channel.md)
-- [Requesting channel admin privileges](request-channel-admin.md)
-- [Requesting a bot account](request-bot.md)
-- [Requesting webhooks (standalone)](request-webhook.md)
+- [Channel Requests — User Guide](CHANNEL_CREATION_GUIDE.md)
+- [Channel Admin Requests — User Guide](CHANNEL_ADMIN_GUIDE.md)
+- [Team Requests — User Guide](TEAM_REQUEST_GUIDE.md)
+- [Team Membership & Guests — User Guide](TEAM_MEMBERSHIP_GUIDE.md)
+- [Bot Account Requests — User Guide](BOT_REQUEST_GUIDE.md)
+- [Webhook Requests — User Guide](WEBHOOK_REQUEST_GUIDE.md)

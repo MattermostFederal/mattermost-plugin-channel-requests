@@ -122,10 +122,6 @@ export const RequestChannelModal = () => {
         return selectedPrefix + (slug || 'suffix');
     }, [urlName, displayName, selectedPrefix]);
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setDisplayName('');
         setUrlName('');
@@ -150,7 +146,12 @@ export const RequestChannelModal = () => {
         reset();
         dispatch(closeRequestModal());
     };
+    // Must run unconditionally — never after `if (!isOpen) return null`.
     const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!displayName.trim()) {
@@ -211,7 +212,7 @@ export const RequestChannelModal = () => {
                 <p style={{opacity: 0.72}}>
                     {'Your request will be sent to an admin for approval. '}
                     <a
-                        href={`/plugins/${manifest.id}/public/help/help.html`}
+                        href={`/plugins/${manifest.id}/public/help/docs.html`}
                         target='_blank'
                         rel='noopener noreferrer'
                     >
@@ -278,7 +279,7 @@ export const RequestChannelModal = () => {
                                     className='alert alert-warning'
                                     style={{marginBottom: 16}}
                                 >
-                                    {"Channel creation requests aren’t configured yet — no channel prefixes have been defined. Ask a System Admin to add at least one prefix in System Console → Plugins → Mattermost Permissions, then try again."}
+                                    {"Channel creation requests aren’t configured yet — no channel prefixes have been defined. Ask a System Admin to add at least one prefix in System Console → Plugins → Mattermost Request Hub, then try again."}
                                 </div>
                                 <div style={{textAlign: 'right'}}>
                                     <button
@@ -441,30 +442,30 @@ export const RequestChannelModal = () => {
                             );
                         })()}
 
-                        {categories.length > 0 && (
-                            <div style={fieldStyle}>
-                                <label htmlFor='cr-category'>{'Sidebar category (optional)'}</label>
-                                <select
-                                    id='cr-category'
-                                    className='form-control'
-                                    value={selectedCategory}
-                                    onChange={(e) => setSelectedCategory(e.target.value)}
-                                >
-                                    <option value=''>{"— None (don't auto-place) —"}</option>
-                                    {categories.map((c) => (
-                                        <option
-                                            key={c.id}
-                                            value={c.display_name}
-                                        >
-                                            {c.display_name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <small style={{opacity: 0.6}}>
-                                    {"On approval, the new channel is placed in this sidebar category for you and any members you've added."}
-                                </small>
-                            </div>
-                        )}
+                        <div style={fieldStyle}>
+                            <label htmlFor='cr-category'>{'Sidebar category (optional)'}</label>
+                            <input
+                                id='cr-category'
+                                className='form-control'
+                                list='cr-category-suggestions'
+                                value={selectedCategory}
+                                onChange={(e) => setSelectedCategory(e.target.value)}
+                                placeholder='Pick an existing category or type a new name'
+                                maxLength={64}
+                                autoComplete='off'
+                            />
+                            <datalist id='cr-category-suggestions'>
+                                {categories.map((c) => (
+                                    <option
+                                        key={c.id}
+                                        value={c.display_name}
+                                    />
+                                ))}
+                            </datalist>
+                            <small style={{opacity: 0.6}}>
+                                {'Pick from suggestions or type a new name. On approval, the channel is placed there for you and listed members — a missing category is created automatically.'}
+                            </small>
+                        </div>
 
                             {error ? (
                                 <div

@@ -9,6 +9,10 @@ export const OPEN_TEAM_CREATION_MODAL = `${manifest.id}_open_team_creation_modal
 export const CLOSE_TEAM_CREATION_MODAL = `${manifest.id}_close_team_creation_modal`;
 export const OPEN_TEAM_ADMIN_REQUEST_MODAL = `${manifest.id}_open_team_admin_request_modal`;
 export const CLOSE_TEAM_ADMIN_REQUEST_MODAL = `${manifest.id}_close_team_admin_request_modal`;
+export const OPEN_TEAM_MEMBER_REQUEST_MODAL = `${manifest.id}_open_team_member_request_modal`;
+export const CLOSE_TEAM_MEMBER_REQUEST_MODAL = `${manifest.id}_close_team_member_request_modal`;
+export const OPEN_TEAM_GUEST_REQUEST_MODAL = `${manifest.id}_open_team_guest_request_modal`;
+export const CLOSE_TEAM_GUEST_REQUEST_MODAL = `${manifest.id}_close_team_guest_request_modal`;
 export const OPEN_BOT_REQUEST_MODAL = `${manifest.id}_open_bot_request_modal`;
 export const CLOSE_BOT_REQUEST_MODAL = `${manifest.id}_close_bot_request_modal`;
 export const OPEN_INCOMING_WEBHOOK_MODAL = `${manifest.id}_open_incoming_webhook_modal`;
@@ -32,6 +36,10 @@ export const openTeamCreationModal = (): Action => ({type: OPEN_TEAM_CREATION_MO
 export const closeTeamCreationModal = (): Action => ({type: CLOSE_TEAM_CREATION_MODAL});
 export const openTeamAdminRequestModal = (): Action => ({type: OPEN_TEAM_ADMIN_REQUEST_MODAL});
 export const closeTeamAdminRequestModal = (): Action => ({type: CLOSE_TEAM_ADMIN_REQUEST_MODAL});
+export const openTeamMemberRequestModal = (): Action => ({type: OPEN_TEAM_MEMBER_REQUEST_MODAL});
+export const closeTeamMemberRequestModal = (): Action => ({type: CLOSE_TEAM_MEMBER_REQUEST_MODAL});
+export const openTeamGuestRequestModal = (): Action => ({type: OPEN_TEAM_GUEST_REQUEST_MODAL});
+export const closeTeamGuestRequestModal = (): Action => ({type: CLOSE_TEAM_GUEST_REQUEST_MODAL});
 export const openBotRequestModal = (): Action => ({type: OPEN_BOT_REQUEST_MODAL});
 export const closeBotRequestModal = (): Action => ({type: CLOSE_BOT_REQUEST_MODAL});
 export const openIncomingWebhookModal = (): Action => ({type: OPEN_INCOMING_WEBHOOK_MODAL});
@@ -50,6 +58,8 @@ type PluginState = {
 
     teamCreationModalOpen: boolean;
     teamAdminRequestModalOpen: boolean;
+    teamMemberRequestModalOpen: boolean;
+    teamGuestRequestModalOpen: boolean;
     botRequestModalOpen: boolean;
     incomingWebhookModalOpen: boolean;
     outgoingWebhookModalOpen: boolean;
@@ -107,6 +117,16 @@ export const isTeamCreationModalOpen = (state: GlobalState): boolean => {
 export const isTeamAdminRequestModalOpen = (state: GlobalState): boolean => {
     const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
     return Boolean(pluginState?.teamAdminRequestModalOpen);
+};
+
+export const isTeamMemberRequestModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.teamMemberRequestModalOpen);
+};
+
+export const isTeamGuestRequestModalOpen = (state: GlobalState): boolean => {
+    const pluginState = state[`plugins-${manifest.id}`] as PluginState | undefined;
+    return Boolean(pluginState?.teamGuestRequestModalOpen);
 };
 
 export const isBotRequestModalOpen = (state: GlobalState): boolean => {
@@ -195,6 +215,8 @@ const initialState: PluginState = {
     adminModalChannelId: null,
     teamCreationModalOpen: false,
     teamAdminRequestModalOpen: false,
+    teamMemberRequestModalOpen: false,
+    teamGuestRequestModalOpen: false,
     botRequestModalOpen: false,
     incomingWebhookModalOpen: false,
     outgoingWebhookModalOpen: false,
@@ -219,6 +241,14 @@ export default function reducer(state: PluginState = initialState, action: Actio
         return {...state, teamAdminRequestModalOpen: true};
     case CLOSE_TEAM_ADMIN_REQUEST_MODAL:
         return {...state, teamAdminRequestModalOpen: false};
+    case OPEN_TEAM_MEMBER_REQUEST_MODAL:
+        return {...state, teamMemberRequestModalOpen: true};
+    case CLOSE_TEAM_MEMBER_REQUEST_MODAL:
+        return {...state, teamMemberRequestModalOpen: false};
+    case OPEN_TEAM_GUEST_REQUEST_MODAL:
+        return {...state, teamGuestRequestModalOpen: true};
+    case CLOSE_TEAM_GUEST_REQUEST_MODAL:
+        return {...state, teamGuestRequestModalOpen: false};
     case OPEN_BOT_REQUEST_MODAL:
         return {...state, botRequestModalOpen: true};
     case CLOSE_BOT_REQUEST_MODAL:

@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
-const commandTrigger = "mattermost-permissions"
+const commandTrigger = "mattermost-request-hub"
 
 // fieldNominees is the dialog element name for the nominees selector in the
 // channel-admin slash-command dialog (distinct from fieldMembers used by the
@@ -27,26 +28,46 @@ func getCommand() *model.Command {
 	return &model.Command{
 		Trigger:          commandTrigger,
 		AutoComplete:     true,
-		AutoCompleteDesc: "Request admin-gated permissions (channels, teams, admin roles)",
-		AutoCompleteHint: "[channel|channel-admin|team-admin|team|bot|webhook-incoming|webhook-outgoing]",
+		AutoCompleteDesc: "Request admin-gated permissions (channels, teams, admin roles) or open docs",
+		AutoCompleteHint: "[docs|channel|channel-admin|team-admin|team|team-member|team-guest|bot|webhook-incoming|webhook-outgoing]",
 		AutocompleteData: getAutocompleteData(),
-		DisplayName:      "Mattermost Permissions",
+		DisplayName:      "Mattermost Request Hub",
 	}
 }
 
 func getAutocompleteData() *model.AutocompleteData {
-	root := model.NewAutocompleteData(commandTrigger, "[subcommand]", "Request admin-gated permissions")
+	root := model.NewAutocompleteData(commandTrigger, "[subcommand]", "Request admin-gated access via Request Hub")
+	root.AddCommand(model.NewAutocompleteData("docs", "", "Open the full documentation guide in your browser"))
 	root.AddCommand(model.NewAutocompleteData("channel", "", "Request creation of a new channel"))
 	root.AddCommand(model.NewAutocompleteData("channel-admin", "", "Request Channel Admin role on an existing channel"))
 	root.AddCommand(model.NewAutocompleteData("team-admin", "", "Request Team Admin role in the current team"))
 	root.AddCommand(model.NewAutocompleteData("team", "", "Request creation of a new team"))
+	root.AddCommand(model.NewAutocompleteData("team-member", "", "Request adding users to the current team"))
+	root.AddCommand(model.NewAutocompleteData("team-guest", "", "Request a guest invite to the current team"))
 	root.AddCommand(model.NewAutocompleteData("bot", "", "Request creation of a bot account"))
 	root.AddCommand(model.NewAutocompleteData("webhook-incoming", "", "Request an incoming webhook (external → Mattermost)"))
 	root.AddCommand(model.NewAutocompleteData("webhook-outgoing", "", "Request an outgoing webhook (Mattermost → external)"))
 	return root
 }
 
-func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (resp *model.CommandResponse, appErr *model.AppError) {
+	// Never let a panic deactivate the whole plugin — Mattermost surfaces
+	// "command crashed the … plugin" / "Plugin for /… is not working" after that.
+	defer func() {
+		if r := recover(); r != nil {
+			p.API.LogError("channel-requests: ExecuteCommand panic recovered",
+				"panic", fmt.Sprint(r),
+				"stack", string(debug.Stack()),
+			)
+			resp = ephemeralResponse("Something went wrong running that command. The error was logged — please try again or contact a System Admin.")
+			appErr = nil
+		}
+	}()
+
+	if args == nil {
+		return ephemeralResponse("Could not run that command (missing arguments)."), nil
+	}
+
 	fields := strings.Fields(args.Command)
 	subcommand := ""
 	if len(fields) >= 2 {
@@ -54,6 +75,8 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 	}
 
 	switch subcommand {
+	case "docs", "help", "documentation":
+		return p.executeDocsCommand(args)
 	case "channel", "":
 		return p.executeChannelRequestCommand(args)
 	case "channel-admin":
@@ -62,6 +85,10 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 		return p.executeTeamAdminRequestCommand(args)
 	case "team":
 		return p.executeTeamCreationRequestCommand(args)
+	case "team-member":
+		return p.executeTeamMemberRequestCommand(args)
+	case "team-guest":
+		return p.executeTeamGuestRequestCommand(args)
 	case "bot":
 		return p.executeBotRequestCommand(args)
 	case "webhook-incoming":
@@ -73,12 +100,31 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 	}
 }
 
+// executeDocsCommand posts an ephemeral markdown link to the bundled HTML
+// guide (public/help/docs.html). Do NOT set GotoLocation: Mattermost treats
+// same-origin /plugins/... URLs as in-app React routes, which leaves the
+// channel view stuck on "Loading..." forever. Markdown links to /plugins/
+// open in a new tab as a full document load instead.
+func (p *Plugin) executeDocsCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	path := fmt.Sprintf("/plugins/%s/public/help/docs.html", manifest.Id)
+	location := path
+	if args != nil && args.SiteURL != "" {
+		location = strings.TrimRight(args.SiteURL, "/") + path
+	}
+	return &model.CommandResponse{
+		ResponseType: model.CommandResponseTypeEphemeral,
+		Text: "**Documentation**\n\n" +
+			"[Open the full guide](" + location + ") (opens in a new tab).\n\n" +
+			"Covers channels, Channel Admin, teams, bots, webhooks, messaging threads, and slash commands.",
+	}, nil
+}
+
 func (p *Plugin) executeChannelRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
 	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
 		return ephemeralResponse(channelRequestsDisabledMsg), nil
 	}
 	if !p.getConfiguration().UsesPrefixList() {
-		return ephemeralResponse("Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Mattermost Permissions."), nil
+		return ephemeralResponse("Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Mattermost Request Hub."), nil
 	}
 	if err := p.openRequestDialog(args.TriggerId, args.TeamId); err != nil {
 		p.API.LogError("failed to open channel request dialog", "error", err.Error())
@@ -116,6 +162,28 @@ func (p *Plugin) executeTeamCreationRequestCommand(args *model.CommandArgs) (*mo
 	if err := p.openTeamCreationRequestDialog(args.TriggerId); err != nil {
 		p.API.LogError("failed to open team creation request dialog", "error", err.Error())
 		return ephemeralResponse("Could not open the team creation request form. Please try again."), nil
+	}
+	return &model.CommandResponse{}, nil
+}
+
+func (p *Plugin) executeTeamMemberRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeamMember) {
+		return ephemeralResponse(teamMemberRequestsDisabledMsg), nil
+	}
+	if err := p.openTeamMemberRequestDialog(args.TriggerId, args.TeamId); err != nil {
+		p.API.LogError("failed to open team-member request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the team member request form. Please try again."), nil
+	}
+	return &model.CommandResponse{}, nil
+}
+
+func (p *Plugin) executeTeamGuestRequestCommand(args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeamGuest) {
+		return ephemeralResponse(teamGuestRequestsDisabledMsg), nil
+	}
+	if err := p.openTeamGuestRequestDialog(args.TriggerId, args.TeamId); err != nil {
+		p.API.LogError("failed to open team-guest request dialog", "error", err.Error())
+		return ephemeralResponse("Could not open the guest invite request form. Please try again."), nil
 	}
 	return &model.CommandResponse{}, nil
 }
@@ -187,15 +255,18 @@ func (p *Plugin) executeOutgoingWebhookRequestCommand(args *model.CommandArgs) (
 }
 
 func commandHelpText() string {
-	return "**Mattermost Permissions** — request admin-gated access.\n\n" +
+	return "**Mattermost Request Hub** — request admin-gated access.\n\n" +
 		"| Subcommand | What it does |\n|---|---|\n" +
-		"| `/mattermost-permissions channel` | Request a new channel |\n" +
-		"| `/mattermost-permissions channel-admin` | Request Channel Admin role |\n" +
-		"| `/mattermost-permissions team-admin` | Request Team Admin role in this team |\n" +
-		"| `/mattermost-permissions team` | Request a new team |\n" +
-		"| `/mattermost-permissions bot` | Request a bot account |\n" +
-		"| `/mattermost-permissions webhook-incoming` | Request an incoming webhook |\n" +
-		"| `/mattermost-permissions webhook-outgoing` | Request an outgoing webhook |"
+		"| `/mattermost-request-hub docs` | Open the full documentation guide |\n" +
+		"| `/mattermost-request-hub channel` | Request a new channel |\n" +
+		"| `/mattermost-request-hub channel-admin` | Request Channel Admin role |\n" +
+		"| `/mattermost-request-hub team-admin` | Request Team Admin role in this team |\n" +
+		"| `/mattermost-request-hub team` | Request a new team |\n" +
+		"| `/mattermost-request-hub team-member` | Request adding users to this team |\n" +
+		"| `/mattermost-request-hub team-guest` | Request a guest invite to this team |\n" +
+		"| `/mattermost-request-hub bot` | Request a bot account |\n" +
+		"| `/mattermost-request-hub webhook-incoming` | Request an incoming webhook |\n" +
+		"| `/mattermost-request-hub webhook-outgoing` | Request an outgoing webhook |"
 }
 
 func ephemeralResponse(text string) *model.CommandResponse {

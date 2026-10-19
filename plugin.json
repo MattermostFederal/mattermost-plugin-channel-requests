@@ -1,11 +1,11 @@
 {
-    "id": "com.mattermostfederal.channel-requests",
-    "name": "Mattermost Permissions",
-    "description": "Governance plugin: lets non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all routed to the right approvers with full two-way messaging.",
-    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
-    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
+    "id": "com.mattermostfederal.mattermost-plugin-request-hub",
+    "name": "Mattermost Request Hub",
+    "description": "Request Hub: gated requests for channel creation, Channel Admin, team creation/membership/guests, Team Admin, bots, and webhooks — routed to approvers with two-way messaging.",
+    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-request-hub",
+    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-request-hub/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.4.1",
+    "version": "0.5.2",
     "min_server_version": "10.5.0",
     "server": {
         "executables": {
@@ -19,7 +19,7 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Mattermost Permissions\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, bot accounts, and incoming/outgoing webhooks — all via /mattermost-permissions or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n**Bot and webhook requests use two-step approval** — one security approver and one system approver, identified by the User Attributes configured below.\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team below, then set up channel domain prefixes.",
+        "header": "## Mattermost Request Hub\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, team membership, guest invites, bot accounts, and incoming/outgoing webhooks — all via /mattermost-request-hub or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n**Bot and webhook requests use two-step approval** — one security approver and one system approver, identified by the User Attributes configured below.\n\n**Breaking change:** plugin ID changed in 0.5.0 — uninstall the previous Mattermost Request Hub / channel-requests bundle before installing this one (settings and pending KV tickets do not migrate).\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation, Team Admin, team member, guest | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team below, then set up channel domain prefixes.",
         "settings": [
             {
                 "key": "AllowChannelRequests",
@@ -39,28 +39,42 @@
                 "key": "AllowTeamRequests",
                 "display_name": "Allow team requests",
                 "type": "bool",
-                "default": false,
-                "help_text": "When enabled, users can request the creation of new teams for admin approval."
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new teams for admin approval. Also shows a + on the team rail for non–System Admins when native Create Team is hidden."
             },
             {
                 "key": "AllowTeamAdminRequests",
                 "display_name": "Allow team admin requests",
                 "type": "bool",
-                "default": false,
+                "default": true,
                 "help_text": "When enabled, users can request Team Admin promotion on a team they belong to."
+            },
+            {
+                "key": "AllowTeamMemberRequests",
+                "display_name": "Allow team member requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request that existing Mattermost users be added to a team. Routed to mattermost-team-requests for System Admin approval."
+            },
+            {
+                "key": "AllowTeamGuestRequests",
+                "display_name": "Allow team guest requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request a guest invite to a team. On approval, a shareable invite link is returned; optional email sends a Mattermost guest invitation. Requires Guest Accounts enabled. Routed to mattermost-team-requests."
             },
             {
                 "key": "AllowBotTokenRequests",
                 "display_name": "Allow bot account requests",
                 "type": "bool",
-                "default": false,
+                "default": true,
                 "help_text": "When enabled, users can request a bot account (optional token and webhooks). Bot requests require two-step approval (security + system)."
             },
             {
                 "key": "AllowWebhookRequests",
                 "display_name": "Allow webhook requests",
                 "type": "bool",
-                "default": false,
+                "default": true,
                 "help_text": "When enabled, users can request incoming or outgoing webhooks. Webhook requests require two-step approval (security + system)."
             },
             {
@@ -86,7 +100,8 @@
                 "key": "PerTeamApprovalChannels",
                 "display_name": "Per-team approval channels",
                 "type": "bool",
-                "help_text": "When enabled, the plugin auto-creates a dedicated approval channel in every team. Channel and admin-promotion requests route to the requester's team channel instead of the global approval channel. Enabling this setting immediately creates channels for all existing teams."
+                "default": true,
+                "help_text": "When enabled (default), the plugin auto-creates a dedicated approval channel (mattermost-channel-requests) in each team that has at least one Team Admin or System Admin member. Channel and Channel Admin requests from that team route there instead of the primary approval team's root channel. All ticket channels (including Mattermost: Team Requests) are kept in a managed sidebar category named Mattermost: Request Hub."
             },
             {
                 "key": "AllowTeamAdminApprovers",
@@ -99,12 +114,6 @@
                 "display_name": "Channel domain prefixes",
                 "type": "custom",
                 "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix."
-            },
-            {
-                "key": "AutoApproveUserIDs",
-                "display_name": "Auto-approve requests from these users",
-                "type": "custom",
-                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers."
             }
         ]
     }

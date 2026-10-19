@@ -135,7 +135,7 @@ export const TeamPicker: React.FC<Props> = (props) => {
                     </option>
                 ))}
             </select>
-            <small style={{opacity: 0.6}}>{'Pick the team that contains your approval channel. The channel dropdown below filters to this team.'}</small>
+            <small style={{opacity: 0.6}}>{'Team where the plugin creates approval channels (channel, bot, webhook, team, audit). Required for the approval workflow.'}</small>
         </div>
     );
 };

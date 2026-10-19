@@ -19,11 +19,33 @@ func TestResolveApprovalChannel_UsesPerTeamChannelWhenEnabled(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{PerTeamApprovalChannels: true})
 
-	// hasActiveTeamAdmins: returns one admin so the per-team path is taken.
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	// hasActiveTeamApprovers: returns one Team Admin so the per-team path is taken.
 	api.On("GetTeamMembers", "team1", 0, 200).
 		Return([]*model.TeamMember{{TeamId: "team1", UserId: "u_admin", SchemeAdmin: true}}, nil)
 
 	// Fast path: channel already exists in this team.
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
+		Return(&model.Channel{Id: "ch-team1"}, nil)
+
+	ch, label := p.resolveApprovalChannel("team1")
+	require.NotNil(t, ch)
+	require.Equal(t, "ch-team1", ch.Id)
+	require.Empty(t, label)
+}
+
+func TestResolveApprovalChannel_UsesPerTeamWhenSystemAdminOnTeam(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{PerTeamApprovalChannels: true})
+
+	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "u_sys"}}, nil)
+	// Plain member who is a System Admin — counts as a local approver.
+	api.On("GetTeamMembers", "team1", 0, 200).
+		Return([]*model.TeamMember{{TeamId: "team1", UserId: "u_sys", Roles: "team_user"}}, nil)
+
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
 		Return(&model.Channel{Id: "ch-team1"}, nil)
 
@@ -43,7 +65,8 @@ func TestResolveApprovalChannel_FallsBackToGlobalWhenPerTeamFails(t *testing.T) 
 		ApprovalTeam:            "globalteam",
 	})
 
-	// hasActiveTeamAdmins: returns one admin so the per-team path is attempted.
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	// hasActiveTeamApprovers: returns one admin so the per-team path is attempted.
 	api.On("GetTeamMembers", "team1", 0, 200).
 		Return([]*model.TeamMember{{TeamId: "team1", UserId: "u_admin", SchemeAdmin: true}}, nil)
 
@@ -115,6 +138,8 @@ func TestEnsureTeamApprovalChannel_CreatesAndSeeds(t *testing.T) {
 		return c.TeamId == "team1" && c.Name == "mattermost-channel-requests"
 	})).Return(created, nil)
 
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+
 	// Seed: two team members, one admin.
 	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{
 		{TeamId: "team1", UserId: "u_admin", Roles: "team_user team_admin"},
@@ -122,13 +147,17 @@ func TestEnsureTeamApprovalChannel_CreatesAndSeeds(t *testing.T) {
 	}, nil)
 	api.On("AddChannelMember", "new-ch", "u_admin").Return(&model.ChannelMember{}, nil)
 
-	// Sidebar: category already has the channel — early return, no update needed.
+	// Short-lived "Mattermost Requests" label is renamed back to
+	// "Mattermost: Request Hub" even when the channel is already listed.
 	api.On("GetChannelSidebarCategories", "u_admin", "team1").Return(&model.OrderedSidebarCategories{
 		Categories: []*model.SidebarCategoryWithChannels{{
-			SidebarCategory: model.SidebarCategory{DisplayName: "Mattermost: Permissions"},
+			SidebarCategory: model.SidebarCategory{Id: "cat1", DisplayName: "Mattermost Requests"},
 			Channels:        []string{"new-ch"},
 		}},
 	}, nil)
+	api.On("UpdateChannelSidebarCategories", "u_admin", "team1", mock.MatchedBy(func(cats []*model.SidebarCategoryWithChannels) bool {
+		return len(cats) == 1 && cats[0].DisplayName == "Mattermost: Request Hub"
+	})).Return([]*model.SidebarCategoryWithChannels{}, nil)
 
 	// Welcome message post.
 	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool {
@@ -182,6 +211,7 @@ func TestEnsureTeamApprovalChannel_UsesFixedChannelName(t *testing.T) {
 	api.On("CreateChannel", mock.MatchedBy(func(c *model.Channel) bool {
 		return c.Name == "mattermost-channel-requests"
 	})).Return(&model.Channel{Id: "fixed-ch"}, nil)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
 	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
@@ -203,10 +233,10 @@ func TestUserHasJoinedTeam_AddsTeamAdminToApprovalChannel(t *testing.T) {
 		Return(&model.Channel{Id: "ch-team1"}, nil)
 	api.On("AddChannelMember", "ch-team1", "u_ta").Return(&model.ChannelMember{}, nil)
 
-	// Sidebar: category already has the channel — early return.
+	// Already in managed category — no update needed.
 	api.On("GetChannelSidebarCategories", "u_ta", "team1").Return(&model.OrderedSidebarCategories{
 		Categories: []*model.SidebarCategoryWithChannels{{
-			SidebarCategory: model.SidebarCategory{DisplayName: "Mattermost: Permissions"},
+			SidebarCategory: model.SidebarCategory{DisplayName: "Mattermost: Request Hub"},
 			Channels:        []string{"ch-team1"},
 		}},
 	}, nil)
@@ -265,7 +295,8 @@ func TestSubmitRequest_RoutesToPerTeamChannel(t *testing.T) {
 	api.On("GetTeamMember", "t1", "u_req").Return(&model.TeamMember{TeamId: "t1", UserId: "u_req", DeleteAt: 0}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
-	// hasActiveTeamAdmins: returns one admin so the per-team path is taken.
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	// hasActiveTeamApprovers: returns one admin so the per-team path is taken.
 	api.On("GetTeamMembers", "t1", 0, 200).
 		Return([]*model.TeamMember{{TeamId: "t1", UserId: "u_admin", SchemeAdmin: true}}, nil)
 

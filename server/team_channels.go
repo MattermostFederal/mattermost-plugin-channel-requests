@@ -17,9 +17,9 @@ import (
 // Priority order:
 //
 //  1. Per-team auto-channel (when PerTeamApprovalChannels is enabled AND the
-//     team has at least one active Team Admin monitoring it).
+//     team has at least one Team Admin or System Admin as a member).
 //  2. Root approval channel with a "For Team: X — " prefix label, used when
-//     PerTeamApprovalChannels is enabled but the team has no active Team Admins
+//     PerTeamApprovalChannels is enabled but the team has no local approvers
 //     — routing to a per-team channel nobody monitors would silently bury requests.
 //  3. Root approval channel with no label (PerTeamApprovalChannels is disabled).
 //  4. nil — caller falls back to DMing every System Admin.
@@ -30,15 +30,14 @@ func (p *Plugin) resolveApprovalChannel(teamID string) (*model.Channel, string) 
 	config := p.getConfiguration()
 
 	if config.PerTeamApprovalChannels && teamID != "" {
-		if !p.hasActiveTeamAdmins(teamID) {
-			// No active Team Admins — a per-team channel would be unmonitored.
-			// Fall back to the root channel and label the card so System Admins
-			// know which team the request belongs to (Option C routing).
+		if !p.hasActiveTeamApprovers(teamID) {
+			// No Team Admin and no System Admin on this team — fall back to root
+			// and label the card so System Admins know which team it belongs to.
 			teamName := teamID
 			if team, appErr := p.API.GetTeam(teamID); appErr == nil {
 				teamName = team.DisplayName
 			}
-			p.API.LogInfo("channel-requests: no active team admins; routing to root channel",
+			p.API.LogInfo("channel-requests: no team/system admins on team; routing to root channel",
 				"team_id", teamID, "team_name", teamName)
 			ch := p.ensureRootApprovalChannel()
 			return ch, fmt.Sprintf("For Team: %s — ", teamName)
@@ -60,12 +59,15 @@ func (p *Plugin) resolveApprovalChannel(teamID string) (*model.Channel, string) 
 	return ch, ""
 }
 
-// hasActiveTeamAdmins returns true when teamID has at least one Team Admin
-// (via SchemeAdmin flag or team_admin role string). Used to decide whether a
-// per-team approval channel is actually monitored before routing requests there.
-// Returns true on lookup failure so the caller defaults to trying the per-team
-// channel rather than silently bypassing it.
-func (p *Plugin) hasActiveTeamAdmins(teamID string) bool {
+// hasActiveTeamApprovers returns true when teamID has at least one member who
+// can monitor a per-team approval channel: a Team Admin (SchemeAdmin /
+// team_admin) or a System Admin who belongs to the team.
+//
+// Returns true on team-member lookup failure so the caller defaults to trying
+// the per-team channel rather than silently bypassing it.
+func (p *Plugin) hasActiveTeamApprovers(teamID string) bool {
+	sysAdmins := p.systemAdminIDSet()
+
 	const perPage = 200
 	for page := range 10 {
 		members, appErr := p.API.GetTeamMembers(teamID, page, perPage)
@@ -76,12 +78,31 @@ func (p *Plugin) hasActiveTeamAdmins(teamID string) bool {
 			if m.SchemeAdmin || slices.Contains(strings.Fields(m.Roles), model.TeamAdminRoleId) {
 				return true
 			}
+			if sysAdmins[m.UserId] {
+				return true
+			}
 		}
 		if len(members) < perPage {
 			return false
 		}
 	}
 	return false
+}
+
+// systemAdminIDSet returns the set of System Admin user IDs (best-effort).
+func (p *Plugin) systemAdminIDSet() map[string]bool {
+	out := map[string]bool{}
+	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Page: 0, PerPage: 200})
+	if appErr != nil {
+		p.API.LogWarn("failed to list System Admins for approver check", "error", appErr.Error())
+		return out
+	}
+	for _, admin := range admins {
+		if admin != nil && admin.Id != "" && admin.Id != p.botUserID {
+			out[admin.Id] = true
+		}
+	}
+	return out
 }
 
 // ensureRootApprovalChannel returns the root approval channel for channel and
@@ -136,7 +157,7 @@ func (p *Plugin) ensureRootApprovalChannel() *model.Channel {
 		ChannelId: ch.Id,
 		Message: "This channel was created automatically by the Mattermost Tickets plugin. " +
 			"It is the global approval channel for channel creation, Channel Admin, Team Admin, and team creation requests. " +
-			"Configure team-specific routing in System Console → Plugins → Mattermost Permissions.",
+			"Configure team-specific routing in System Console → Plugins → Mattermost Request Hub.",
 	}); postErr != nil {
 		p.API.LogWarn("failed to post welcome message in root approval channel",
 			"channel_id", ch.Id, "error", postErr.Error())
@@ -147,14 +168,34 @@ func (p *Plugin) ensureRootApprovalChannel() *model.Channel {
 	return ch
 }
 
-// sidebarCategoryName is the display name of the sidebar category the plugin
-// creates for every admin who has access to one or more approval channels.
-const sidebarCategoryName = "Mattermost: Permissions"
+// Managed sidebar category for every plugin ticket / approval channel.
+// Prior labels are renamed in-place so upgrades don't leave duplicate empty categories.
+const (
+	sidebarCategoryName = "Mattermost: Request Hub"
+	kvSidebarCategoryMigrated = "migration_sidebar_category_v3"
+)
+
+var sidebarCategoryNameLegacy = []string{
+	"Mattermost: Permissions",
+	"Mattermost Requests",
+}
+
+func isManagedSidebarCategory(name string) bool {
+	if name == sidebarCategoryName {
+		return true
+	}
+	for _, legacy := range sidebarCategoryNameLegacy {
+		if name == legacy {
+			return true
+		}
+	}
+	return false
+}
 
 // addChannelToPermissionsCategory ensures the given channel appears at the top
-// of the "Mattermost: Permissions" sidebar category for userID in teamID.
-// The category is created on first use. Failures are logged but never fatal —
-// the channel still works correctly without the sidebar grouping.
+// of the "Mattermost: Request Hub" sidebar category for userID in teamID.
+// Renames a legacy category label if found. The category is created on first
+// use. Failures are logged but never fatal.
 func (p *Plugin) addChannelToPermissionsCategory(userID, teamID, channelID string) {
 	if userID == "" || teamID == "" || channelID == "" {
 		return
@@ -167,17 +208,28 @@ func (p *Plugin) addChannelToPermissionsCategory(userID, teamID, channelID strin
 	}
 
 	for _, cat := range cats.Categories {
-		if cat.DisplayName != sidebarCategoryName {
+		if !isManagedSidebarCategory(cat.DisplayName) {
 			continue
 		}
-		// Already in category — nothing to do.
+		changed := false
+		if cat.DisplayName != sidebarCategoryName {
+			cat.DisplayName = sidebarCategoryName
+			changed = true
+		}
+		already := false
 		for _, id := range cat.Channels {
 			if id == channelID {
-				return
+				already = true
+				break
 			}
 		}
-		// Prepend so the new channel appears at the top.
-		cat.Channels = append([]string{channelID}, cat.Channels...)
+		if !already {
+			cat.Channels = append([]string{channelID}, cat.Channels...)
+			changed = true
+		}
+		if !changed {
+			return
+		}
 		if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID,
 			[]*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
 			p.API.LogWarn("sidebar: failed to update category",
@@ -314,13 +366,32 @@ func (p *Plugin) ensureWebhookApprovalChannel() *model.Channel {
 }
 
 // ensureTeamCreationApprovalChannel returns the dedicated channel for team
-// creation requests. Created automatically in the root approval team.
+// creation requests. Created automatically in the root approval team. Always
+// forces the channel into the managed "Mattermost: Request Hub" sidebar
+// category for System Admins (same treatment as other ticket channels),
+// including when the channel already existed from an older install.
 func (p *Plugin) ensureTeamCreationApprovalChannel() *model.Channel {
-	return p.ensureNamedApprovalChannel(
+	ch := p.ensureNamedApprovalChannel(
 		"mattermost-team-requests",
 		"Mattermost: Team Requests",
 		"Team creation requests — System Admin review required.",
 	)
+	if ch != nil {
+		p.forceTicketChannelCategory(ch)
+	}
+	return ch
+}
+
+// forceTicketChannelCategory places ch at the top of each System Admin's
+// "Mattermost: Request Hub" sidebar category for ch's team. Does not add
+// membership — callers that need seeding should use addSystemAdminsToChannel.
+func (p *Plugin) forceTicketChannelCategory(ch *model.Channel) {
+	if ch == nil || ch.TeamId == "" {
+		return
+	}
+	for adminID := range p.systemAdminIDSet() {
+		p.addChannelToPermissionsCategory(adminID, ch.TeamId, ch.Id)
+	}
 }
 
 // ensureAuditChannel returns the dedicated channel for audit log entries.
@@ -381,18 +452,21 @@ func (p *Plugin) ensureTeamApprovalChannel(teamID string) (*model.Channel, error
 		return nil, errors.Wrap(appErr, "failed to create team approval channel")
 	}
 
-	p.addTeamAdminsToChannel(teamID, ch.Id)
+	p.addTeamApproversToChannel(teamID, ch.Id)
 	p.postChannelWelcomeMessage(ch, team)
 
 	return ch, nil
 }
 
-// addTeamAdminsToChannel adds every current Team Admin of teamID to channelID.
-// Called once when the channel is first created. Per-member failures are logged
-// but don't abort the rest — a partial add is better than no add.
-func (p *Plugin) addTeamAdminsToChannel(teamID, channelID string) {
+// addTeamApproversToChannel adds every Team Admin of teamID, plus every System
+// Admin who is a member of that team, to channelID. Places each in the managed
+// "Mattermost: Request Hub" sidebar category. Called when the per-team channel
+// is first created (and from the one-time sidebar migration). Per-member
+// failures are logged but don't abort the rest.
+func (p *Plugin) addTeamApproversToChannel(teamID, channelID string) {
+	sysAdmins := p.systemAdminIDSet()
 	const perPage = 200
-	for page := range 50 { // guard against runaway pagination on huge deployments
+	for page := range 50 {
 		members, appErr := p.API.GetTeamMembers(teamID, page, perPage)
 		if appErr != nil {
 			p.API.LogWarn("failed to list team members when seeding approval channel",
@@ -400,12 +474,15 @@ func (p *Plugin) addTeamAdminsToChannel(teamID, channelID string) {
 			return
 		}
 		for _, m := range members {
-			isAdmin := m.SchemeAdmin || slices.Contains(strings.Fields(m.Roles), model.TeamAdminRoleId)
-			if !isAdmin {
+			isTeamAdmin := m.SchemeAdmin || slices.Contains(strings.Fields(m.Roles), model.TeamAdminRoleId)
+			if !isTeamAdmin && !sysAdmins[m.UserId] {
+				continue
+			}
+			if m.UserId == p.botUserID {
 				continue
 			}
 			if _, appErr := p.API.AddChannelMember(channelID, m.UserId); appErr != nil {
-				p.API.LogWarn("failed to add team admin to approval channel",
+				p.API.LogWarn("failed to add approver to team approval channel",
 					"channel_id", channelID, "user_id", m.UserId, "error", appErr.Error())
 				continue
 			}
@@ -415,6 +492,11 @@ func (p *Plugin) addTeamAdminsToChannel(teamID, channelID string) {
 			return
 		}
 	}
+}
+
+// addTeamAdminsToChannel is kept as a thin alias for older call sites / tests.
+func (p *Plugin) addTeamAdminsToChannel(teamID, channelID string) {
+	p.addTeamApproversToChannel(teamID, channelID)
 }
 
 // postChannelWelcomeMessage posts an orientation message in the newly-created
@@ -438,37 +520,133 @@ func (p *Plugin) postChannelWelcomeMessage(ch *model.Channel, team *model.Team) 
 }
 
 // ensureAllTeamApprovalChannels creates per-team approval channels for every
-// team that doesn't have one yet. Called in a background goroutine from
-// OnActivate when PerTeamApprovalChannels is enabled. Best-effort: failures
-// for individual teams are logged but don't abort the sweep.
+// team that has at least one Team Admin or System Admin member. Teams with no
+// local approvers are skipped (their channel requests fall back to the root
+// approval channel). Called from OnActivate / config enable when
+// PerTeamApprovalChannels is on. Best-effort: failures for individual teams
+// are logged but don't abort the sweep.
 func (p *Plugin) ensureAllTeamApprovalChannels() {
 	teams, appErr := p.API.GetTeams()
 	if appErr != nil {
 		p.API.LogWarn("failed to list teams for approval-channel sweep", "error", appErr.Error())
 		return
 	}
+	created := 0
+	skipped := 0
 	for _, team := range teams {
+		if !p.hasActiveTeamApprovers(team.Id) {
+			skipped++
+			continue
+		}
 		if _, err := p.ensureTeamApprovalChannel(team.Id); err != nil {
 			p.API.LogWarn("failed to ensure approval channel for team",
 				"team_id", team.Id, "team_name", team.Name, "error", err.Error())
+			continue
 		}
+		created++
 	}
-	p.API.LogInfo("per-team approval channel sweep complete", "teams", len(teams))
+	p.API.LogInfo("per-team approval channel sweep complete",
+		"teams", len(teams), "ensured", created, "skipped_no_approvers", skipped)
 }
 
-// UserHasJoinedTeam ensures that a Team Admin who joins (or is added to) a team
-// is automatically added to the team's approval channel. This handles new team
-// creation (the creator joins as team admin) and explicit admin additions. It
-// does NOT handle promotion of an existing member to team admin — use the
-// /governance sync-team-channels command to correct drift from role changes.
-func (p *Plugin) UserHasJoinedTeam(_ *plugin.Context, teamMember *model.TeamMember, _ *model.User) {
+// migrateTicketChannelsToManagedCategory is a one-shot sweep: for every plugin
+// ticket/approval channel (including mattermost-team-requests), ensure each
+// member has that channel in the managed "Mattermost: Request Hub" sidebar
+// category (renaming a short-lived "Mattermost Requests" category if present).
+// Idempotent via KV flag (v2 re-runs after the temporary rename).
+func (p *Plugin) migrateTicketChannelsToManagedCategory() {
+	if migrated, _ := p.API.KVGet(kvSidebarCategoryMigrated); migrated != nil {
+		return
+	}
+
+	channelName := p.getConfiguration().TeamChannelName()
+	var channels []*model.Channel
+
+	for _, ensure := range []func() *model.Channel{
+		p.ensureRootApprovalChannel,
+		p.ensureBotApprovalChannel,
+		p.ensureWebhookApprovalChannel,
+		p.ensureTeamCreationApprovalChannel,
+		p.ensureAuditChannel,
+	} {
+		if ch := ensure(); ch != nil {
+			channels = append(channels, ch)
+		}
+	}
+
+	if teams, appErr := p.API.GetTeams(); appErr == nil {
+		for _, team := range teams {
+			if ch, getErr := p.API.GetChannelByName(team.Id, channelName, false); getErr == nil && ch != nil {
+				channels = append(channels, ch)
+			}
+		}
+	} else {
+		p.API.LogWarn("sidebar migration: failed to list teams", "error", appErr.Error())
+	}
+
+	seen := map[string]bool{}
+	placed := 0
+	for _, ch := range channels {
+		if ch == nil || ch.Id == "" || seen[ch.Id] {
+			continue
+		}
+		seen[ch.Id] = true
+		placed += p.placeChannelMembersInManagedCategory(ch)
+	}
+
+	_ = p.API.KVSet(kvSidebarCategoryMigrated, []byte("1"))
+	p.API.LogInfo("sidebar migration: ticket channels forced into Mattermost: Request Hub category",
+		"channels", len(seen), "member_placements", placed)
+}
+
+// placeChannelMembersInManagedCategory walks channel members and ensures each
+// is in the managed sidebar category for that channel's team. Returns how many
+// members were processed (best-effort).
+func (p *Plugin) placeChannelMembersInManagedCategory(ch *model.Channel) int {
+	if ch == nil || ch.TeamId == "" {
+		return 0
+	}
+	count := 0
+	const perPage = 200
+	for page := range 50 {
+		members, appErr := p.API.GetUsersInChannel(ch.Id, "username", page, perPage)
+		if appErr != nil {
+			p.API.LogWarn("sidebar migration: failed to list channel members",
+				"channel_id", ch.Id, "error", appErr.Error())
+			return count
+		}
+		for _, u := range members {
+			if u.Id == p.botUserID {
+				continue
+			}
+			p.addChannelToPermissionsCategory(u.Id, ch.TeamId, ch.Id)
+			count++
+		}
+		if len(members) < perPage {
+			return count
+		}
+	}
+	return count
+}
+
+// UserHasJoinedTeam ensures that a Team Admin or System Admin who joins (or is
+// added to) a team is automatically added to the team's approval channel. This
+// handles new team creation and explicit admin additions. It does NOT handle
+// promotion of an existing member to team admin.
+func (p *Plugin) UserHasJoinedTeam(_ *plugin.Context, teamMember *model.TeamMember, actor *model.User) {
 	if !p.getConfiguration().PerTeamApprovalChannels {
 		return
 	}
 
-	isAdmin := teamMember.SchemeAdmin ||
+	isTeamAdmin := teamMember.SchemeAdmin ||
 		slices.Contains(strings.Fields(teamMember.Roles), model.TeamAdminRoleId)
-	if !isAdmin {
+	isSysAdmin := false
+	if actor != nil && actor.Id == teamMember.UserId {
+		isSysAdmin = actor.IsSystemAdmin()
+	} else if u, appErr := p.API.GetUser(teamMember.UserId); appErr == nil {
+		isSysAdmin = u.IsSystemAdmin()
+	}
+	if !isTeamAdmin && !isSysAdmin {
 		return
 	}
 
@@ -480,7 +658,7 @@ func (p *Plugin) UserHasJoinedTeam(_ *plugin.Context, teamMember *model.TeamMemb
 	}
 
 	if _, appErr := p.API.AddChannelMember(ch.Id, teamMember.UserId); appErr != nil {
-		p.API.LogWarn("failed to add joining team admin to approval channel",
+		p.API.LogWarn("failed to add joining approver to approval channel",
 			"channel_id", ch.Id, "user_id", teamMember.UserId, "error", appErr.Error())
 		return
 	}

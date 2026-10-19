@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 
 // PrefixEditor: MM System Console custom setting for the channel
 // domain-prefix list. Table row per prefix. No regex — the admin only
-// picks a MAX LENGTH (2..32 chars). Character class is fixed at
+// picks a MAX LENGTH (2..48 chars). Character class is fixed at
 // letters + digits + dashes because MM channel URLs are restricted to
 // that anyway (and lowercased at request time).
 //
@@ -29,9 +29,13 @@ type PrefixRow = {
     maxLength: number;
 };
 
-const DEFAULT_MAX_LENGTH = 24;
+const DEFAULT_MAX_LENGTH = 48;
 const MIN_MAX_LENGTH = 2;
-const MAX_MAX_LENGTH = 32;
+const MAX_MAX_LENGTH = 48;
+// Previous shipped default. Persisted configs keep |24 across uploads;
+// bump those rows to DEFAULT_MAX_LENGTH so System Console matches the
+// server-side migration (custom lengths other than 24 are left alone).
+const LEGACY_DEFAULT_MAX_LENGTH = 24;
 
 // Preset packs — populate the table with sensible starter values.
 // Clicking one UPSERTS its rows: prefixes already in the table are
@@ -42,40 +46,40 @@ const PRESET_PACKS: Array<{name: string; description: string; rows: PrefixRow[]}
         name: 'SRE / Ops',
         description: 'Operational + incident-response channels',
         rows: [
-            {prefix: 'ops-', description: 'Operational channels', maxLength: 24},
-            {prefix: 'incident-', description: 'Incident response', maxLength: 24},
-            {prefix: 'post-', description: 'Post-mortem channels', maxLength: 24},
-            {prefix: 'runbook-', description: 'Runbook discussion', maxLength: 24},
+            {prefix: 'ops-', description: 'Operational channels', maxLength: 48},
+            {prefix: 'incident-', description: 'Incident response', maxLength: 48},
+            {prefix: 'post-', description: 'Post-mortem channels', maxLength: 48},
+            {prefix: 'runbook-', description: 'Runbook discussion', maxLength: 48},
         ],
     },
     {
         name: 'Product org',
         description: 'Team, project, launch, design channels',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
-            {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
-            {prefix: 'launch-', description: 'Launch coordination', maxLength: 24},
-            {prefix: 'design-', description: 'Design reviews', maxLength: 24},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 48},
+            {prefix: 'project-', description: 'Project workstreams', maxLength: 48},
+            {prefix: 'launch-', description: 'Launch coordination', maxLength: 48},
+            {prefix: 'design-', description: 'Design reviews', maxLength: 48},
         ],
     },
     {
         name: 'Support / Success',
         description: 'Customer help + onboarding + VIP channels',
         rows: [
-            {prefix: 'help-', description: 'Customer help channels', maxLength: 24},
-            {prefix: 'onboard-', description: 'Customer onboarding', maxLength: 24},
-            {prefix: 'vip-', description: 'Enterprise account channels', maxLength: 24},
+            {prefix: 'help-', description: 'Customer help channels', maxLength: 48},
+            {prefix: 'onboard-', description: 'Customer onboarding', maxLength: 48},
+            {prefix: 'vip-', description: 'Enterprise account channels', maxLength: 48},
         ],
     },
     {
         name: 'General org',
         description: 'Broad-purpose starter (team + channel + project + announcements + general)',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
-            {prefix: 'channel-', description: 'General purpose channels', maxLength: 24},
-            {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
-            {prefix: 'announcements-', description: 'Read-only announcements', maxLength: 24},
-            {prefix: 'general-', description: 'General-purpose channels', maxLength: 24},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 48},
+            {prefix: 'channel-', description: 'General purpose channels', maxLength: 48},
+            {prefix: 'project-', description: 'Project workstreams', maxLength: 48},
+            {prefix: 'announcements-', description: 'Read-only announcements', maxLength: 48},
+            {prefix: 'general-', description: 'General-purpose channels', maxLength: 48},
         ],
     },
 ];
@@ -106,13 +110,21 @@ function parseRows(raw: string): PrefixRow[] {
         let maxLength = DEFAULT_MAX_LENGTH;
         if (raw3 !== '') {
             if ((/^\d+$/).test(raw3)) {
-                maxLength = clampLength(parseInt(raw3, 10));
+                let n = parseInt(raw3, 10);
+                if (n === LEGACY_DEFAULT_MAX_LENGTH) {
+                    n = DEFAULT_MAX_LENGTH;
+                }
+                maxLength = clampLength(n);
             } else {
                 // Legacy regex — try to extract the upper bound from
                 // "{2,N}" so a converted setting keeps the same limit.
                 const m = raw3.match(/\{\s*\d+\s*,\s*(\d+)\s*\}/);
                 if (m) {
-                    maxLength = clampLength(parseInt(m[1], 10));
+                    let n = parseInt(m[1], 10);
+                    if (n === LEGACY_DEFAULT_MAX_LENGTH) {
+                        n = DEFAULT_MAX_LENGTH;
+                    }
+                    maxLength = clampLength(n);
                 }
             }
         }
@@ -169,6 +181,24 @@ export const PrefixEditor: React.FC<Props> = ({id, value, disabled, onChange, se
     useEffect(() => {
         setRows(parseRows(value ?? ''));
     }, [value]);
+
+    // If persisted value still has the legacy |24 default, rewrite via
+    // onChange + setSaveNeeded so System Console shows 48 even when the
+    // server-side migration hasn't persisted yet (or Save is still pending).
+    useEffect(() => {
+        if (disabled) {
+            return;
+        }
+        const raw = value ?? '';
+        if (!raw.includes(`|${LEGACY_DEFAULT_MAX_LENGTH}`)) {
+            return;
+        }
+        const next = serializeRows(parseRows(raw));
+        if (next !== raw) {
+            onChange(id, next);
+            setSaveNeeded?.();
+        }
+    }, [value, id, onChange, setSaveNeeded, disabled]);
 
     // Ensure the preview always has a valid selected prefix.
     useEffect(() => {

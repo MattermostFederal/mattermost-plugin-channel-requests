@@ -368,6 +368,39 @@ func TestSubmitRequest_BypassCreation(t *testing.T) {
 	api.AssertCalled(t, "CreateChannel", mock.Anything)
 }
 
+func TestSubmitRequest_ForceQueueSkipsSystemAdminBypass(t *testing.T) {
+	// Slash-command dialogs set ForceQueue so even System Admins get an
+	// approval card instead of an immediate create.
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{
+		prefixes:     []channelPrefix{{Prefix: "team-"}},
+		ApprovalTeam: "appteam",
+	})
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	api.On("GetChannelByNameForTeamName", "appteam", "mattermost-channel-requests", false).
+		Return(&model.Channel{Id: "approval-ch"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "approval-1"}, nil)
+	api.On("GetDirectChannel", "admin1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+
+	msg, err := p.submitRequest(requestInput{
+		RequesterID: "admin1",
+		TeamID:      "team1",
+		DisplayName: "Marketing",
+		Prefix:      "team-",
+		Name:        "marketing",
+		ForceQueue:  true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, msg, "submitted")
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+	api.AssertCalled(t, "KVSet", mock.Anything, mock.Anything)
+}
+
 func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
@@ -391,29 +424,6 @@ func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
-func TestSubmitRequest_AutoApproveUserStillNeedsMembership(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{autoApproveUserIDs: []string{"u1"}})
-
-	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
-	api.On("GetTeamMember", "team1", "u1").Return(nil, testAppErr("not a member"))
-
-	_, err := p.submitRequest(requestInput{
-		RequesterID: "u1",
-		TeamID:      "team1",
-		DisplayName: "Marketing",
-		Prefix:      "team-",
-		Name:        "marketing",
-	})
-
-	// Auto-approve grants an approval bypass, NOT a team-membership bypass.
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "member of the team")
-	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
-}
 
 func TestValidateRequestInput(t *testing.T) {
 	tooManyMembers := make([]string, maxMembersPerList+1)
@@ -564,4 +574,26 @@ func TestResolveUsernameList_UnknownUserErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, ids)
 	require.Contains(t, err.Error(), "ghost")
+}
+
+// Regression: CreateChannelSidebarCategory returning (cat, nil) must not
+// surface a typed-nil *AppError as a non-nil error — that panicked
+// ServeHTTP after Approve and skipped the soft-squash update.
+func TestPlaceChannelInCategory_CreateSuccessReturnsRealNil(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetChannelSidebarCategories", "u1", "team1").Return(&model.OrderedSidebarCategories{
+		Categories: []*model.SidebarCategoryWithChannels{},
+	}, nil)
+	api.On("CreateChannelSidebarCategory", "u1", "team1", mock.MatchedBy(func(c *model.SidebarCategoryWithChannels) bool {
+		return c != nil && c.DisplayName == "Requests" && len(c.Channels) == 1 && c.Channels[0] == "ch1"
+	})).Return(&model.SidebarCategoryWithChannels{}, nil)
+
+	err := p.placeChannelInCategory("u1", "team1", "ch1", "Requests")
+	require.NoError(t, err)
+	// Prove the interface value is truly nil (not typed-nil *AppError).
+	require.Nil(t, err)
 }

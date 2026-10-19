@@ -1,5 +1,6 @@
 import type {Store} from 'redux';
 
+import {fetchEnabledRequestTypes} from './client';
 import {makeDebug} from './debug';
 import {openTeamAdminRequestModal, openTeamCreationModal} from './store';
 import type {GlobalState} from './store';
@@ -221,6 +222,171 @@ function processTeamMenu(store: Store): void {
     }
 }
 
+const REQUEST_TEAM_ADD_MARK = 'data-mm-plugin-request-team-add';
+const REQUEST_TEAM_ADD_ID = 'mmPluginRequestTeamAddButton';
+
+function nativeCreateTeamButtonPresent(): boolean {
+    return Boolean(
+        document.getElementById('create_teamTeamButton') ||
+        document.querySelector('.team-sidebar a[href*="create_team"], #teamSidebarWrapper a[href*="create_team"]'),
+    );
+}
+
+function removeInjectedRequestTeamAdd(): void {
+    document.getElementById(REQUEST_TEAM_ADD_ID)?.remove();
+}
+
+// injectRequestTeamAddButton puts a Mattermost-styled "+" into the team rail
+// when the native Create Team button is missing (CREATE_TEAM permission stripped).
+// Clicks open the Request a Team modal.
+function injectRequestTeamAddButton(store: Store): void {
+    if (isSystemAdmin(store)) {
+        removeInjectedRequestTeamAdd();
+        return;
+    }
+    if (nativeCreateTeamButtonPresent()) {
+        // Native create button is visible — intercept handles it; don't duplicate.
+        removeInjectedRequestTeamAdd();
+        return;
+    }
+
+    const wrapper =
+        document.getElementById('teamSidebarWrapper') ??
+        document.querySelector<HTMLElement>('.team-sidebar .team-wrapper');
+    if (!wrapper) {
+        return;
+    }
+    if (document.getElementById(REQUEST_TEAM_ADD_ID)) {
+        return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'team-container special';
+    container.id = REQUEST_TEAM_ADD_ID;
+    container.setAttribute(REQUEST_TEAM_ADD_MARK, 'true');
+
+    const link = document.createElement('a');
+    link.href = '#';
+    link.setAttribute('aria-label', 'Request a Team');
+    link.setAttribute('title', 'Request a Team');
+    link.setAttribute(REQUEST_TEAM_ADD_MARK, 'true');
+
+    const btn = document.createElement('div');
+    btn.className = 'team-btn team-btn__add';
+    btn.innerHTML = '<i class="icon icon-plus" role="img" aria-hidden="true"></i>';
+
+    link.appendChild(btn);
+    container.appendChild(link);
+
+    link.addEventListener(
+        'click',
+        (event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            fetchEnabledRequestTypes().then((enabled) => {
+                if (!enabled.team) {
+                    debug('team requests disabled — injected + ignored');
+                    return;
+                }
+                store.dispatch(openTeamCreationModal());
+                debug('injected team-rail + opened Request Team modal');
+            });
+        },
+        true,
+    );
+
+    // After team list / after join button if present.
+    const selectTeam = document.getElementById('select_teamTeamButton')?.closest('.team-container');
+    if (selectTeam?.parentElement === wrapper) {
+        wrapper.insertBefore(container, selectTeam);
+    } else {
+        wrapper.appendChild(container);
+    }
+    debug('injected Request a Team + into team rail');
+}
+
+// installTeamSidebarAddOverride:
+//   1. Intercepts native #create_teamTeamButton → Request a Team (non-admins).
+//   2. Injects a synthetic + when Mattermost hides create (no CREATE_TEAM).
+// Join (#select_teamTeamButton) is never intercepted.
+export function installTeamSidebarAddOverride(store: Store): void {
+    debug('installing team-sidebar + override');
+
+    // Always restore a + when Mattermost hid Create Team (no CREATE_TEAM).
+    // AllowTeamRequests only gates the modal on click — not button visibility —
+    // so an older saved "off" config can't leave the rail empty.
+    const refresh = () => {
+        if (isSystemAdmin(store)) {
+            removeInjectedRequestTeamAdd();
+            return;
+        }
+        injectRequestTeamAddButton(store);
+    };
+
+    document.addEventListener(
+        'click',
+        (event) => {
+            if (isSystemAdmin(store)) {
+                return;
+            }
+            const target = event.target as HTMLElement | null;
+            if (!target) {
+                return;
+            }
+
+            // Injected button handles its own click.
+            if (target.closest(`[${REQUEST_TEAM_ADD_MARK}]`)) {
+                return;
+            }
+
+            const createLink =
+                target.closest<HTMLAnchorElement>('#create_teamTeamButton') ??
+                target.closest<HTMLAnchorElement>('a[href*="create_team"]');
+            if (!createLink) {
+                return;
+            }
+
+            if (!createLink.closest('.team-sidebar, #teamSidebarWrapper')) {
+                if (!createLink.querySelector('.team-btn__add') && !createLink.id.includes('create_team')) {
+                    return;
+                }
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            fetchEnabledRequestTypes().then((enabled) => {
+                if (!enabled.team) {
+                    debug('team requests disabled — ignoring team-sidebar + click');
+                    return;
+                }
+                store.dispatch(openTeamCreationModal());
+                debug('routed team-sidebar + (create_team) to Request Team modal');
+            });
+        },
+        true,
+    );
+
+    let scheduled = false;
+    const observer = new MutationObserver(() => {
+        if (scheduled) {
+            return;
+        }
+        scheduled = true;
+        requestAnimationFrame(() => {
+            scheduled = false;
+            refresh();
+        });
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+
+    // Team rail often mounts after plugin init — retry a few times.
+    refresh();
+    setTimeout(refresh, 500);
+    setTimeout(refresh, 2000);
+    setTimeout(refresh, 5000);
+}
+
 export function installTeamMenuOverride(store: Store): void {
     debug('installing team-menu override');
 
@@ -250,7 +416,7 @@ export function installTeamMenuOverride(store: Store): void {
     setTimeout(() => {
         if (!menuFoundOnce) {
             console.warn(
-                '[mattermost-permissions] Team sidebar dropdown not found after 10s. ' +
+                '[mattermost-request-hub] Team sidebar dropdown not found after 10s. ' +
                 '"Request a Team" and "Request Team Admin" labels may not be working. ' +
                 'Check whether Mattermost changed its team menu DOM structure.',
             );
@@ -271,11 +437,13 @@ export function installTeamMenuOverride(store: Store): void {
     });
 
     // Capture-phase listener: intercepts clicks on the relabeled "Create a team"
-    // item and routes them to the team creation request modal.
+    // item and routes them to the team creation request modal (when enabled).
     document.addEventListener(
         'click',
         (event) => {
             if (isSystemAdmin(store)) {
+                // System Admins keep the native Create Team flow — the plugin
+                // AllowTeamRequests toggle only gates the request/UI paths.
                 return;
             }
             const target = event.target as HTMLElement | null;
@@ -291,8 +459,16 @@ export function installTeamMenuOverride(store: Store): void {
             event.preventDefault();
             event.stopImmediatePropagation();
             document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-            store.dispatch(openTeamCreationModal());
-            debug('routed "Create a team" click to Request Team modal');
+
+            // Honor AllowTeamRequests — don't open a doomed modal when disabled.
+            fetchEnabledRequestTypes().then((enabled) => {
+                if (!enabled.team) {
+                    debug('team requests disabled — ignoring Create Team click');
+                    return;
+                }
+                store.dispatch(openTeamCreationModal());
+                debug('routed "Create a team" click to Request Team modal');
+            });
         },
         true,
     );

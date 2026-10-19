@@ -17,8 +17,8 @@ export type ChannelRequestPayload = {
     // them via UpdateChannelMemberRoles at creation time.
     admin_members: string[];
 
-    // category is the optional sidebar category name to place the channel
-    // in on approval. Empty string means no placement.
+    // category is the optional sidebar category name to place the channel in
+    // on approval. Matched case-insensitively; created per user if missing.
     category?: string;
 };
 
@@ -86,6 +86,8 @@ export type EnabledRequestTypes = {
     channelAdmin: boolean;
     team: boolean;
     teamAdmin: boolean;
+    teamMember: boolean;
+    teamGuest: boolean;
     bot: boolean;
     webhook: boolean;
 };
@@ -97,10 +99,12 @@ export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
     const failOpen: EnabledRequestTypes = {
         channel: true,
         channelAdmin: true,
-        team: false,
-        teamAdmin: false,
-        bot: false,
-        webhook: false,
+        team: true,
+        teamAdmin: true,
+        teamMember: true,
+        teamGuest: false,
+        bot: true,
+        webhook: true,
     };
     try {
         const response = await fetch(`/plugins/${manifest.id}/api/v1/config`, {
@@ -117,6 +121,8 @@ export async function fetchEnabledRequestTypes(): Promise<EnabledRequestTypes> {
             channelAdmin: Boolean(body?.channel_admin),
             team: Boolean(body?.team),
             teamAdmin: Boolean(body?.team_admin),
+            teamMember: Boolean(body?.team_member),
+            teamGuest: Boolean(body?.team_guest),
             bot: Boolean(body?.bot),
             webhook: Boolean(body?.webhook),
         };
@@ -218,6 +224,50 @@ export async function submitTeamAdminRequest(payload: TeamAdminRequestPayload): 
         return {error: `Request failed (${response.status}). Please try again.`};
     }
     return body;
+}
+
+export type TeamMemberRequestPayload = {
+    team_id: string;
+    nominees: string[];
+    reason?: string;
+};
+
+export type TeamGuestRequestPayload = {
+    team_id: string;
+    email?: string;
+    channel_ids: string[];
+    reason?: string;
+};
+
+async function postJSON(path: string, payload: unknown): Promise<ChannelRequestResult> {
+    const response = await fetch(`/plugins/${manifest.id}${path}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+    });
+    let body: ChannelRequestResult = {};
+    try {
+        body = await response.json();
+    } catch {
+        // fall through
+    }
+    if (!response.ok && !body.error) {
+        return {error: `Request failed (${response.status}). Please try again.`};
+    }
+    return body;
+}
+
+export async function submitTeamMemberRequest(payload: TeamMemberRequestPayload): Promise<ChannelRequestResult> {
+    return postJSON('/api/v1/submit_team_member_request', payload);
+}
+
+export async function submitTeamGuestRequest(payload: TeamGuestRequestPayload): Promise<ChannelRequestResult> {
+    return postJSON('/api/v1/submit_team_guest_request', payload);
 }
 
 export type BotRequestPayload = {

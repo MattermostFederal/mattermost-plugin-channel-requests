@@ -11,14 +11,14 @@ import (
 
 func TestSubmitTeamAdminRequest_RequiresTeam(t *testing.T) {
 	p := newTestPlugin(&plugintest.API{})
-	_, err := p.submitTeamAdminRequest("u_req", "", []string{"u1"})
+	_, err := p.submitTeamAdminRequest("u_req", "", []string{"u1"}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "team is required")
 }
 
 func TestSubmitTeamAdminRequest_RequiresNominees(t *testing.T) {
 	p := newTestPlugin(&plugintest.API{})
-	_, err := p.submitTeamAdminRequest("u_req", "team1", []string{"", "  "})
+	_, err := p.submitTeamAdminRequest("u_req", "team1", []string{"", "  "}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least one person")
 }
@@ -34,7 +34,7 @@ func TestSubmitTeamAdminRequest_RequesterMustBeTeamMember(t *testing.T) {
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("GetTeamMember", "team1", "u_req").Return(nil, testAppErr("not a member"))
 
-	_, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"})
+	_, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"}, false)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "member of the team")
@@ -55,7 +55,7 @@ func TestSubmitTeamAdminRequest_SystemAdminBypassesApproval(t *testing.T) {
 	api.On("CreateTeamMember", "team1", "u_nom").Return(&model.TeamMember{}, nil)
 	api.On("UpdateTeamMemberRoles", "team1", "u_nom", teamAdminRoles).Return(&model.TeamMember{}, nil)
 
-	msg, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"})
+	msg, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	require.Contains(t, msg, "Sales")
@@ -82,10 +82,16 @@ func TestSubmitTeamAdminRequest_StoresAndPostsRequest(t *testing.T) {
 	// ensureTeamCreationApprovalChannel → ensureNamedApprovalChannel.
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
 	api.On("GetChannelByName", "appteam-id", "mattermost-team-requests", false).
-		Return(&model.Channel{Id: "team-req-ch"}, nil)
-	// systemAdminMentions: list admins, then fetch each for username.
+		Return(&model.Channel{Id: "team-req-ch", TeamId: "appteam-id"}, nil)
+	// systemAdminMentions + forceTicketChannelCategory share GetUsers.
 	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
 	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "root"}, nil)
+	api.On("GetChannelSidebarCategories", "sys1", "appteam-id").Return(&model.OrderedSidebarCategories{
+		Categories: []*model.SidebarCategoryWithChannels{{
+			SidebarCategory: model.SidebarCategory{DisplayName: "Mattermost: Request Hub"},
+			Channels:        []string{"team-req-ch"},
+		}},
+	}, nil).Maybe()
 
 	// Approval post captured to verify destination.
 	var approvalPost *model.Post
@@ -99,7 +105,7 @@ func TestSubmitTeamAdminRequest_StoresAndPostsRequest(t *testing.T) {
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "req-dm"}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dm-post-1"}, nil)
 
-	msg, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"})
+	msg, err := p.submitTeamAdminRequest("u_req", "team1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	require.Contains(t, msg, "submitted for approval")

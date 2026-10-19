@@ -105,6 +105,7 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeWebhook,
 		})
 	}
 

@@ -5,7 +5,7 @@ import type {Store} from 'redux';
 import type {PluginRegistry} from 'types/mattermost-webapp';
 
 import {TeamPicker} from './ApprovalChannelPicker';
-import {AutoApprovePicker} from './AutoApprovePicker';
+import {fetchEnabledRequestTypes} from './client';
 import {installChannelCreationOverride} from './channelCreationOverride';
 import {HeaderIcon} from './HeaderIcon';
 import {installIntegrationsPageOverride} from './integrationsPageOverride';
@@ -18,6 +18,8 @@ import {RequestHubModal} from './RequestHubModal';
 import {RequestIncomingWebhookModal} from './RequestIncomingWebhookModal';
 import {RequestOutgoingWebhookModal} from './RequestOutgoingWebhookModal';
 import {RequestTeamAdminModal} from './RequestTeamAdminModal';
+import {RequestTeamGuestModal} from './RequestTeamGuestModal';
+import {RequestTeamMemberModal} from './RequestTeamMemberModal';
 import {RequestTeamModal} from './RequestTeamModal';
 import reducer, {
     getCurrentTeamId,
@@ -32,9 +34,11 @@ import reducer, {
     openRequestModal,
     openTeamAdminRequestModal,
     openTeamCreationModal,
+    openTeamGuestRequestModal,
+    openTeamMemberRequestModal,
 } from './store';
 import type {GlobalState} from './store';
-import {installTeamMenuOverride} from './teamMenuOverride';
+import {installTeamMenuOverride, installTeamSidebarAddOverride} from './teamMenuOverride';
 
 export default class Plugin {
     public async initialize(registry: PluginRegistry, store: Store) {
@@ -45,6 +49,8 @@ export default class Plugin {
         registry.registerRootComponent(RequestChannelAdminModal);
         registry.registerRootComponent(RequestTeamModal);
         registry.registerRootComponent(RequestTeamAdminModal);
+        registry.registerRootComponent(RequestTeamMemberModal);
+        registry.registerRootComponent(RequestTeamGuestModal);
         registry.registerRootComponent(RequestBotModal);
         registry.registerRootComponent(RequestIncomingWebhookModal);
         registry.registerRootComponent(RequestOutgoingWebhookModal);
@@ -82,6 +88,10 @@ export default class Plugin {
         //     who are not already a Team Admin or System Admin.
         safe('team-menu override', () => installTeamMenuOverride(store));
 
+        // Team rail "+" (Create a Team) → same Request a Team modal for non-admins.
+        // Native /select_team (join other teams) is not intercepted.
+        safe('team-sidebar add override', () => installTeamSidebarAddOverride(store));
+
         // Integrations page override: intercepts clicks on Incoming Webhooks,
         // Outgoing Webhooks, and Bot Accounts links for non-System Admin users,
         // opening the request modal instead of the native creation flow.
@@ -92,8 +102,23 @@ export default class Plugin {
             () => {
                 store.dispatch(openHubModal());
             },
-            'Requests',
-            'Open the request hub — channel, team, bot, and webhook requests',
+            'Request Hub',
+            'Open Mattermost Request Hub — channel, team, membership, guest, bot, and webhook requests',
+        ));
+
+        // "Request a Channel" sits with the other request items under More actions.
+        // (Sidebar "+" and the Requests hub button are the other entry points.)
+        safe('channel-header menu: request channel', () => registry.registerChannelHeaderMenuAction(
+            'Request a Channel',
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.channel) {
+                    // eslint-disable-next-line no-console
+                    console.info('[channel-requests] Channel requests are disabled by an administrator.');
+                    return;
+                }
+                store.dispatch(openRequestModal());
+            },
         ));
 
         // Channel name dropdown menu item. Members who can't manage the channel
@@ -114,7 +139,13 @@ export default class Plugin {
 
         safe('channel-header menu: request team', () => registry.registerChannelHeaderMenuAction(
             'Request a Team',
-            () => {
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.team) {
+                    // eslint-disable-next-line no-console
+                    console.info('[channel-requests] Team requests are disabled by an administrator.');
+                    return;
+                }
                 store.dispatch(openTeamCreationModal());
             },
         ));
@@ -128,6 +159,36 @@ export default class Plugin {
             (state: GlobalState) => {
                 const teamId = getCurrentTeamId(state);
                 return !isCurrentUserTeamAdmin(state, teamId);
+            },
+        ));
+
+        safe('channel-header menu: request team members', () => registry.registerChannelHeaderMenuAction(
+            'Request Team Members',
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.teamMember) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Team member requests are disabled by an administrator.');
+                    return;
+                }
+                store.dispatch(openTeamMemberRequestModal());
+            },
+        ));
+
+        safe('channel-header menu: request guest invite', () => registry.registerChannelHeaderMenuAction(
+            'Request Guest Invite',
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.teamGuest) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Team guest requests are disabled by an administrator.');
+                    return;
+                }
+                store.dispatch(openTeamGuestRequestModal());
+            },
+            (state: GlobalState) => {
+                const type = getChannelType(state, getCurrentChannelId(state));
+                return type === 'O' || type === 'P';
             },
         ));
 
@@ -174,11 +235,6 @@ export default class Plugin {
             registry.registerAdminConsoleCustomSetting(
                 'ChannelNamePrefixes',
                 PrefixEditor,
-                {showTitle: true},
-            );
-            registry.registerAdminConsoleCustomSetting(
-                'AutoApproveUserIDs',
-                AutoApprovePicker,
                 {showTitle: true},
             );
         }

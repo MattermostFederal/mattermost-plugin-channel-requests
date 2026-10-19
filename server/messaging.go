@@ -34,6 +34,12 @@ type threadAnchor struct {
 	ApprovalChannelID string `json:"ac"`
 	DMRootPostID      string `json:"dp"`
 	DMChannelID       string `json:"dc"`
+	// Kind is the request type constant (channel, bot, …). Empty on legacy
+	// anchors written before this field existed.
+	Kind string `json:"k,omitempty"`
+	// ScopeID is the channel ID for channel-admin tickets so Team Admins of
+	// that channel's team can relay. Unused for other kinds.
+	ScopeID string `json:"s,omitempty"`
 }
 
 // storeTicketLookups writes the two reverse-lookup KV entries that let
@@ -147,7 +153,9 @@ func (p *Plugin) forwardDMReplyToTicketThread(post *model.Post, rawAnchor []byte
 }
 
 // forwardThreadReplyToRequesterDM posts the reviewer's approval thread reply
-// as a bot message in the requester's DM ticket thread.
+// as a bot message in the requester's DM ticket thread. Only eligible
+// approvers/reviewers for that ticket kind are relayed — other posts in the
+// approval channel stay local so non-approvers cannot impersonate reviewers.
 func (p *Plugin) forwardThreadReplyToRequesterDM(post *model.Post, rawAnchor []byte) {
 	var anchor threadAnchor
 	if err := json.Unmarshal(rawAnchor, &anchor); err != nil || anchor.DMRootPostID == "" {
@@ -158,6 +166,9 @@ func (p *Plugin) forwardThreadReplyToRequesterDM(post *model.Post, rawAnchor []b
 	if appErr != nil {
 		return
 	}
+	if !p.canRelayApprovalThreadReply(poster, anchor) {
+		return
+	}
 
 	_, _ = p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
@@ -165,6 +176,40 @@ func (p *Plugin) forwardThreadReplyToRequesterDM(post *model.Post, rawAnchor []b
 		RootId:    anchor.DMRootPostID,
 		Message:   fmt.Sprintf("**Message from @%s:** %s", poster.Username, post.Message),
 	})
+}
+
+// canRelayApprovalThreadReply mirrors Approve-button authz for the ticket kind
+// stored on the anchor. Legacy anchors without Kind fall back to any reviewer
+// pool (channel approvers, System Admin, or two-step attribute holders).
+func (p *Plugin) canRelayApprovalThreadReply(user *model.User, anchor threadAnchor) bool {
+	if user == nil {
+		return false
+	}
+	switch anchor.Kind {
+	case requestTypeChannel:
+		return p.canApprove(user)
+	case requestTypeChannelAdmin:
+		return p.canApproveAdminRequest(user, anchor.ScopeID)
+	case requestTypeTeam, requestTypeTeamAdmin, requestTypeTeamMember, requestTypeTeamGuest:
+		return user.IsSystemAdmin()
+	case requestTypeBot, requestTypeWebhook:
+		canSec, errSec := p.canApproveStep(user, stepSecurity)
+		canSys, errSys := p.canApproveStep(user, stepSystem)
+		if errSec != nil || errSys != nil {
+			return false
+		}
+		return canSec || canSys
+	default:
+		if user.IsSystemAdmin() || p.canApprove(user) {
+			return true
+		}
+		canSec, errSec := p.canApproveStep(user, stepSecurity)
+		canSys, errSys := p.canApproveStep(user, stepSystem)
+		if errSec != nil || errSys != nil {
+			return false
+		}
+		return canSec || canSys
+	}
 }
 
 // notifyRequesterInThreadCard updates the root DM post (the yellow "pending" card)

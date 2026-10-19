@@ -34,9 +34,10 @@ type teamAdminRequest struct {
 }
 
 // submitTeamAdminRequest validates the input and either promotes immediately
-// (System Admins + auto-approve users) or stores a pending request and posts
-// it to the root approval channel.
-func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs []string) (string, error) {
+// (System Admins) or stores a pending request and posts
+// it to the root approval channel. forceQueue (slash-command dialog) disables
+// the bypass so an approval card is always posted.
+func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs []string, forceQueue bool) (string, error) {
 	if strings.TrimSpace(teamID) == "" {
 		return "", errors.New("a team is required")
 	}
@@ -72,7 +73,7 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	}
 
 	config := p.getConfiguration()
-	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
+	if !forceQueue && requester.IsSystemAdmin() {
 		p.promoteTeamAdmins(req)
 		p.logAudit(config, fmt.Sprintf("TEAM ADMIN: @%s promoted %s to Team Admin in %s",
 			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName))
@@ -103,6 +104,7 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeTeamAdmin,
 		})
 	}
 

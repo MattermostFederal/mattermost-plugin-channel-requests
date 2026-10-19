@@ -27,9 +27,9 @@ type Plugin struct {
 
 func (p *Plugin) OnActivate() error {
 	botUserID, err := p.API.EnsureBotUser(&model.Bot{
-		Username:    "mattermost-requests",
-		DisplayName: "Mattermost Requests",
-		Description: "Handles channel, team, bot, and webhook requests; relays messages between requesters and reviewers.",
+		Username:    "mattermost-request-hub",
+		DisplayName: "Mattermost Request Hub",
+		Description: "Handles channel, team, membership, guest, bot, and webhook requests; relays messages between requesters and reviewers.",
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to ensure bot user")
@@ -71,6 +71,11 @@ func (p *Plugin) OnActivate() error {
 		if p.getConfiguration().PerTeamApprovalChannels {
 			p.ensureAllTeamApprovalChannels()
 		}
+		// One-shot: force every ticket/approval channel (root, bot, webhook,
+		// team-creation, audit, per-team) into the managed
+		// "Mattermost: Request Hub" sidebar category for all current members
+		// (also renames a short-lived "Mattermost Requests" category if present).
+		p.migrateTicketChannelsToManagedCategory()
 	}()
 
 	// Delete any token DM posts whose 72-hour window lapsed while the plugin

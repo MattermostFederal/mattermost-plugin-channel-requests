@@ -64,6 +64,8 @@ type botRequestInput struct {
 	OutgoingWebhookChannelID   string
 	OutgoingWebhookDisplayName string
 	OutgoingWebhookCallbackURL string
+	// ForceQueue skips System Admin bypass (slash-command dialog path).
+	ForceQueue bool
 }
 
 // submitBotRequest validates the input and either creates the bot immediately
@@ -105,8 +107,9 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 
 	config := p.getConfiguration()
 
-	// System Admins can create bots without going through approval.
-	if requester.IsSystemAdmin() {
+	// System Admins can create bots without going through approval — unless
+	// ForceQueue (slash-command dialog) which always produces an approval card.
+	if !input.ForceQueue && requester.IsSystemAdmin() {
 		bot, err := p.createBotForRequest(req)
 		if err != nil {
 			return "", err
@@ -139,6 +142,7 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeBot,
 		})
 	}
 

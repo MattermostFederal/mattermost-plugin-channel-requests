@@ -41,10 +41,6 @@ export const RequestTeamAdminModal = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setError('');
         setSuccess('');
@@ -55,7 +51,12 @@ export const RequestTeamAdminModal = () => {
         reset();
         dispatch(closeTeamAdminRequestModal());
     };
+    // Must run unconditionally — never after `if (!isOpen) return null`.
     const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!teamId) {

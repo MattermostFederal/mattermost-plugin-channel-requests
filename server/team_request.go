@@ -42,11 +42,19 @@ type teamCreationInput struct {
 	Description      string
 	Type             string // "O" or "I"
 	RequestTeamAdmin bool
+	// ForceQueue skips System Admin bypass (slash-command dialog path).
+	ForceQueue bool
 }
 
 // submitTeamCreationRequest validates the input and either creates the team
-// immediately (System Admins) or stores a pending request for approval.
+// immediately (System Admins) or stores a pending request for
+// approval. AllowTeamRequests is enforced here so every entry point is gated.
 func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error) {
+	config := p.getConfiguration()
+	if !config.RequestEnabled(requestTypeTeam) {
+		return "", errors.New(teamRequestsDisabledMsg)
+	}
+
 	if strings.TrimSpace(in.DisplayName) == "" {
 		return "", errors.New("a team name is required")
 	}
@@ -81,8 +89,9 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		RequestTeamAdmin: in.RequestTeamAdmin,
 	}
 
-	config := p.getConfiguration()
-	if requester.IsSystemAdmin() {
+	// Only System Admins bypass the queue for team creation (same as bots),
+	// and only when not ForceQueue (slash-command dialog always queues).
+	if !in.ForceQueue && requester.IsSystemAdmin() {
 		team, err := p.createTeamForRequest(req)
 		if err != nil {
 			return "", err
@@ -91,7 +100,9 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		if req.RequestTeamAdmin {
 			adminNote = " You've been made Team Admin."
 		}
-		p.logAudit(config, fmt.Sprintf("TEAM CREATED: @%s created team %s (%s) directly%s",
+		// Announce in the team-requests channel so reviewers still see it.
+		p.postTeamCreationAutoCreatedNotice(req, requester, team, "System Admin")
+		p.logAudit(config, fmt.Sprintf("TEAM CREATED: @%s created team %s (%s) directly (System Admin)%s",
 			requester.Username, req.DisplayName, team.Name, adminNote))
 		return fmt.Sprintf("Created team **%s**.%s", team.DisplayName, adminNote), nil
 	}
@@ -120,6 +131,7 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeTeam,
 		})
 	}
 
@@ -174,10 +186,17 @@ func (p *Plugin) createTeamForRequest(req *teamCreationRequest) (*model.Team, er
 			p.API.LogWarn("failed to promote requester to team admin in new team", "team_id", team.Id, "user_id", req.RequesterID, "error", appErr.Error())
 		}
 	}
+	// Always stand up the per-team channel-requests channel when the feature is
+	// on — a newly created team with a Team Admin (or System Admin requester)
+	// should receive channel requests locally, and that channel must land in
+	// the managed "Mattermost: Request Hub" category like every other ticket channel.
 	if p.getConfiguration().PerTeamApprovalChannels {
-		if _, err := p.ensureTeamApprovalChannel(team.Id); err != nil {
+		if ch, err := p.ensureTeamApprovalChannel(team.Id); err != nil {
 			p.API.LogWarn("failed to create per-team approval channel after team creation",
 				"team_id", team.Id, "error", err.Error())
+		} else if ch != nil {
+			p.addTeamApproversToChannel(team.Id, ch.Id)
+			p.placeChannelMembersInManagedCategory(ch)
 		}
 	}
 	return team, nil
@@ -191,6 +210,36 @@ func (p *Plugin) postTeamCreationApprovalRequest(req *teamCreationRequest, reque
 		header,
 		ch,
 	)
+}
+
+// postTeamCreationAutoCreatedNotice posts a no-button card into the team
+// requests channel after a bypass create (System Admin). Best-
+// effort — failure is logged; the team itself was already created.
+func (p *Plugin) postTeamCreationAutoCreatedNotice(req *teamCreationRequest, requester *model.User, team *model.Team, reason string) {
+	ch := p.ensureTeamCreationApprovalChannel()
+	if ch == nil {
+		p.API.LogWarn("channel-requests: team created but no team-requests channel to announce into — set Approval team in System Console")
+		return
+	}
+
+	attachment := p.teamCreationApprovalAttachment(req, requester)
+	attachment.Actions = nil
+	attachment.Color = colorApproved
+	attachment.Title = "Team created (no approval required)"
+	attachment.Text = fmt.Sprintf(
+		"**Created by @%s** via %s.\n**Team:** %s (`/%s`)",
+		requester.Username, reason, team.DisplayName, team.Name,
+	)
+
+	post := &model.Post{
+		UserId:    p.botUserID,
+		ChannelId: ch.Id,
+		Message:   fmt.Sprintf("✅ Team **%s** was created immediately (%s) — no approval needed.", team.DisplayName, reason),
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+	if _, appErr := p.API.CreatePost(post); appErr != nil {
+		p.API.LogWarn("failed to post team auto-create notice", "team_id", team.Id, "error", appErr.Error())
+	}
 }
 
 func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, requester *model.User) *model.MessageAttachment {

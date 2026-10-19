@@ -18,6 +18,8 @@ import {
     openRequestModal,
     openTeamAdminRequestModal,
     openTeamCreationModal,
+    openTeamGuestRequestModal,
+    openTeamMemberRequestModal,
 } from './store';
 import type {GlobalState} from './store';
 
@@ -58,13 +60,16 @@ type RequestItem = {
     hidden?: boolean;
 };
 
+// Fail-closed for newer types until /api/v1/config responds — matches client.ts.
 const defaultEnabled: EnabledRequestTypes = {
     channel: true,
     channelAdmin: true,
-    team: false,
-    teamAdmin: false,
-    bot: false,
-    webhook: false,
+    team: true,
+    teamAdmin: true,
+    teamMember: true,
+    teamGuest: false,
+    bot: true,
+    webhook: true,
 };
 
 export const RequestHubModal = () => {
@@ -96,9 +101,14 @@ export const RequestHubModal = () => {
         return null;
     }
 
+    // Close the hub first, then open the target modal on the next tick so the
+    // originating click cannot land on the new modal's overlay and immediately
+    // dismiss it (mousedown on hub tile → unmount → mouseup on new overlay).
     const open = (action: () => Action) => {
-        close();
-        dispatch(action());
+        dispatch(closeHubModal());
+        window.setTimeout(() => {
+            dispatch(action());
+        }, 0);
     };
 
     const items: RequestItem[] = [
@@ -130,6 +140,20 @@ export const RequestHubModal = () => {
             action: openTeamAdminRequestModal,
             enabled: enabled.teamAdmin,
             hidden: alreadyTeamAdmin,
+        },
+        {
+            icon: '👥',
+            title: 'Request Team Members',
+            description: 'Ask to add existing users to your current team.',
+            action: openTeamMemberRequestModal,
+            enabled: enabled.teamMember,
+        },
+        {
+            icon: '✉️',
+            title: 'Request Guest Invite',
+            description: 'Request a guest invite link (optional email) for this team.',
+            action: openTeamGuestRequestModal,
+            enabled: enabled.teamGuest,
         },
         {
             icon: '🤖',
@@ -170,7 +194,7 @@ export const RequestHubModal = () => {
             >
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
                     <div>
-                        <h3 id='hub-title' style={{marginTop: 0, marginBottom: 4}}>{'Request Hub'}</h3>
+                        <h3 id='hub-title' style={{marginTop: 0, marginBottom: 4}}>{'Mattermost Request Hub'}</h3>
                         <p style={{margin: 0, opacity: 0.72, fontSize: 14}}>
                             {'Choose a request type. Each request is reviewed by the appropriate admins.'}
                         </p>
@@ -186,7 +210,7 @@ export const RequestHubModal = () => {
 
                 {visible.length === 0 ? (
                     <p style={{marginTop: 24, opacity: 0.72}}>
-                        {'No request types are currently enabled. Ask a System Admin to enable them in System Console → Plugins → Mattermost Permissions.'}
+                        {'No request types are currently enabled. Ask a System Admin to enable them in System Console → Plugins → Mattermost Request Hub.'}
                     </p>
                 ) : (
                     <div style={gridStyle}>

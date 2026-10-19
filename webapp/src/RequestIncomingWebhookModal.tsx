@@ -36,16 +36,17 @@ export const RequestIncomingWebhookModal = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setDisplayName(''); setDescription('');
         setError(''); setSuccess(''); setSubmitting(false);
     };
     const close = () => { reset(); dispatch(closeIncomingWebhookModal()); };
+    // Must run unconditionally — never after `if (!isOpen) return null`.
     const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!displayName.trim()) { setError('A display name is required.'); return; }

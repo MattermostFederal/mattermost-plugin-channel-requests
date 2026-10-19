@@ -118,6 +118,25 @@ body {
     width: 100%;
 }
 
+.content img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 16px 0 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.content ul,
+.content ol {
+    margin: 0 0 16px 1.25em;
+}
+
+.content li {
+    margin-bottom: 6px;
+}
+
 /* Breadcrumb */
 
 .breadcrumb {

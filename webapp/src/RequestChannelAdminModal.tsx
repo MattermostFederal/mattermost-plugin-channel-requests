@@ -46,10 +46,6 @@ export const RequestChannelAdminModal = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    if (!channelId) {
-        return null;
-    }
-
     const reset = () => {
         setNomineesText('');
         setError('');
@@ -61,7 +57,12 @@ export const RequestChannelAdminModal = () => {
         reset();
         dispatch(closeAdminRequestModal());
     };
+    // Must run unconditionally — never after `if (!channelId) return null`.
     const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!channelId) {
+        return null;
+    }
 
     const submit = async () => {
         const nominees = nomineesText.

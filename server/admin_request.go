@@ -39,10 +39,10 @@ type adminRequest struct {
 }
 
 // submitAdminRequest validates the input and either promotes the nominees
-// immediately (System Admins + auto-approve users) or stores a pending
-// request and posts it to the approval channel. Returns a message suitable
-// for showing to the requester.
-func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string) (string, error) {
+// immediately (System Admins) or stores a pending
+// request and posts it to the approval channel. forceQueue (slash-command
+// dialog) disables the bypass so an approval card is always posted.
+func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string, forceQueue bool) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return "", errors.New("a channel is required")
 	}
@@ -83,9 +83,9 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 
 	config := p.getConfiguration()
 
-	// Bypass approval for System Admins and delegated managers on the
-	// auto-approve list, mirroring the channel-creation flow.
-	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
+	// Bypass approval for System Admins — unless forceQueue (slash-command
+	// dialog) which always produces an approval card.
+	if !forceQueue && requester.IsSystemAdmin() {
 		p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, requester)
 		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
@@ -120,6 +120,8 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeChannelAdmin,
+			ScopeID:           channelID,
 		})
 	}
 

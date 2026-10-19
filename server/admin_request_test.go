@@ -47,11 +47,11 @@ func TestPromoteChannelAdmins_AddFailureStillAttemptsPromotion(t *testing.T) {
 func TestSubmitAdminRequest_ValidationErrors(t *testing.T) {
 	p := newTestPlugin(&plugintest.API{})
 
-	_, err := p.submitAdminRequest("u_req", "", []string{"u1"})
+	_, err := p.submitAdminRequest("u_req", "", []string{"u1"}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "channel is required")
 
-	_, err = p.submitAdminRequest("u_req", "ch1", []string{"", "  "})
+	_, err = p.submitAdminRequest("u_req", "ch1", []string{"", "  "}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least one person")
 }
@@ -69,7 +69,7 @@ func TestSubmitAdminRequest_SysadminPromotesImmediately(t *testing.T) {
 	api.On("UpdateChannelMemberRoles", "ch1", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
-	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
+	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	require.Contains(t, msg, "marketing")
@@ -115,7 +115,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	// sendTicketCreatedDM opens a DM with the requester to start their ticket thread.
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "req-dm"}, nil)
 
-	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
+	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	require.Contains(t, msg, "submitted for approval")
@@ -163,7 +163,7 @@ func TestSubmitAdminRequest_NoApprovalChannelFallsBackToSystemAdmins(t *testing.
 	}).Return(&model.Post{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
-	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
+	msg, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	require.Contains(t, msg, "submitted for approval")
@@ -184,7 +184,7 @@ func TestSubmitAdminRequest_RejectsNonChannelMember(t *testing.T) {
 	// The requester is not a member of the channel.
 	api.On("GetChannelMember", "ch1", "u_req").Return(nil, testAppErr("not a member"))
 
-	_, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"})
+	_, err := p.submitAdminRequest("u_req", "ch1", []string{"u_nom"}, false)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "member of the channel")

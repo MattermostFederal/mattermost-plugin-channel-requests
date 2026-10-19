@@ -60,10 +60,6 @@ export const RequestTeamModal = () => {
         return slug || 'team-url';
     }, [urlName, displayName]);
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setDisplayName('');
         setUrlName('');
@@ -79,7 +75,12 @@ export const RequestTeamModal = () => {
         reset();
         dispatch(closeTeamCreationModal());
     };
+    // Must run unconditionally — never after `if (!isOpen) return null`.
     const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!displayName.trim()) {

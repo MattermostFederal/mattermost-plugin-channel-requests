@@ -73,8 +73,8 @@ type channelRequest struct {
 	AdminMemberIDs []string `json:"admin_member_ids"`
 
 	// CategoryName is the optional sidebar category the requester wants the
-	// new channel placed in on approval. Matched case-insensitively against
-	// the user's existing sidebar categories — not created if absent.
+	// new channel placed in on approval. Matched case-insensitively; if no
+	// match exists for a user, a custom category with this name is created.
 	CategoryName string `json:"category_name,omitempty"`
 
 	// Ticket messaging fields — set after the approval post and DM are created.
@@ -105,6 +105,10 @@ type requestInput struct {
 	// CategoryName is the optional sidebar category name to place the channel
 	// in on approval. Passed through to channelRequest unchanged.
 	CategoryName string
+	// ForceQueue skips System Admin bypass so the request
+	// always posts to the approval channel. Set by slash-command dialogs —
+	// those are explicitly a "request" flow and must produce the card.
+	ForceQueue bool
 }
 
 // promoteSoleMember applies the orphaned-channel guard: when no Channel
@@ -140,7 +144,7 @@ func slugify(s string) string {
 // channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
 	if !config.UsesPrefixList() {
-		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Mattermost Permissions")
+		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Mattermost Request Hub")
 	}
 	return resolvePrefixedName(config.Prefixes(), in)
 }
@@ -237,7 +241,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	}
 
 	// System Admins can create channels in any team (they administer all
-	// of them). Everyone else — including delegated auto-approve users —
+	// of them). Everyone else —
 	// must belong to the target team, so a client-supplied TeamID can't be
 	// used to plant channels in a team the requester has no access to.
 	if !requester.IsSystemAdmin() {
@@ -280,20 +284,17 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		CategoryName:   strings.TrimSpace(in.CategoryName),
 	}
 
-	// Bypass approval for:
-	//   - System Admins (always)
-	//   - Users on the admin-configured auto-approve list (delegated managers)
-	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
+	// Bypass approval for System Admins — unless ForceQueue (slash-command
+	// dialog) which always produces an approval card.
+	if !in.ForceQueue && requester.IsSystemAdmin() {
 		channel, err := p.createChannelForRequest(req)
 		if err != nil {
 			return "", err
 		}
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
-		// Audit the bypass-path creations too — these are the
-		// highest-privilege (System Admin / delegated auto-approve)
-		// creations and the ones an audit trail most needs to record.
-		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin or auto-approve)",
+		p.postChannelAutoCreatedNotice(req, requester, channel, "System Admin")
+		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin)",
 			requester.Username, req.DisplayName, channel.Name))
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
@@ -329,6 +330,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 			ApprovalChannelID: approvalChannelID,
 			DMRootPostID:      dmRootPostID,
 			DMChannelID:       dmChannelID,
+			Kind:              requestTypeChannel,
 		})
 	}
 
@@ -531,6 +533,30 @@ func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User)
 	)
 }
 
+// postChannelAutoCreatedNotice posts a no-button card into the approval channel
+// after a System Admin / allow-list bypass create so reviewers still see it.
+func (p *Plugin) postChannelAutoCreatedNotice(req *channelRequest, requester *model.User, channel *model.Channel, reason string) {
+	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
+	if approvalChannel == nil {
+		p.API.LogWarn("channel-requests: channel created but no approval channel to announce into — set Approval team in System Console")
+		return
+	}
+	attachment := p.approvalAttachment(req, requester)
+	attachment.Actions = nil
+	attachment.Color = colorApproved
+	attachment.Title = "Channel created (no approval required)"
+	post := &model.Post{
+		UserId:    p.botUserID,
+		ChannelId: approvalChannel.Id,
+		Message: fmt.Sprintf("%s✅ Channel ~%s was created immediately by @%s (%s) — no approval needed.",
+			teamLabel, channel.Name, requester.Username, reason),
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+	if _, appErr := p.API.CreatePost(post); appErr != nil {
+		p.API.LogWarn("failed to post channel auto-create notice", "channel_id", channel.Id, "error", appErr.Error())
+	}
+}
+
 // postApprovalAttachment delivers an approval attachment to the reviewers. When approvalChannel is
 // non-nil, the post goes there; otherwise it falls back to DMing every System Admin so requests are
 // never silently dropped. Shared by the channel-creation and channel-admin request flows.
@@ -671,37 +697,56 @@ func (p *Plugin) addChannelToSidebarCategory(channelID, teamID string, req *chan
 		seen[uid] = true
 		if err := p.placeChannelInCategory(uid, teamID, channelID, req.CategoryName); err != nil {
 			p.API.LogWarn("failed to place channel in sidebar category",
-				"user_id", uid, "category", req.CategoryName, "error", err.Error())
+				"user_id", uid, "category", req.CategoryName, "error", fmt.Sprintf("%v", err))
 		}
 	}
 }
 
 // placeChannelInCategory adds channelID to the named sidebar category for a
-// single user. The match is case-insensitive against existing category display
-// names. If the category doesn't exist for this user the call is a no-op
-// (logged at info level so admins can diagnose mismatches without alert noise).
+// single user. Match is case-insensitive against existing custom/display names.
+// If nothing matches, a new custom category is created with that display name
+// (so requesters can type a new bucket in the same form field).
+//
+// Never return a typed-nil *model.AppError as error — that interfaces as
+// non-nil and panics on .Error() (which broke Approve squash after create).
 func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName string) error {
+	categoryName = strings.TrimSpace(categoryName)
+	if categoryName == "" {
+		return nil
+	}
 	cats, appErr := p.API.GetChannelSidebarCategories(userID, teamID)
 	if appErr != nil {
 		return appErr
 	}
-	for _, cat := range cats.Categories {
-		if !strings.EqualFold(cat.DisplayName, categoryName) {
-			continue
-		}
-		for _, id := range cat.Channels {
-			if id == channelID {
-				return nil // already in this category
+	if cats != nil {
+		for _, cat := range cats.Categories {
+			if cat == nil || !strings.EqualFold(cat.DisplayName, categoryName) {
+				continue
 			}
+			for _, id := range cat.Channels {
+				if id == channelID {
+					return nil // already in this category
+				}
+			}
+			cat.Channels = append(cat.Channels, channelID)
+			if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
+				return updateErr
+			}
+			return nil
 		}
-		cat.Channels = append(cat.Channels, channelID)
-		if _, appErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); appErr != nil {
-			return appErr
-		}
-		return nil
 	}
-	p.API.LogInfo("sidebar category not found for user — channel not auto-placed",
-		"user_id", userID, "team_id", teamID, "category", categoryName)
+
+	if _, createErr := p.API.CreateChannelSidebarCategory(userID, teamID, &model.SidebarCategoryWithChannels{
+		SidebarCategory: model.SidebarCategory{
+			UserId:      userID,
+			TeamId:      teamID,
+			DisplayName: categoryName,
+			Type:        model.SidebarCategoryCustom,
+		},
+		Channels: []string{channelID},
+	}); createErr != nil {
+		return createErr
+	}
 	return nil
 }
 

@@ -1,4 +1,4 @@
-module github.com/MattermostFederal/mattermost-plugin-channel-requests
+module github.com/MattermostFederal/mattermost-plugin-request-hub
 
 go 1.26.3
 
