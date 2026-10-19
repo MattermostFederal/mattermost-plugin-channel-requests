@@ -59,14 +59,13 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 		Reason:      strings.TrimSpace(reason),
 	}
 
-	config := p.getConfiguration()
 	// Any authenticated user may nominate people onto any team; System Admins
 	// approve. Membership of the requester on the target team is intentionally
 	// not required — governance is the approval card, not submit-side RBAC.
 	if !forceQueue && requester.IsSystemAdmin() {
 		p.addTeamMembers(req)
-		p.logAudit(config, fmt.Sprintf("TEAM MEMBER: @%s added %s to team %s",
-			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName))
+		p.logAudit(fmt.Sprintf("TEAM MEMBER: @%s added %s to team %s",
+			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
 		return fmt.Sprintf("Added %s to **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
 	}
 

@@ -81,15 +81,13 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		NomineeIDs:  nominees,
 	}
 
-	config := p.getConfiguration()
-
 	// Bypass approval for System Admins — unless forceQueue (slash-command
 	// dialog) which always produces an approval card.
 	if !forceQueue && requester.IsSystemAdmin() {
 		p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, requester)
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
-			requester.Username, p.mentionList(req.NomineeIDs), channel.Name))
+		p.logAudit(fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
+			requester.Username, p.mentionList(req.NomineeIDs), channel.Name), "")
 		return fmt.Sprintf("Promoted %s to Channel Admin in ~%s.", p.mentionList(req.NomineeIDs), channel.Name), nil
 	}
 

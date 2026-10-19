@@ -295,8 +295,8 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
 		p.postChannelAutoCreatedNotice(req, requester, channel, "System Admin")
-		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin)",
-			requester.Username, req.DisplayName, channel.Name))
+		p.logAudit(fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin)",
+			requester.Username, req.DisplayName, channel.Name), "")
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
@@ -406,11 +406,16 @@ func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest,
 }
 
 // logAudit posts an audit-trail line to the auto-created audit channel.
+// When threadPostID is set (usually the approval-card root), appends a
+// markdown permalink so reviewers can jump from audit → ticket thread.
 // No-op when ApprovalTeam is not configured (ensureAuditChannel returns nil).
-func (p *Plugin) logAudit(_ *configuration, message string) {
+func (p *Plugin) logAudit(message, threadPostID string) {
 	ch := p.ensureAuditChannel()
 	if ch == nil {
 		return
+	}
+	if link := p.postPermalink(threadPostID); link != "" {
+		message = message + "\n[Open ticket thread](" + link + ")"
 	}
 	if _, appErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
@@ -419,6 +424,33 @@ func (p *Plugin) logAudit(_ *configuration, message string) {
 	}); appErr != nil {
 		p.API.LogWarn("audit post failed", "channel_id", ch.Id, "error", appErr.Error())
 	}
+}
+
+// postPermalink builds a Mattermost /{team}/pl/{postID} URL for a post in a
+// team channel. Returns "" when SiteURL is unset, the post/channel/team cannot
+// be loaded, or the channel has no team (DM/GM).
+func (p *Plugin) postPermalink(postID string) string {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return ""
+	}
+	base := strings.TrimRight(p.siteURL(), "/")
+	if base == "" {
+		return ""
+	}
+	post, appErr := p.API.GetPost(postID)
+	if appErr != nil || post == nil || post.ChannelId == "" {
+		return ""
+	}
+	ch, appErr := p.API.GetChannel(post.ChannelId)
+	if appErr != nil || ch == nil || ch.TeamId == "" {
+		return ""
+	}
+	team, appErr := p.API.GetTeam(ch.TeamId)
+	if appErr != nil || team == nil || team.Name == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/pl/%s", base, team.Name, postID)
 }
 
 // createChannelForRequest creates the channel described by req, adds the requester and any

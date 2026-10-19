@@ -595,3 +595,23 @@ func TestPlaceChannelInCategory_CreateSuccessReturnsRealNil(t *testing.T) {
 	// Prove the interface value is truly nil (not typed-nil *AppError).
 	require.Nil(t, err)
 }
+
+func TestPostPermalink(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	t.Run("empty post id", func(t *testing.T) {
+		require.Equal(t, "", p.postPermalink(""))
+	})
+
+	t.Run("builds team pl link", func(t *testing.T) {
+		api.On("GetConfig").Return(&model.Config{
+			ServiceSettings: model.ServiceSettings{SiteURL: new("https://mm.example.com")},
+		})
+		api.On("GetPost", "post1").Return(&model.Post{Id: "post1", ChannelId: "ch1"}, nil)
+		api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "ops"}, nil)
+
+		require.Equal(t, "https://mm.example.com/ops/pl/post1", p.postPermalink("post1"))
+	})
+}

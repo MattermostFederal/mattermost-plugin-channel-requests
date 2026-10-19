@@ -84,13 +84,12 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 		Reason:      strings.TrimSpace(reason),
 	}
 
-	config := p.getConfiguration()
 	if !forceQueue && requester.IsSystemAdmin() {
 		if inviteErr := p.fulfillTeamGuestRequest(req, requester.Id); inviteErr != nil {
 			return "", inviteErr
 		}
-		p.logAudit(config, fmt.Sprintf("TEAM GUEST: @%s invited guest to team %s (email=%q)",
-			requester.Username, team.DisplayName, email))
+		p.logAudit(fmt.Sprintf("TEAM GUEST: @%s invited guest to team %s (email=%q)",
+			requester.Username, team.DisplayName, email), "")
 		return fmt.Sprintf("Guest invitation emailed to **%s** for team **%s**.", email, team.DisplayName), nil
 	}
 

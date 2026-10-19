@@ -697,7 +697,6 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for welcome post + audit
 
 	var outcome string
@@ -729,8 +728,8 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			Text:  fmt.Sprintf("Approved by @%s. Your request for channel **%s** is now available at ~%s.", actingUser.Username, req.DisplayName, channel.Name),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",
-			actingUser.Username, req.DisplayName, channel.Name, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("APPROVED: @%s approved channel request `%s` (%s) from @%s",
+			actingUser.Username, req.DisplayName, channel.Name, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Channel request **%s** (`%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), req.DisplayName, req.Name)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -739,8 +738,8 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			Text:  fmt.Sprintf("Denied by @%s. Your request for channel **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.DisplayName),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request `%s` from @%s",
-			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("DENIED: @%s denied channel request `%s` from @%s",
+			actingUser.Username, req.DisplayName, requesterUsername(requester, req.RequesterID)), request.PostId)
 	}
 
 	// The KV key was already removed by the atomic claim above.
@@ -793,7 +792,6 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for notify + audit
 	channel, channelErr := p.API.GetChannel(req.ChannelID)
 
@@ -850,8 +848,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 			Text:  fmt.Sprintf("Approved by @%s. %s is now Channel Admin in %s.", actingUser.Username, nominees, channelRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by @%s)",
-			actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by @%s)",
+			actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Channel Admin for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, channelRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -860,8 +858,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 			Text:  fmt.Sprintf("Denied by @%s. Your request to make %s Channel Admin in %s was not approved. Reply to this thread if you'd like more information.", actingUser.Username, nominees, channelRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
-			actingUser.Username, nominees, channelRef))
+		p.logAudit(fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
+			actingUser.Username, nominees, channelRef), request.PostId)
 	}
 
 	// The KV key was already removed by the atomic claim above.
@@ -1047,7 +1045,6 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 	nominees := p.mentionList(req.NomineeIDs)
 	teamRef := req.TeamID
@@ -1065,8 +1062,8 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 			Text:  fmt.Sprintf("Approved by @%s. %s is now Team Admin in %s.", actingUser.Username, nominees, teamRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM ADMIN APPROVED: @%s promoted %s to Team Admin in %s (requested by @%s)",
-			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("TEAM ADMIN APPROVED: @%s promoted %s to Team Admin in %s (requested by @%s)",
+			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team Admin for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -1075,8 +1072,8 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 			Text:  fmt.Sprintf("Denied by @%s. Your request to make %s Team Admin in %s was not approved. Reply to this thread if you'd like more information.", actingUser.Username, nominees, teamRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM ADMIN DENIED: @%s denied a Team Admin request for %s in %s",
-			actingUser.Username, nominees, teamRef))
+		p.logAudit(fmt.Sprintf("TEAM ADMIN DENIED: @%s denied a Team Admin request for %s in %s",
+			actingUser.Username, nominees, teamRef), request.PostId)
 	}
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
@@ -1183,7 +1180,6 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 	nominees := p.mentionList(req.NomineeIDs)
 	teamRef := req.TeamID
@@ -1201,8 +1197,8 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 			Text:  fmt.Sprintf("Approved by @%s. %s added to %s.", actingUser.Username, nominees, teamRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM MEMBER APPROVED: @%s added %s to %s (requested by @%s)",
-			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("TEAM MEMBER APPROVED: @%s added %s to %s (requested by @%s)",
+			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team member add for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -1211,8 +1207,8 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 			Text:  fmt.Sprintf("Denied by @%s. Your request to add %s to %s was not approved.", actingUser.Username, nominees, teamRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM MEMBER DENIED: @%s denied adding %s to %s",
-			actingUser.Username, nominees, teamRef))
+		p.logAudit(fmt.Sprintf("TEAM MEMBER DENIED: @%s denied adding %s to %s",
+			actingUser.Username, nominees, teamRef), request.PostId)
 	}
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
@@ -1318,7 +1314,6 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 	teamRef := req.TeamID
 	if teamErr == nil {
@@ -1342,8 +1337,8 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 			Text:  text,
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM GUEST APPROVED: @%s guest invite for %s email=%q (requested by @%s)",
-			actingUser.Username, teamRef, req.Email, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("TEAM GUEST APPROVED: @%s guest invite for %s email=%q (requested by @%s)",
+			actingUser.Username, teamRef, req.Email, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Guest invite for %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), teamRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -1352,8 +1347,8 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 			Text:  fmt.Sprintf("Denied by @%s. Your guest invite request for %s was not approved.", actingUser.Username, teamRef),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM GUEST DENIED: @%s denied guest invite for %s",
-			actingUser.Username, teamRef))
+		p.logAudit(fmt.Sprintf("TEAM GUEST DENIED: @%s denied guest invite for %s",
+			actingUser.Username, teamRef), request.PostId)
 	}
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
@@ -1414,7 +1409,6 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 
 	var outcome string
@@ -1441,8 +1435,8 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			Text:  fmt.Sprintf("Approved by @%s. Team **%s** has been created.%s", actingUser.Username, req.DisplayName, adminNote),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM CREATED: @%s approved team %s (%s) requested by @%s",
-			actingUser.Username, req.DisplayName, team.Name, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("TEAM CREATED: @%s approved team %s (%s) requested by @%s",
+			actingUser.Username, req.DisplayName, team.Name, requesterUsername(requester, req.RequesterID)), request.PostId)
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team **%s** (`/%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), req.DisplayName, req.Name)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -1451,8 +1445,8 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			Text:  fmt.Sprintf("Denied by @%s. Your request to create team **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.DisplayName),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("TEAM CREATION DENIED: @%s denied a team creation request for %s",
-			actingUser.Username, req.DisplayName))
+		p.logAudit(fmt.Sprintf("TEAM CREATION DENIED: @%s denied a team creation request for %s",
+			actingUser.Username, req.DisplayName), request.PostId)
 	}
 	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 }
@@ -1542,7 +1536,6 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 
 	if !approve {
@@ -1568,8 +1561,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			Text:  fmt.Sprintf("Denied by @%s. Your request for bot **@%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.Username),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("BOT DENIED: @%s denied a bot request for @%s",
-			actingUser.Username, req.Username))
+		p.logAudit(fmt.Sprintf("BOT DENIED: @%s denied a bot request for @%s",
+			actingUser.Username, req.Username), request.PostId)
 		writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 		return
 	}
@@ -1691,8 +1684,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		p.sendBotExtrasReply(req, tokenValue, incomingWebhookURL, outgoingWebhookCreated, partialErrors)
 
 		outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. Bot **@%s** created.", requesterUsername(requester, req.RequesterID), bot.Username)
-		p.logAudit(config, fmt.Sprintf("BOT CREATED: @%s gave final approval; bot @%s created for @%s",
-			actingUser.Username, bot.Username, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("BOT CREATED: @%s gave final approval; bot @%s created for @%s",
+			actingUser.Username, bot.Username, requesterUsername(requester, req.RequesterID)), request.PostId)
 		writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 		return
 	}
@@ -1849,7 +1842,6 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		return
 	}
 
-	config := p.getConfiguration()
 	requester, _ := p.API.GetUser(req.RequesterID)
 	channel, _ := p.API.GetChannel(req.ChannelID)
 
@@ -1876,8 +1868,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			Text:  fmt.Sprintf("Denied by @%s. Your request for a %s webhook **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.WebhookType, req.DisplayName),
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, false, actingUser.Username)
-		p.logAudit(config, fmt.Sprintf("WEBHOOK DENIED: @%s denied a %s webhook request for %s",
-			actingUser.Username, req.WebhookType, req.DisplayName))
+		p.logAudit(fmt.Sprintf("WEBHOOK DENIED: @%s denied a %s webhook request for %s",
+			actingUser.Username, req.WebhookType, req.DisplayName), request.PostId)
 		writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 		return
 	}
@@ -1957,8 +1949,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
 		outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. %s webhook **%s** created.", requesterUsername(requester, req.RequesterID), req.WebhookType, req.DisplayName)
-		p.logAudit(config, fmt.Sprintf("WEBHOOK CREATED: @%s gave final approval; %s webhook %q created for @%s",
-			actingUser.Username, req.WebhookType, req.DisplayName, requesterUsername(requester, req.RequesterID)))
+		p.logAudit(fmt.Sprintf("WEBHOOK CREATED: @%s gave final approval; %s webhook %q created for @%s",
+			actingUser.Username, req.WebhookType, req.DisplayName, requesterUsername(requester, req.RequesterID)), request.PostId)
 		writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
 		return
 	}

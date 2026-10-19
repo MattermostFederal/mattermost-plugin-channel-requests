@@ -105,8 +105,6 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		OutgoingWebhookCallbackURL: strings.TrimSpace(input.OutgoingWebhookCallbackURL),
 	}
 
-	config := p.getConfiguration()
-
 	// System Admins can create bots without going through approval — unless
 	// ForceQueue (slash-command dialog) which always produces an approval card.
 	if !input.ForceQueue && requester.IsSystemAdmin() {
@@ -114,7 +112,7 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		if err != nil {
 			return "", err
 		}
-		p.logAudit(config, fmt.Sprintf("BOT CREATED: @%s created bot @%s directly", requester.Username, bot.Username))
+		p.logAudit(fmt.Sprintf("BOT CREATED: @%s created bot @%s directly", requester.Username, bot.Username), "")
 		return fmt.Sprintf("Bot **@%s** created.", bot.Username), nil
 	}
 
