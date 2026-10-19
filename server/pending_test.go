@@ -16,9 +16,24 @@ import (
 // isPendingListKey matches the KV key of any user's pending list.
 var isPendingListKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvPendingPrefix) })
 
+// isApprovalPostsKey matches the KV key of any request's recorded
+// approval posts.
+var isApprovalPostsKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvApprovalPostsPrefix) })
+
+// stubApprovalPosts lets production code record approval posts freely:
+// none are recorded to start with and every write succeeds.
+func stubApprovalPosts(api *plugintest.API) {
+	api.On("KVGet", isApprovalPostsKey).Return(nil, nil).Maybe()
+	api.On("KVSet", isApprovalPostsKey, mock.Anything).Return(nil).Maybe()
+	api.On("KVDelete", isApprovalPostsKey).Return(nil).Maybe()
+}
+
 // stubPendingLists lets production code read and update pending lists
-// freely: every list starts empty and every write succeeds.
+// freely: every list starts empty and every write succeeds. Recorded
+// approval posts are stubbed the same way, since the same paths save and
+// resolve them.
 func stubPendingLists(api *plugintest.API) {
+	stubApprovalPosts(api)
 	api.On("KVGet", isPendingListKey).Return(nil, nil).Maybe()
 	api.On("KVCompareAndSet", isPendingListKey, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 	api.On("KVCompareAndDelete", isPendingListKey, mock.Anything).Return(true, nil).Maybe()
@@ -35,6 +50,13 @@ func storedRequests(api *plugintest.API, prefix string, ids ...string) {
 		}
 		return nil, nil
 	})
+}
+
+// stubSubmittedRequestExists makes any request stored under prefix read
+// back as present, for the check submit makes after recording the
+// approval posts.
+func stubSubmittedRequestExists(api *plugintest.API, prefix string) {
+	api.On("KVGet", mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, prefix) })).Return([]byte("{}"), nil).Maybe()
 }
 
 // stubPendingMigrated marks the stored-request migration as already done.
@@ -673,6 +695,7 @@ func recordJSON(t *testing.T, v any) []byte {
 // fakePendingLists backs the pending-list KV calls with a map, so tests
 // can check what ends up stored.
 func fakePendingLists(api *plugintest.API) map[string][]byte {
+	stubApprovalPosts(api)
 	store := map[string][]byte{}
 	api.On("KVGet", isPendingListKey).Return(func(key string) ([]byte, *model.AppError) {
 		return store[key], nil

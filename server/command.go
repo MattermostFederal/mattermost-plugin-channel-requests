@@ -15,8 +15,14 @@ const (
 	subcommandCreate   = "create"
 	subcommandAdmin    = "admin"
 	subcommandPrefixes = "prefixes"
+	subcommandList     = "list"
+	subcommandApprove  = "approve"
+	subcommandDeny     = "deny"
 	subcommandHelp     = "help"
 )
+
+// subcommandHint lists the subcommands for the autocomplete hint.
+const subcommandHint = "[create|admin|prefixes|list|approve|deny|help]"
 
 // notConfiguredMessage is shown by every entry point that needs a prefix
 // when none is configured.
@@ -27,6 +33,9 @@ const commandUsage = "Usage:\n" +
 	"- `/channel-request create <prefix> <Channel name> [--suffix <suffix>] [--purpose <text>] [--private] [--members @user ...] [--admins @user ...]` requests a channel without the form.\n" +
 	"- `/channel-request admin @user [@user ...]` asks for those channel members to be made Channel Admins of this channel.\n" +
 	"- `/channel-request prefixes` lists the channel prefixes you can use.\n" +
+	"- `/channel-request list` lists your pending requests and their IDs.\n" +
+	"- `/channel-request approve <request ID>` approves a request, as its Approve button would.\n" +
+	"- `/channel-request deny <request ID>` denies a request, as its Deny button would.\n" +
 	"- `/channel-request help` shows this message."
 
 func getCommand() *model.Command {
@@ -34,7 +43,7 @@ func getCommand() *model.Command {
 		Trigger:          commandTrigger,
 		AutoComplete:     true,
 		AutoCompleteDesc: "Request the creation of a new channel for admin approval",
-		AutoCompleteHint: "[create|admin|prefixes|help]",
+		AutoCompleteHint: subcommandHint,
 		AutocompleteData: getAutocompleteData(),
 		DisplayName:      "Channel Request",
 	}
@@ -46,7 +55,7 @@ func getCommand() *model.Command {
 func getAutocompleteData() *model.AutocompleteData {
 	autocomplete := model.NewAutocompleteData(
 		commandTrigger,
-		"[create|admin|prefixes|help]",
+		subcommandHint,
 		"Request the creation of a new channel for admin approval",
 	)
 
@@ -60,6 +69,17 @@ func getAutocompleteData() *model.AutocompleteData {
 
 	prefixes := model.NewAutocompleteData(subcommandPrefixes, "", "List the channel prefixes you can use")
 	autocomplete.AddCommand(prefixes)
+
+	list := model.NewAutocompleteData(subcommandList, "", "List your pending requests and their IDs")
+	autocomplete.AddCommand(list)
+
+	approve := model.NewAutocompleteData(subcommandApprove, "<request ID>", "Approve a request by the ID on its approval card")
+	approve.AddTextArgument("The request ID from the approval card", "<request ID>", "")
+	autocomplete.AddCommand(approve)
+
+	deny := model.NewAutocompleteData(subcommandDeny, "<request ID>", "Deny a request by the ID on its approval card")
+	deny.AddTextArgument("The request ID from the approval card", "<request ID>", "")
+	autocomplete.AddCommand(deny)
 
 	help := model.NewAutocompleteData(subcommandHelp, "", "Show how to use /channel-request")
 	autocomplete.AddCommand(help)
@@ -80,6 +100,12 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 		return p.executeAdmin(args, fields[2:]), nil
 	case subcommandPrefixes:
 		return p.executePrefixes(), nil
+	case subcommandList:
+		return p.executeList(args), nil
+	case subcommandApprove:
+		return p.executeDecision(args, fields[2:], true), nil
+	case subcommandDeny:
+		return p.executeDecision(args, fields[2:], false), nil
 	case subcommandHelp:
 		return ephemeralResponse(commandUsage), nil
 	default:
@@ -253,6 +279,52 @@ func (p *Plugin) executePrefixes() *model.CommandResponse {
 		b.WriteString("\n")
 	}
 	return ephemeralResponse(strings.TrimRight(b.String(), "\n"))
+}
+
+// executeList lists the user's pending requests.
+func (p *Plugin) executeList(args *model.CommandArgs) *model.CommandResponse {
+	requests, more, err := p.listOwnRequests(args.UserId, maxListedRequests)
+	if err != nil {
+		p.API.LogError("failed to list pending requests", "user_id", args.UserId, "error", err.Error())
+		return ephemeralResponse("Could not load your requests. Please try again.")
+	}
+	if len(requests) == 0 {
+		return ephemeralResponse("You have no pending requests.")
+	}
+
+	var b strings.Builder
+	b.WriteString("Your pending requests:\n")
+	for _, req := range requests {
+		fmt.Fprintf(&b, "- %s\n", req.summaryLine())
+	}
+	if more > 0 {
+		fmt.Fprintf(&b, "- ...and %d more\n", more)
+	}
+	return ephemeralResponse(strings.TrimRight(b.String(), "\n"))
+}
+
+// executeDecision approves or denies a request by ID, through the same
+// checks as the approval card buttons.
+func (p *Plugin) executeDecision(args *model.CommandArgs, params []string, approve bool) *model.CommandResponse {
+	sub := subcommandDeny
+	if approve {
+		sub = subcommandApprove
+	}
+	if len(params) != 1 || !model.IsValidId(params[0]) {
+		return ephemeralResponse(fmt.Sprintf("Give the request ID from the approval card: `/channel-request %s <request ID>`", sub))
+	}
+	requestID := params[0]
+
+	// IDs are unique across both kinds, so whichever is stored is the one.
+	isChannel, err := p.pendingRequestExists(pendingKindChannel, requestID)
+	if err != nil {
+		p.API.LogError("failed to look up request", "request_id", requestID, "error", err.Error())
+		return ephemeralResponse("Could not load that request.")
+	}
+	if isChannel {
+		return ephemeralResponse(p.decideChannelRequest(args.UserId, requestID, "", approve).replyText())
+	}
+	return ephemeralResponse(p.decideAdminRequest(args.UserId, requestID, "", approve).replyText())
 }
 
 func ephemeralResponse(text string) *model.CommandResponse {

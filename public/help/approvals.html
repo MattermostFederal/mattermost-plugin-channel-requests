@@ -62,6 +62,21 @@
             </tbody>
         </table>
 
+        <h3 id="slash-command">Approving from the slash command</h3>
+        <p>
+            Every card ends with <em>Request ID:</em> and the request's ID. You can approve or
+            deny from any channel with <code>/channel-request approve &lt;request ID&gt;</code>
+            or <code>/channel-request deny &lt;request ID&gt;</code>. The command makes the
+            same checks as the buttons and replies only to you. See
+            <a href="commands.html#approve">the command reference</a>.
+        </p>
+        <p>
+            Once a request is approved, denied or expired, the bot marks every copy of its
+            card with the outcome and removes the buttons. That includes the direct messages
+            each System Admin gets when no approval channel is set up. Cards posted before the
+            plugin was upgraded to this version are only updated when they're clicked.
+        </p>
+
         <h3>Requests that can't be approved as they stand</h3>
         <p>
             Before creating the channel, Approve checks the request again. If one of these

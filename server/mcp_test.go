@@ -362,5 +362,7 @@ func TestMCP_ListsOnlyTheRequestTools(t *testing.T) {
 		"com_mattermostfederal_channel-requests__list_prefixes",
 		"com_mattermostfederal_channel-requests__request_channel",
 		"com_mattermostfederal_channel-requests__request_channel_admin",
+		"com_mattermostfederal_channel-requests__list_my_requests",
+		"com_mattermostfederal_channel-requests__get_request_status",
 	}, names)
 }

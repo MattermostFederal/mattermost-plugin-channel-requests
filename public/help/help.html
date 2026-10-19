@@ -154,6 +154,9 @@
                 <tr><td><a href="commands.html#create"><code>create</code></a></td><td>Requests a channel without the form: <code>/channel-request create team- Marketing Team --members @alice @bob</code>.</td></tr>
                 <tr><td><a href="commands.html#admin"><code>admin</code></a></td><td>Asks for channel members to be made Channel Admins of the channel you run it in.</td></tr>
                 <tr><td><a href="commands.html#prefixes"><code>prefixes</code></a></td><td>Lists the channel prefixes you can use.</td></tr>
+                <tr><td><a href="commands.html#list"><code>list</code></a></td><td>Lists your pending requests and their IDs.</td></tr>
+                <tr><td><a href="commands.html#approve"><code>approve</code></a></td><td>For approvers: approves a request by the ID on its card.</td></tr>
+                <tr><td><a href="commands.html#deny"><code>deny</code></a></td><td>For approvers: denies a request by the ID on its card.</td></tr>
                 <tr><td><a href="commands.html#help"><code>help</code></a></td><td>Shows the usage message.</td></tr>
             </tbody>
         </table>
@@ -161,8 +164,8 @@
         <h2 id="agents">Asking an AI agent</h2>
         <p>
             When a System Admin turns on <em>Offer tools to Agents</em>, an agent from the
-            Mattermost Agents plugin can list prefixes and file channel and Channel Admin
-            requests for you, under the same rules as the form. Agents can't approve or deny.
+            Mattermost Agents plugin can list prefixes, file channel and Channel Admin requests
+            for you, and tell you what you have pending, under the same rules as the form. Agents can't approve or deny.
             See <a href="commands.html#agents">Agents tools</a>.
         </p>
 

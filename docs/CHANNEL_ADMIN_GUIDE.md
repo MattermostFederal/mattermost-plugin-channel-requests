@@ -78,7 +78,8 @@ request. Everyone you nominate must already be a member of the channel; if
 someone isn't, add them to the channel first (or ask a Channel Admin to).
 
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
-message when an approver responds.
+message when an approver responds. To see what you're still waiting on, run
+`/channel-request list`.
 
 **Limits.** A System Admin sets how many Channel Admin requests you can have
 waiting for review at once. At the limit you'll see *you have N pending requests
@@ -117,6 +118,10 @@ moment.* instead.
 A request that wasn't reviewed within **Request expiry (days)** can't be
 approved: clicking either button replies *This request has expired.*, marks the
 card *⌛ Expired: not reviewed within N days.* and DMs the requester.
+
+Approvers can also act without the card: the card ends with *Request ID:* and
+the ID, and `/channel-request approve <request ID>` or `deny <request ID>` makes
+the same checks as the buttons. Every copy of the card is then updated.
 
 Requests from **System Admins** and users on the **auto-approve list** skip this
 step: the nominees are promoted immediately.

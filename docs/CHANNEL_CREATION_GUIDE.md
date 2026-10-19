@@ -92,6 +92,9 @@ things from the message box, and replies are only visible to you:
 - `admin` asks for channel members to be made Channel Admins. See the
   [Channel Admin Requests guide](CHANNEL_ADMIN_GUIDE.md#3-from-the-slash-command).
 - `prefixes` lists the channel prefixes you can use.
+- `list` lists your pending requests, with their IDs and expiry dates.
+- `approve <request ID>` and `deny <request ID>` let approvers act on a request
+  without clicking its card. The ID is at the bottom of the approval card.
 - `help` shows the usage message.
 
 The full reference, with every `create` option and what each error means, is the
@@ -100,8 +103,9 @@ plugin's built-in `commands.html` page.
 ### Requesting through an AI agent
 
 When a System Admin turns on **Offer tools to Agents**, an agent from the
-Mattermost Agents plugin can list prefixes and file channel and Channel Admin
-requests for you, under the same rules as the form. No agent can approve or deny
+Mattermost Agents plugin can list prefixes, file channel and Channel Admin
+requests for you, and tell you what you have pending, under the same rules as
+the form. No agent can approve or deny
 a request. The tools are listed on the built-in `commands.html` page.
 
 ---

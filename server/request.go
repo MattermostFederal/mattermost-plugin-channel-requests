@@ -344,13 +344,15 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		return "", errors.New("could not save your request; try again")
 	}
 
-	if err := p.postApprovalRequest(req, requester); err != nil {
+	postIDs, postErr := p.postApprovalRequest(req, requester)
+	if postErr != nil {
 		// Roll back the stored request so it isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
 		p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
-		p.API.LogError("failed to post channel request for approval", "error", err.Error())
+		p.API.LogError("failed to post channel request for approval", "error", postErr.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	p.saveApprovalPosts(pendingKindChannel, req.ID, postIDs)
 
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
@@ -530,7 +532,7 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 
 // postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
 // act on.
-func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) error {
+func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) ([]string, error) {
 	return p.postApprovalAttachment(
 		p.approvalAttachment(req, requester),
 		"@channel — a new channel request needs your review.",
@@ -563,7 +565,7 @@ func (p *Plugin) approvalChannel(config *configuration) (*model.Channel, error) 
 // approval channel, but when that isn't configured (or can't be found) it falls back to DMing every
 // System Admin so requests are never silently dropped. Shared by the channel-creation and
 // channel-admin request flows.
-func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) error {
+func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) ([]string, error) {
 	config := p.getConfiguration()
 
 	if strings.TrimSpace(config.ApprovalTeam) != "" || strings.TrimSpace(config.ApprovalChannel) != "" {
@@ -575,10 +577,11 @@ func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, hea
 				Message:   headerMessage,
 			}
 			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-			if _, postErr := p.API.CreatePost(post); postErr != nil {
-				return errors.Wrap(postErr, "failed to post approval request")
+			created, postErr := p.API.CreatePost(post)
+			if postErr != nil {
+				return nil, errors.Wrap(postErr, "failed to post approval request")
 			}
-			return nil
+			return []string{created.Id}, nil
 		}
 		p.API.LogWarn("configured approval channel unavailable; falling back to System Admins", "team_id", config.ApprovalTeam, "channel_id", config.ApprovalChannel, "error", err.Error())
 	}
@@ -586,15 +589,15 @@ func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, hea
 	return p.postApprovalToSystemAdmins(attachment)
 }
 
-// postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
-// it; once one does, the others' copies resolve to an "already handled" message.
-func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) error {
+// postApprovalToSystemAdmins DMs the approval request to every System Admin and returns the IDs of
+// the posts it created. Any admin can act on it; once one does, every recorded copy is resolved.
+func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) ([]string, error) {
 	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Active: true, Page: 0, PerPage: 100})
 	if appErr != nil {
-		return errors.Wrap(appErr, "failed to list System Admins")
+		return nil, errors.Wrap(appErr, "failed to list System Admins")
 	}
 
-	posted := 0
+	var posted []string
 	for _, admin := range admins {
 		if !isNotifiableUser(admin) || admin.Id == p.botUserID {
 			continue
@@ -606,17 +609,18 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 		}
 		post := &model.Post{UserId: p.botUserID, ChannelId: dm.Id}
 		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-		if _, appErr := p.API.CreatePost(post); appErr != nil {
+		created, appErr := p.API.CreatePost(post)
+		if appErr != nil {
 			p.API.LogWarn("failed to DM approval request to System Admin", "user_id", admin.Id, "error", appErr.Error())
 			continue
 		}
-		posted++
+		posted = append(posted, created.Id)
 	}
 
-	if posted == 0 {
-		return errors.New("no System Admins are available to receive the approval request")
+	if len(posted) == 0 {
+		return nil, errors.New("no System Admins are available to receive the approval request")
 	}
-	return nil
+	return posted, nil
 }
 
 // isNotifiableUser reports whether u should receive approval notifications:
@@ -660,8 +664,15 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		Title:   "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
+}
+
+// requestIDFooter names the request on its approval card, so an approver
+// can act on it with /channel-request approve or deny.
+func requestIDFooter(requestID string) string {
+	return "Request ID: " + requestID
 }
 
 func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction {

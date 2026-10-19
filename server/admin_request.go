@@ -116,13 +116,15 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		return "", errors.New("could not save your request; try again")
 	}
 
-	if err := p.postAdminApprovalRequest(req, requester, channel); err != nil {
+	postIDs, err := p.postAdminApprovalRequest(req, requester, channel)
+	if err != nil {
 		// Roll back so the stored request isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
 		p.releasePending(pendingKindAdmin, req.RequesterID, req.ID)
 		p.API.LogError("failed to post Channel Admin request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	p.saveApprovalPosts(pendingKindAdmin, req.ID, postIDs)
 
 	return "Your Channel Admin request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
@@ -210,7 +212,7 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 // dropped for want of an approval channel. The header @-mentions the guaranteed
 // approvers (System Admins + the target channel's Team Admins) so they're
 // pulled into the review when it lands in a channel.
-func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) error {
+func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) ([]string, error) {
 	return p.postApprovalAttachment(
 		p.adminApprovalAttachment(req, requester, channel),
 		p.adminApprovalHeader(channel),
@@ -307,6 +309,7 @@ func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.Use
 		Title:   "Channel Admin request",
 		Color:   "#0058CC",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.adminApprovalActions(req.ID, siteURL),
 	}
 }

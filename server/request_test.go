@@ -697,6 +697,7 @@ func TestSubmitRequest_StoresAndPostsForApproval(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
+	stubSubmittedRequestExists(api, kvRequestPrefix)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
@@ -827,7 +828,7 @@ func TestPostApprovalAttachment_ChannelPostFailureIsReturned(t *testing.T) {
 	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
 	api.On("CreatePost", mock.Anything).Return(nil, testAppErr("post failed"))
 
-	err := p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header")
+	_, err := p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header")
 
 	require.ErrorContains(t, err, "failed to post approval request")
 	// A failed post in a working channel is not retried as DMs.
@@ -848,9 +849,12 @@ func TestPostApprovalAttachment_FallsBackToSystemAdminDMs(t *testing.T) {
 	api.On("GetDirectChannel", "a2", "bot-user-id").Return(&model.Channel{Id: "dm2"}, nil)
 	api.On("GetDirectChannel", "a3", "bot-user-id").Return(&model.Channel{Id: "dm3"}, nil)
 	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm2" })).Return(nil, testAppErr("post failed"))
-	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm3" })).Return(&model.Post{}, nil)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm3" })).Return(&model.Post{Id: "post3"}, nil)
 
-	require.NoError(t, p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header"))
+	postIDs, err := p.postApprovalAttachment(&model.MessageAttachment{Title: "x"}, "header")
+	require.NoError(t, err)
+	// Only the posts that were created are recorded.
+	require.Equal(t, []string{"post3"}, postIDs)
 	// The bot never DMs itself.
 	api.AssertNotCalled(t, "GetDirectChannel", "bot-user-id", "bot-user-id")
 	api.AssertCalled(t, "LogWarn", "configured approval channel unavailable; falling back to System Admins",
@@ -864,7 +868,8 @@ func TestPostApprovalToSystemAdmins_Failures(t *testing.T) {
 		p := newTestPlugin(api)
 		api.On("GetUsers", mock.Anything).Return(nil, testAppErr("db down"))
 
-		require.ErrorContains(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}), "failed to list System Admins")
+		_, err := p.postApprovalToSystemAdmins(&model.MessageAttachment{})
+		require.ErrorContains(t, err, "failed to list System Admins")
 	})
 
 	t.Run("nobody receives it", func(t *testing.T) {
@@ -873,7 +878,8 @@ func TestPostApprovalToSystemAdmins_Failures(t *testing.T) {
 		p := newTestPlugin(api)
 		api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "bot-user-id"}}, nil)
 
-		require.EqualError(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}),
+		_, err := p.postApprovalToSystemAdmins(&model.MessageAttachment{})
+		require.EqualError(t, err,
 			"no System Admins are available to receive the approval request")
 	})
 }
@@ -1023,7 +1029,8 @@ func TestSubmitRequestPendingLimit(t *testing.T) {
 
 	lists := fakePendingLists(api)
 	mockMemberRequester(api)
-	api.On("KVSet", isRequestRecordKey, mock.Anything).Return(nil)
+	requestWrites := 0
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(mock.Arguments) { requestWrites++ }).Return(nil)
 	// The first request is still stored, so its entry keeps counting.
 	api.On("KVGet", isRequestRecordKey).Return([]byte("{}"), nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
@@ -1039,7 +1046,8 @@ func TestSubmitRequestPendingLimit(t *testing.T) {
 
 	_, err = p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Sales", Prefix: "team-"})
 	require.ErrorContains(t, err, "you have 1 pending requests waiting for review")
-	api.AssertNumberOfCalls(t, "KVSet", 1)
+	// Only the first request was saved.
+	require.Equal(t, 1, requestWrites)
 }
 
 func TestSubmitRequestDuplicate(t *testing.T) {
@@ -1130,7 +1138,8 @@ func TestPostApprovalToSystemAdmins_SkipsNonHumanAccounts(t *testing.T) {
 	api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
-	require.NoError(t, p.postApprovalToSystemAdmins(&model.MessageAttachment{}))
+	_, err := p.postApprovalToSystemAdmins(&model.MessageAttachment{})
+	require.NoError(t, err)
 	api.AssertNumberOfCalls(t, "GetDirectChannel", 1)
 }
 

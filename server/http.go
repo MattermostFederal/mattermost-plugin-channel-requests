@@ -502,6 +502,8 @@ func (p *Plugin) handleRequestAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"message": message})
 }
 
+// handleAction handles Approve/Deny clicks on a channel request card. The
+// checks live in decideChannelRequest, which the slash command shares.
 func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {
 	// Identity comes from the authenticated header, NOT request.UserId in
 	// the body — trusting the body would let anyone who can read a pending
@@ -517,126 +519,12 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
-	// Approvers: System Admins always. Team Admins of the approval team
-	// too, if the admin has opted in via AllowTeamAdminApprovers.
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
-		return
-	}
-	if !p.canApprove(actingUser) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny channel requests. Contact a System Admin."})
-		return
-	}
-
 	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load channel request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		// Only the click that wins the claim below updates the approval card.
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-
-	if approve && req.RequesterID == actingUser.Id && !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You can't approve your own request. Another approver has to review it."})
-		return
-	}
-
-	config := p.getConfiguration()
-	// Best-effort for the welcome post and audit; approve checks requesterErr.
-	requester, requesterErr := p.API.GetUser(req.RequesterID)
-
-	if requestExpired(req.CreatedAt, config.ExpiryDays(), model.GetMillis()) {
-		p.expireRequest(w, config, expiredRequest{
-			kvKey:       kvRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindChannel,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			postID:      request.PostId,
-			notice:      fmt.Sprintf("Your request for channel **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("EXPIRED: @%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
-				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
-		})
-		return
-	}
-
-	// Re-check what submitRequest checked, since the request may have been
-	// pending a while. A failed check leaves it pending so it can be denied.
-	if approve {
-		if msg := p.approvalBlocker(config, req, requester, requesterErr); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	// Atomically claim the request before acting on it. Two admins
-	// clicking Approve (or one Approve + one Deny) at nearly the same
-	// time both load a non-nil req; without an atomic claim both would
-	// proceed, creating duplicate channels or approving-and-denying the
-	// same request. Compare against the exact bytes we read so the claim
-	// is robust regardless of how the request struct is marshaled.
-	// Whoever wins owns the outcome; the loser is told it was already
-	// handled.
-	claimed, claimErr := p.API.KVCompareAndDelete(kvRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim channel request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		// The winner updates the card; overwriting it here would erase
-		// their outcome.
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-
-	var outcome string
-	if approve {
-		channel, createErr := p.createChannelForRequest(req)
-		if createErr != nil {
-			p.API.LogError("failed to create channel on approval", "error", createErr.Error())
-			// The claim already removed the request from the KV store.
-			// Restore it so a transient creation failure doesn't silently
-			// drop the pending request. If the restore ALSO fails the
-			// request is genuinely lost, so tell the approver to have the
-			// requester resubmit rather than implying a retry will work.
-			if restoreErr := p.storeRequest(req); restoreErr != nil {
-				p.API.LogError("failed to restore request after create failure", "error", restoreErr.Error())
-				p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
-				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
-				return
-			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
-			return
-		}
-		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
-		if requester != nil {
-			p.postWelcomeMessage(channel, req, requester, actingUser)
-		}
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", escapeMarkdown(req.DisplayName), channel.Name))
-		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request \"%s\" (~%s) from %s",
-			actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name, requesterUsername(requester, req.RequesterID)))
-	} else {
-		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", escapeMarkdown(req.DisplayName)))
-		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request \"%s\" from %s",
-			actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)))
-	}
-
-	// The KV key was already removed by the atomic claim above.
-	p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
+	p.writeDecision(w, request.PostId, p.decideChannelRequest(userID, requestID, request.PostId, approve))
 }
 
-// handleAdminAction handles Approve/Deny on a channel-admin request. Mirrors
-// handleAction but operates on adminRequest records and promotes nominees
-// instead of creating a channel.
+// handleAdminAction handles Approve/Deny clicks on a Channel Admin request
+// card. The checks live in decideAdminRequest.
 func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, approve bool) {
 	// Same rule as handleAction: the acting user comes from the session, not
 	// the client-supplied body.
@@ -651,160 +539,18 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity to approve/deny."})
-		return
-	}
-
 	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadAdminRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load channel-admin request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		// See handleAction.
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-
-	// A channel-admin request is scoped to a specific channel, so the check
-	// needs the loaded request's ChannelID and happens here rather than up
-	// front.
-	if !p.canApproveAdminRequest(actingUser, req.ChannelID) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to approve or deny this Channel Admin request. Contact a Team Admin of the channel's team or a System Admin."})
-		return
-	}
-	if approve && req.RequesterID == actingUser.Id && !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You can't approve your own request. Another approver has to review it."})
-		return
-	}
-
-	config := p.getConfiguration()
-	// Best-effort for notify and audit; approve checks requesterErr.
-	requester, requesterErr := p.API.GetUser(req.RequesterID)
-	channel, channelErr := p.API.GetChannel(req.ChannelID)
-
-	channelRef := "the channel"
-	if channelErr == nil {
-		channelRef = "~" + channel.Name
-	}
-	nominees := p.mentionList(req.NomineeIDs)
-
-	if requestExpired(req.CreatedAt, config.ExpiryDays(), model.GetMillis()) {
-		p.expireRequest(w, config, expiredRequest{
-			kvKey:       kvAdminRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindAdmin,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			postID:      request.PostId,
-			notice:      fmt.Sprintf("Your request to make %s Channel Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, channelRef),
-			audit: fmt.Sprintf("CHANNEL ADMIN EXPIRED: @%s closed the request for %s in %s from %s, which was not reviewed within %d days",
-				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
-		})
-		return
-	}
-
-	// On approval we need a live channel to promote into; bail before claiming
-	// the request so a deleted channel leaves the pending request intact.
-	// GetChannel returns archived channels too, so check DeleteAt.
-	if approve && (channelErr != nil || channel.DeleteAt != 0) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
-		return
-	}
-
-	// Re-check what submitAdminRequest checked about the requester. A failed
-	// check leaves the request pending so it can be denied.
-	if approve {
-		if msg := p.adminApprovalBlocker(req, requester, requesterErr); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	// Atomically claim the request before acting. Two reviewers clicking
-	// Approve/Deny at nearly the same time both load a non-nil req; without an
-	// atomic claim both would promote (or one approve + one deny) the same
-	// request. Compare against the exact bytes read so the claim is robust
-	// regardless of marshaling. Whoever wins owns the outcome; the loser is
-	// told it was already handled. Mirrors handleAction.
-	claimed, claimErr := p.API.KVCompareAndDelete(kvAdminRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim channel-admin request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-
-	var outcome string
-	if approve {
-		// Report only who was actually promoted; nominees who have since
-		// left the channel are skipped.
-		req.NomineeIDs = p.promoteChannelAdmins(req)
-		promoted := p.mentionList(req.NomineeIDs)
-		if promoted == "" {
-			outcome = fmt.Sprintf("⚠️ Approved by @%s, but nobody was promoted: the nominees are no longer members of %s.", actingUser.Username, channelRef)
-			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved, but nobody was promoted because they are no longer members of the channel.", nominees, channelRef))
-			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED (NO CHANGE): @%s approved %s for %s, but none were still members (requested by %s)",
-				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
-		} else {
-			p.postAdminPromotionMessage(channel, req, actingUser)
-			outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, promoted, channelRef)
-			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved. Promoted: %s.", nominees, channelRef, promoted))
-			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by %s)",
-				actingUser.Username, promoted, channelRef, requesterUsername(requester, req.RequesterID)))
-		}
-	} else {
-		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
-		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was denied.", nominees, channelRef))
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
-			actingUser.Username, nominees, channelRef))
-	}
-
-	// The KV key was already removed by the atomic claim above.
-	p.releasePending(pendingKindAdmin, req.RequesterID, req.ID)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
+	p.writeDecision(w, request.PostId, p.decideAdminRequest(userID, requestID, request.PostId, approve))
 }
 
-// expiredRequest describes a pending request whose approval card was
-// clicked after it expired.
-type expiredRequest struct {
-	kvKey       string
-	raw         []byte
-	kind        string
-	requestID   string
-	requesterID string
-	postID      string
-	notice      string // DM to the requester
-	audit       string // audit-channel line
-}
-
-// expireRequest closes an expired request: it claims the record like an
-// approve or deny would, tells the requester, and marks the card expired.
-func (p *Plugin) expireRequest(w http.ResponseWriter, config *configuration, e expiredRequest) {
-	claimed, claimErr := p.API.KVCompareAndDelete(e.kvKey, e.raw)
-	if claimErr != nil {
-		p.API.LogError("failed to claim expired request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
+// writeDecision answers a card click: the private reply, and the clicked
+// card resolved when the request was.
+func (p *Plugin) writeDecision(w http.ResponseWriter, postID string, d decisionResult) {
+	resp := model.PostActionIntegrationResponse{EphemeralText: d.Reply}
+	if d.Outcome != "" {
+		resp.Update = p.resolvedPost(postID, d.Outcome)
 	}
-	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	p.releasePending(e.kind, e.requesterID, e.requestID)
-	p.notifyRequester(e.requesterID, e.notice)
-	p.logAudit(config, e.audit)
-	writeJSON(w, model.PostActionIntegrationResponse{
-		EphemeralText: expiredText,
-		Update:        p.resolvedPost(e.postID, fmt.Sprintf("⌛ Expired: not reviewed within %d days.", config.ExpiryDays())),
-	})
+	writeJSON(w, resp)
 }
 
 // approvalBlocker returns why a channel request can't be approved as it
@@ -882,7 +628,12 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 	if appErr != nil || post == nil || post.UserId != p.botUserID {
 		return &model.Post{Message: status}
 	}
+	return resolvedCard(post, status)
+}
 
+// resolvedCard rebuilds an approval card post with the buttons removed and
+// status as its message and footer.
+func resolvedCard(post *model.Post, status string) *model.Post {
 	// Rebuild the attachment without actions, preserving the informational fields.
 	attachments := post.Attachments()
 	for _, attachment := range attachments {

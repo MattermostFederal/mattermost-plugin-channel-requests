@@ -89,6 +89,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
+	stubSubmittedRequestExists(api, kvAdminRequestPrefix)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{ApprovalTeam: "appteam", ApprovalChannel: "appch"})
@@ -147,6 +148,7 @@ func TestSubmitAdminRequest_NoApprovalChannelFallsBackToSystemAdmins(t *testing.
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
+	stubSubmittedRequestExists(api, kvAdminRequestPrefix)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	// No approval channel configured -> DM every System Admin, mirroring the
