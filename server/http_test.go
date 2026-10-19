@@ -463,3 +463,60 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	// The loser must not promote anyone.
 	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
+
+func TestResolvedPost_ArchivesOriginalTicketIntoThread(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	src := &model.Post{
+		Id:        "approval-post",
+		ChannelId: "approval-ch",
+		Message:   "@channel — a channel request needs review.",
+		UserId:    "bot-user-id",
+	}
+	model.ParseMessageAttachment(src, []*model.MessageAttachment{{
+		Title:  "Channel request",
+		Color:  "#F4A221",
+		Fields: []*model.MessageAttachmentField{{Title: "Requested by", Value: "@alice", Short: true}},
+		Actions: []*model.PostAction{{Name: "Approve"}, {Name: "Deny"}},
+	}})
+
+	api.On("GetPost", "approval-post").Return(src, nil)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool {
+		if post.RootId != "approval-post" || post.ChannelId != "approval-ch" {
+			return false
+		}
+		if !strings.Contains(post.Message, "Original request details") {
+			return false
+		}
+		att := extractFirstAttachment(post)
+		return att != nil &&
+			strings.HasPrefix(att.Title, "Original request") &&
+			len(att.Actions) == 0 &&
+			len(att.Fields) == 1
+	})).Return(&model.Post{Id: "archive-reply"}, nil)
+
+	out := p.resolvedPost("approval-post", "✅ Approved by @bob for @alice. Channel ~ops created.")
+	require.NotNil(t, out)
+	require.Equal(t, "✅ Approved by @bob for @alice. Channel ~ops created.", out.Message)
+	require.Nil(t, extractFirstAttachment(out), "squashed post must not keep the original attachment")
+}
+
+func TestResolvedPost_NoArchiveWhenAlreadySquashed(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetPost", "already-done").Return(&model.Post{
+		Id:        "already-done",
+		ChannelId: "approval-ch",
+		Message:   "This request has already been handled.",
+	}, nil)
+
+	out := p.resolvedPost("already-done", "This request has already been handled.")
+	require.Equal(t, "This request has already been handled.", out.Message)
+	api.AssertNotCalled(t, "CreatePost", mock.Anything)
+}
