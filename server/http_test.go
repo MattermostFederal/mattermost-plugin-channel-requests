@@ -477,9 +477,9 @@ func TestResolvedPost_ArchivesOriginalTicketIntoThread(t *testing.T) {
 		UserId:    "bot-user-id",
 	}
 	model.ParseMessageAttachment(src, []*model.MessageAttachment{{
-		Title:  "Channel request",
-		Color:  "#F4A221",
-		Fields: []*model.MessageAttachmentField{{Title: "Requested by", Value: "@alice", Short: true}},
+		Title:   "Channel request",
+		Color:   "#F4A221",
+		Fields:  []*model.MessageAttachmentField{{Title: "Requested by", Value: "@alice", Short: true}},
 		Actions: []*model.PostAction{{Name: "Approve"}, {Name: "Deny"}},
 	}})
 
