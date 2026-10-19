@@ -295,7 +295,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
 		p.postChannelAutoCreatedNotice(req, requester, channel, "System Admin")
-		p.logAudit(fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin)",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s created channel `%s` (%s) directly (System Admin)",
 			requester.Username, req.DisplayName, channel.Name), "")
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
@@ -405,24 +405,55 @@ func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest,
 	}
 }
 
-// logAudit posts an audit-trail line to the auto-created audit channel.
-// When threadPostID is set (usually the approval-card root), appends a
-// markdown permalink so reviewers can jump from audit → ticket thread.
-// No-op when ApprovalTeam is not configured (ensureAuditChannel returns nil).
-func (p *Plugin) logAudit(message, threadPostID string) {
+// auditOutcome selects the colored card styling for an audit-channel post.
+type auditOutcome int
+
+const (
+	auditApproved auditOutcome = iota // green ✅
+	auditDenied                       // red ❌
+	auditDirect                       // blue — System Admin bypass / immediate fulfill
+)
+
+// logAudit posts a colored attachment card to the auto-created audit channel.
+// When threadPostID is set (usually the approval-card root), the card includes
+// an "Open ticket thread" markdown link. No-op when ApprovalTeam is unset.
+func (p *Plugin) logAudit(kind auditOutcome, body, threadPostID string) {
 	ch := p.ensureAuditChannel()
 	if ch == nil {
 		return
 	}
+
+	color, title := auditCardStyle(kind)
+	text := strings.TrimSpace(body)
 	if link := p.postPermalink(threadPostID); link != "" {
-		message = message + "\n[Open ticket thread](" + link + ")"
+		text = text + "\n\n[Open ticket thread](" + link + ")"
 	}
-	if _, appErr := p.API.CreatePost(&model.Post{
+
+	post := &model.Post{
 		UserId:    p.botUserID,
 		ChannelId: ch.Id,
-		Message:   message,
-	}); appErr != nil {
+		Message:   title, // fallback when attachments are collapsed/hidden
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{{
+		Color: color,
+		Title: title,
+		Text:  text,
+	}})
+	if _, appErr := p.API.CreatePost(post); appErr != nil {
 		p.API.LogWarn("audit post failed", "channel_id", ch.Id, "error", appErr.Error())
+	}
+}
+
+func auditCardStyle(kind auditOutcome) (color, title string) {
+	switch kind {
+	case auditApproved:
+		return colorApproved, "✅ Approved"
+	case auditDenied:
+		return colorDenied, "❌ Denied"
+	case auditDirect:
+		return colorDirect, "⚡ Direct"
+	default:
+		return colorPending, "• Audit"
 	}
 }
 

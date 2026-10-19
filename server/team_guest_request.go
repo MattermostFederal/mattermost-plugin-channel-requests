@@ -88,7 +88,7 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 		if inviteErr := p.fulfillTeamGuestRequest(req, requester.Id); inviteErr != nil {
 			return "", inviteErr
 		}
-		p.logAudit(fmt.Sprintf("TEAM GUEST: @%s invited guest to team %s (email=%q)",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s invited guest to team %s (email=%q)",
 			requester.Username, team.DisplayName, email), "")
 		return fmt.Sprintf("Guest invitation emailed to **%s** for team **%s**.", email, team.DisplayName), nil
 	}

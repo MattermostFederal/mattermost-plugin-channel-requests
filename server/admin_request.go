@@ -86,7 +86,7 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	if !forceQueue && requester.IsSystemAdmin() {
 		p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, requester)
-		p.logAudit(fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Channel Admin in ~%s",
 			requester.Username, p.mentionList(req.NomineeIDs), channel.Name), "")
 		return fmt.Sprintf("Promoted %s to Channel Admin in ~%s.", p.mentionList(req.NomineeIDs), channel.Name), nil
 	}

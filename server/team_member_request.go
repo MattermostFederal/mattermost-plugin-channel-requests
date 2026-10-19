@@ -64,7 +64,7 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	// not required — governance is the approval card, not submit-side RBAC.
 	if !forceQueue && requester.IsSystemAdmin() {
 		p.addTeamMembers(req)
-		p.logAudit(fmt.Sprintf("TEAM MEMBER: @%s added %s to team %s",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s added %s to team %s",
 			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
 		return fmt.Sprintf("Added %s to **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
 	}

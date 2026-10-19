@@ -615,3 +615,17 @@ func TestPostPermalink(t *testing.T) {
 		require.Equal(t, "https://mm.example.com/ops/pl/post1", p.postPermalink("post1"))
 	})
 }
+
+func TestAuditCardStyle(t *testing.T) {
+	color, title := auditCardStyle(auditApproved)
+	require.Equal(t, colorApproved, color)
+	require.Equal(t, "✅ Approved", title)
+
+	color, title = auditCardStyle(auditDenied)
+	require.Equal(t, colorDenied, color)
+	require.Equal(t, "❌ Denied", title)
+
+	color, title = auditCardStyle(auditDirect)
+	require.Equal(t, colorDirect, color)
+	require.Equal(t, "⚡ Direct", title)
+}

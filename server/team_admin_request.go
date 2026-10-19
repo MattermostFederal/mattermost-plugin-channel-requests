@@ -74,7 +74,7 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 
 	if !forceQueue && requester.IsSystemAdmin() {
 		p.promoteTeamAdmins(req)
-		p.logAudit(fmt.Sprintf("TEAM ADMIN: @%s promoted %s to Team Admin in %s",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Team Admin in %s",
 			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
 		return fmt.Sprintf("Promoted %s to Team Admin in **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
 	}

@@ -112,7 +112,7 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		if err != nil {
 			return "", err
 		}
-		p.logAudit(fmt.Sprintf("BOT CREATED: @%s created bot @%s directly", requester.Username, bot.Username), "")
+		p.logAudit(auditDirect, fmt.Sprintf("@%s created bot @%s directly", requester.Username, bot.Username), "")
 		return fmt.Sprintf("Bot **@%s** created.", bot.Username), nil
 	}
 

@@ -102,7 +102,7 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		}
 		// Announce in the team-requests channel so reviewers still see it.
 		p.postTeamCreationAutoCreatedNotice(req, requester, team, "System Admin")
-		p.logAudit(fmt.Sprintf("TEAM CREATED: @%s created team %s (%s) directly (System Admin)%s",
+		p.logAudit(auditDirect, fmt.Sprintf("@%s created team %s (%s) directly (System Admin)%s",
 			requester.Username, req.DisplayName, team.Name, adminNote), "")
 		return fmt.Sprintf("Created team **%s**.%s", team.DisplayName, adminNote), nil
 	}

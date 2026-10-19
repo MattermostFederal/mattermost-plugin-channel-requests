@@ -19,9 +19,11 @@ const (
 
 	// colorPending is the sidebar color for the initial "ticket submitted" DM card.
 	// colorApproved and colorDenied are used when the root DM card is updated on outcome.
+	// colorDirect is used for System Admin bypass / immediate fulfill audit rows.
 	colorPending  = "#E8A838"
 	colorApproved = "#2DB887"
 	colorDenied   = "#D9534F"
+	colorDirect   = "#3B97D3"
 )
 
 // threadAnchor holds all four post IDs needed to relay messages between a
