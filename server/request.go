@@ -429,10 +429,12 @@ func (p *Plugin) logAudit(kind auditOutcome, body, threadPostID string) {
 		text = text + "\n\n[Open ticket thread](" + link + ")"
 	}
 
+	// Leave Message empty — the attachment Title already carries Approved/Denied/
+	// Direct. Duplicating it as the post body made every audit card show the
+	// status twice.
 	post := &model.Post{
 		UserId:    p.botUserID,
 		ChannelId: ch.Id,
-		Message:   title, // fallback when attachments are collapsed/hidden
 	}
 	model.ParseMessageAttachment(post, []*model.MessageAttachment{{
 		Color: color,
