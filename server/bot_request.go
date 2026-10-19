@@ -106,8 +106,13 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 	}
 
 	// System Admins can create bots without going through approval — unless
-	// ForceQueue (slash-command dialog) which always produces an approval card.
-	if !input.ForceQueue && requester.IsSystemAdmin() {
+	// ForceQueue (slash-command dialog) which always produces an approval card,
+	// or when token/webhook extras were requested (those are only fulfilled on
+	// the two-step approval path).
+	wantsExtras := req.RequestToken ||
+		req.IncomingWebhookChannelID != "" ||
+		req.OutgoingWebhookChannelID != ""
+	if !input.ForceQueue && requester.IsSystemAdmin() && !wantsExtras {
 		bot, err := p.createBotForRequest(req)
 		if err != nil {
 			return "", err
@@ -301,6 +306,24 @@ func (p *Plugin) channelDisplayRef(channelID string) string {
 		return "#" + ch.Name
 	}
 	return fmt.Sprintf("#%s (Team: %s)", ch.Name, team.DisplayName)
+}
+
+// channelNamesList resolves channel IDs to ~name for approval cards. Uses the
+// raw ID when a lookup fails so reviewers still see something actionable.
+func (p *Plugin) channelNamesList(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		ch, appErr := p.API.GetChannel(id)
+		if appErr != nil || ch == nil {
+			parts = append(parts, id)
+			continue
+		}
+		parts = append(parts, "~"+ch.Name)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (p *Plugin) storeBotRequest(req *botRequest) error {

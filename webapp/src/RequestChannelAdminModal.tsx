@@ -58,7 +58,7 @@ export const RequestChannelAdminModal = () => {
         dispatch(closeAdminRequestModal());
     };
     // Must run unconditionally — never after `if (!channelId) return null`.
-    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close, Boolean(channelId));
 
     if (!channelId) {
         return null;

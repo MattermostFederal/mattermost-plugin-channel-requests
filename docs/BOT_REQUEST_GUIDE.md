@@ -65,7 +65,7 @@ pick **Requests**, then the hub tile.
 
 | Field | What it does |
 |-------|--------------|
-| **Bot username** | Username the bot posts as. Lowercase letters, numbers, and hyphens only. 3–22 characters. Example: `deploy-notifier`. |
+| **Bot username** | Username the bot posts as. Lowercase letters, numbers, periods, underscores, and hyphens. 3–22 characters. Example: `deploy_bot` or `deploy-notifier`. |
 | **Display name** | Friendly name shown in messages. Example: `Deploy Notifier`. |
 | **Description** | Optional. What the bot does and which systems it connects to. |
 
@@ -182,7 +182,7 @@ step, but a security approver must still fill the other.
 | Setting | Purpose |
 |---------|---------|
 | **Approval team** | Owns `mattermost-bot-requests`. Required. |
-| **Allow bot account requests** | Enables bot entry points. Default **off**. |
+| **Allow bot account requests** | Enables bot entry points. Default **on**. |
 | **Security approver attribute** | User Attribute (access_control) for the security step. System Admins do **not** auto-qualify. |
 | **System approver attribute** | User Attribute for the system step. System Admins auto-qualify. |
 

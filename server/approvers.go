@@ -91,6 +91,14 @@ func (p *Plugin) userIsApprover(user *model.User, attrName string) (bool, error)
 	if field == nil {
 		return false, nil
 	}
+	// User-writable CPA fields must not grant approval rights — only admin-managed,
+	// LDAP/SAML-synced, or owner-managed fields are trusted.
+	if !propertyFieldIsApproverTrusted(field) {
+		return false, errors.Errorf(
+			"approver attribute %q must be admin-managed, LDAP/SAML-synced, or owner-managed (refusing user-writable field)",
+			attrName,
+		)
+	}
 
 	values, err := p.API.SearchPropertyValues(group.ID, model.PropertyValueSearchOpts{
 		GroupID:    group.ID,
@@ -192,4 +200,15 @@ func selectOptionsByID(field *model.PropertyField) map[string]string {
 func stringLooksAffirmative(s string) bool {
 	t := strings.TrimSpace(strings.ToLower(s))
 	return t != "" && t != "false" && t != "no" && t != "0" && t != "n" && t != "off"
+}
+
+// propertyFieldIsApproverTrusted reports whether a CPA field is safe to use as
+// an approval gate. User-editable fields are rejected so requesters cannot
+// grant themselves approval rights.
+func propertyFieldIsApproverTrusted(field *model.PropertyField) bool {
+	cpa, err := model.NewCPAFieldFromPropertyField(field)
+	if err != nil || cpa == nil {
+		return false
+	}
+	return cpa.IsAdminManaged() || cpa.IsSynced() || len(cpa.Attrs.Owners) > 0
 }

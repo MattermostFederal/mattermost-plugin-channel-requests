@@ -1,5 +1,6 @@
 import type {Store} from 'redux';
 
+import {fetchEnabledRequestTypes} from './client';
 import {makeDebug} from './debug';
 import {openBotRequestModal, openIncomingWebhookModal, openOutgoingWebhookModal} from './store';
 import type {GlobalState} from './store';
@@ -15,9 +16,12 @@ import type {GlobalState} from './store';
 // and the main card grid in a single listener.
 //
 // System Admins are never intercepted — they get the native flow.
+// When bot or webhook requests are disabled, native links are left alone.
 // Returns a disposer that removes the listener (call from Plugin.uninitialize).
 
 const debug = makeDebug('integrations-page');
+
+type IntegrationKind = 'bot' | 'incoming' | 'outgoing';
 
 function isSystemAdmin(store: Store): boolean {
     const state = store.getState() as GlobalState;
@@ -25,6 +29,19 @@ function isSystemAdmin(store: Store): boolean {
     const uid = users?.currentUserId ?? '';
     const roles = (uid ? users?.profiles?.[uid]?.roles : '') ?? '';
     return roles.split(' ').includes('system_admin');
+}
+
+function detectIntegrationKind(href: string): IntegrationKind | null {
+    if (href.includes('/integrations/incoming_webhooks') || href.includes('/integrations/add_incoming_webhook')) {
+        return 'incoming';
+    }
+    if (href.includes('/integrations/outgoing_webhooks') || href.includes('/integrations/add_outgoing_webhook')) {
+        return 'outgoing';
+    }
+    if (href.includes('/integrations/bot_accounts') || href.includes('/integrations/add_bot_account')) {
+        return 'bot';
+    }
+    return null;
 }
 
 export function installIntegrationsPageOverride(store: Store): () => void {
@@ -49,26 +66,39 @@ export function installIntegrationsPageOverride(store: Store): () => void {
         }
 
         const href = link.getAttribute('href') ?? '';
-
-        let action = null;
-        if (href.includes('/integrations/incoming_webhooks') || href.includes('/integrations/add_incoming_webhook')) {
-            action = openIncomingWebhookModal();
-            debug('intercepted incoming webhook click');
-        } else if (href.includes('/integrations/outgoing_webhooks') || href.includes('/integrations/add_outgoing_webhook')) {
-            action = openOutgoingWebhookModal();
-            debug('intercepted outgoing webhook click');
-        } else if (href.includes('/integrations/bot_accounts') || href.includes('/integrations/add_bot_account')) {
-            action = openBotRequestModal();
-            debug('intercepted bot accounts click');
-        }
-
-        if (!action) {
+        const kind = detectIntegrationKind(href);
+        if (!kind) {
             return;
         }
 
+        // Hold the click while we check enable toggles. If the type is
+        // disabled, fall through to the native Integrations page.
         event.preventDefault();
         event.stopImmediatePropagation();
-        store.dispatch(action);
+
+        void fetchEnabledRequestTypes().then((enabled) => {
+            if (kind === 'bot' && !enabled.bot) {
+                debug('bot requests disabled — leaving native bot accounts link');
+                window.location.assign(href);
+                return;
+            }
+            if ((kind === 'incoming' || kind === 'outgoing') && !enabled.webhook) {
+                debug('webhook requests disabled — leaving native webhook link');
+                window.location.assign(href);
+                return;
+            }
+
+            if (kind === 'incoming') {
+                debug('intercepted incoming webhook click');
+                store.dispatch(openIncomingWebhookModal());
+            } else if (kind === 'outgoing') {
+                debug('intercepted outgoing webhook click');
+                store.dispatch(openOutgoingWebhookModal());
+            } else {
+                debug('intercepted bot accounts click');
+                store.dispatch(openBotRequestModal());
+            }
+        });
     };
 
     document.addEventListener('click', onClick, true);

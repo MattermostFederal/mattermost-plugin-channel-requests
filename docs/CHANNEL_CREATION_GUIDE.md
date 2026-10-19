@@ -126,27 +126,24 @@ request in the **approval channel** with **Approve** and **Deny** buttons.
 
 ![The welcome message the bot posts in the new channel](images/channel-request/mattermost-creation-welcome.png)
 
-Requests from **System Admins** skip
-this step — the channel is created immediately.
+Requests from **System Admins** who submit via the webapp Request Hub / modal
+(not the slash-command dialog) skip this step — the channel is created
+immediately. Slash-command dialogs always queue for approval (`ForceQueue`).
 
 ---
 
 ## Admin setup
 
-Configure the plugin in **System Console → Plugins → Channel Requests** (or
-**Mattermost Request Hub**, depending on your install name). Search
-"Channel Requests" to jump straight to it.
+Configure the plugin in **System Console → Plugins → Mattermost Request Hub**.
 
 ![Finding Channel Requests in the System Console](images/admin/mattermost-admin-settings.png)
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team whose channel receives requests. Required. |
-| **Approval channel** | The channel where Approve/Deny cards are posted (root channel / admin requests). Required. |
+| **Approval team** | The team that owns plugin-managed approval channels. Required. |
 | **Allow channel requests** | Enables channel-creation entry points. |
-| **Channel domain prefixes** | The prefix list requesters pick from (see below). Leave empty for free-form URLs (not recommended). |
+| **Channel domain prefixes** | **Required.** The prefix list requesters pick from (see below). An empty list rejects every channel request. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny, not just System Admins. |
-| **Auto-approve requests from these users** | Requests from these users skip approval. |
 | **Per-team approval channels** | Default on. Creates `mattermost-channel-requests` in teams with a Team Admin or System Admin; those teams' channel requests go there (not the primary approval team). Ticket channels (including team-creation) live under sidebar category **Mattermost: Request Hub**. |
 
 > To fully funnel non-admins through the request flow, remove the built-in

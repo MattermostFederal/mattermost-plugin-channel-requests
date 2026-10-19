@@ -135,7 +135,7 @@ func (p *Plugin) ensureRootApprovalChannel() *model.Channel {
 		TeamId:      team.Id,
 		Name:        channelName,
 		DisplayName: "Mattermost: Channel Requests",
-		Type:        model.ChannelTypeOpen,
+		Type:        model.ChannelTypePrivate,
 		Purpose: fmt.Sprintf(
 			"Global channel and governance requests for %s. Reviewed by System and Team Admins.",
 			team.DisplayName,
@@ -155,8 +155,9 @@ func (p *Plugin) ensureRootApprovalChannel() *model.Channel {
 	if _, postErr := p.API.CreatePost(&model.Post{
 		UserId:    p.botUserID,
 		ChannelId: ch.Id,
-		Message: "This channel was created automatically by the Mattermost Tickets plugin. " +
-			"It is the global approval channel for channel creation, Channel Admin, Team Admin, and team creation requests. " +
+		Message: "This channel was created automatically by the Mattermost Request Hub plugin. " +
+			"It is the global approval channel for channel creation and Channel Admin requests. " +
+			"Team Admin and team creation requests go to mattermost-team-requests. " +
 			"Configure team-specific routing in System Console → Plugins → Mattermost Request Hub.",
 	}); postErr != nil {
 		p.API.LogWarn("failed to post welcome message in root approval channel",
@@ -317,7 +318,7 @@ func (p *Plugin) ensureNamedApprovalChannel(name, displayName, purpose string) *
 		UserId:    p.botUserID,
 		ChannelId: ch.Id,
 		Message: fmt.Sprintf(
-			"This channel was created automatically by the Mattermost Tickets plugin. "+
+			"This channel was created automatically by the Mattermost Request Hub plugin. "+
 				"**%s** requests are posted here for System Admin review. "+
 				"Reply to any request thread to ask the requester for more information.",
 			displayName,
@@ -422,7 +423,7 @@ func (p *Plugin) ensureTeamApprovalChannel(teamID string) (*model.Channel, error
 		TeamId:      teamID,
 		Name:        channelName,
 		DisplayName: "Mattermost: Channel Requests",
-		Type:        model.ChannelTypeOpen,
+		Type:        model.ChannelTypePrivate,
 		Purpose: fmt.Sprintf(
 			"Channel and admin promotion requests for %s. Team Admins review and approve requests here.",
 			team.DisplayName,
@@ -484,7 +485,7 @@ func (p *Plugin) addTeamApproversToChannel(teamID, channelID string) {
 // per-team approval channel so Team Admins know what it's for.
 func (p *Plugin) postChannelWelcomeMessage(ch *model.Channel, team *model.Team) {
 	msg := fmt.Sprintf(
-		"This channel was created automatically by the Mattermost Tickets plugin. "+
+		"This channel was created automatically by the Mattermost Request Hub plugin. "+
 			"Channel creation and Channel Admin promotion requests for the **%s** team are posted here for review.\n\n"+
 			"Team Admins will receive new-request notifications and can use the **Approve** / **Deny** buttons. "+
 			"Reply to any request thread to ask the requester for more information.",

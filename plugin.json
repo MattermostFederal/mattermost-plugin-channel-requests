@@ -61,7 +61,7 @@
                 "display_name": "Allow team guest requests",
                 "type": "bool",
                 "default": false,
-                "help_text": "When enabled, users can request a guest invite to a team. On approval, a shareable invite link is returned; optional email sends a Mattermost guest invitation. Requires Guest Accounts enabled. Routed to mattermost-team-requests."
+                "help_text": "When enabled, users can request a guest invite to a team. Email is required. On approval, Mattermost emails a channel-scoped guest invitation (InviteGuestsToTeam) — not a regular team signup link. Requires Guest Accounts enabled. Routed to mattermost-team-requests."
             },
             {
                 "key": "AllowBotTokenRequests",

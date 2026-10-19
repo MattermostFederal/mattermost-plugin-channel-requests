@@ -189,8 +189,8 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (or
 | Setting | Purpose |
 |---------|---------|
 | **Approval team** | Team that owns plugin-managed approval channels. Required. |
-| **Allow team requests** | Enables **Request a Team** entry points. Default **off**. |
-| **Allow team admin requests** | Enables **Request Team Admin** entry points. Default **off**. |
+| **Allow team requests** | Enables **Request a Team** entry points. Default **on**. |
+| **Allow team admin requests** | Enables **Request Team Admin** entry points. Default **on**. |
 
 Team creation and Team Admin cards both go to **`mattermost-team-requests`**.
 See the [Admin Guide](admin-guide.md) for the full settings reference.

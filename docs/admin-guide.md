@@ -42,11 +42,16 @@ Bot and webhook requests require **two distinct approvals**: one security step a
 
 Create and assign these attributes in **System Console → User Management → Attributes**. If they are unset or no users hold them, bot/webhook cards cannot complete.
 
+### Required for channel creation
+
+| Setting | Purpose |
+|---------|---------|
+| **Channel domain prefixes** | **Required** for channel requests. At least one prefix must be configured — an empty list rejects every channel-creation request. Requesters pick a prefix from a dropdown; the final URL is `<prefix><suffix>`. |
+
 ### Optional settings
 
 | Setting | Purpose |
 |---------|---------|
-| **Channel domain prefixes** | Restrict channel URL naming to a defined prefix list. Requesters pick a prefix from a dropdown; the final URL is `<prefix><suffix>`. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve or deny channel creation and channel admin requests (not team/bot/webhook). |
 | **Per-team approval channels** | Default **on**. Auto-creates `mattermost-channel-requests` in each team that has a Team Admin or System Admin member. Channel / Channel Admin requests from that team go there (not the primary approval team's root channel). All ticket channels (including **Mattermost: Team Requests**) are kept in a managed sidebar category **Mattermost: Request Hub**. |
 

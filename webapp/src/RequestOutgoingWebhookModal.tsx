@@ -43,7 +43,7 @@ export const RequestOutgoingWebhookModal = () => {
     };
     const close = () => { reset(); dispatch(closeOutgoingWebhookModal()); };
     // Must run unconditionally — never after `if (!isOpen) return null`.
-    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close, isOpen);
 
     if (!isOpen) {
         return null;

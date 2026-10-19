@@ -273,21 +273,32 @@ func (p *Plugin) siteURL() string {
 }
 
 // internalBaseURL returns an HTTP base URL that reaches the Mattermost server
-// via localhost, bypassing the public SiteURL. Cloud deployments route the
-// public hostname through a load balancer; a plugin calling its own public IP
-// from inside the server process often times out due to egress filtering.
-// Using http://localhost:<port> avoids that routing entirely.
-// Falls back to the public SiteURL if the listen address cannot be parsed.
+// on its listen address, bypassing the public SiteURL. Cloud deployments route
+// the public hostname through a load balancer; a plugin calling its own public
+// IP from inside the server process often times out due to egress filtering.
+// Falls back to the public SiteURL when the listen address cannot be parsed,
+// or when TLS is enabled on a loopback host (local cert verification fails).
 func (p *Plugin) internalBaseURL() string {
 	cfg := p.API.GetConfig()
 	if cfg == nil || cfg.ServiceSettings.ListenAddress == nil {
 		return p.siteURL()
 	}
-	_, port, err := net.SplitHostPort(*cfg.ServiceSettings.ListenAddress)
+	host, port, err := net.SplitHostPort(*cfg.ServiceSettings.ListenAddress)
 	if err != nil || port == "" {
 		return p.siteURL()
 	}
-	return "http://localhost:" + port
+	scheme := "http"
+	if cfg.ServiceSettings.ConnectionSecurity != nil &&
+		*cfg.ServiceSettings.ConnectionSecurity == model.ConnSecurityTLS {
+		scheme = "https"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "localhost"
+	}
+	if scheme == "https" && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
+		return p.siteURL()
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
 func (p *Plugin) postWebhookApprovalRequest(req *webhookRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {

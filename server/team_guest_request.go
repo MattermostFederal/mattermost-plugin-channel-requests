@@ -201,7 +201,7 @@ func (p *Plugin) teamGuestApprovalAttachment(req *teamGuestRequest, requester *m
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Team", Value: team.DisplayName, Short: true},
 		{Title: "Guest email", Value: req.Email, Short: true},
-		{Title: "Channels", Value: strings.Join(req.ChannelIDs, ", "), Short: false},
+		{Title: "Channels", Value: p.channelNamesList(req.ChannelIDs), Short: false},
 	}
 	if req.Reason != "" {
 		fields = append(fields, &model.MessageAttachmentField{Title: "Message / reason", Value: req.Reason, Short: false})

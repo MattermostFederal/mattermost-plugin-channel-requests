@@ -63,10 +63,14 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	// approve. Membership of the requester on the target team is intentionally
 	// not required — governance is the approval card, not submit-side RBAC.
 	if !forceQueue && requester.IsSystemAdmin() {
-		p.addTeamMembers(req)
+		failed := p.addTeamMembers(req)
 		p.logAudit(auditDirect, fmt.Sprintf("@%s added %s to team %s",
 			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
-		return fmt.Sprintf("Added %s to **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
+		msg := fmt.Sprintf("Added %s to **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName)
+		if len(failed) > 0 {
+			msg += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
+		}
+		return msg, nil
 	}
 
 	if err := p.storeTeamMemberRequest(req); err != nil {
@@ -133,15 +137,20 @@ func (p *Plugin) sendTeamMemberTicketCreatedDM(req *teamMemberRequest, requester
 	return created.Id, dm.Id
 }
 
-func (p *Plugin) addTeamMembers(req *teamMemberRequest) {
+// addTeamMembers adds each nominee to the team. Returns user IDs that failed
+// so callers can report partial success instead of always announcing success.
+func (p *Plugin) addTeamMembers(req *teamMemberRequest) []string {
+	var failed []string
 	for _, userID := range req.NomineeIDs {
 		if userID == "" {
 			continue
 		}
 		if _, appErr := p.API.CreateTeamMember(req.TeamID, userID); appErr != nil {
 			p.API.LogWarn("failed to add user to team", "team_id", req.TeamID, "user_id", userID, "error", appErr.Error())
+			failed = append(failed, userID)
 		}
 	}
+	return failed
 }
 
 func (p *Plugin) postTeamMemberApprovalRequest(req *teamMemberRequest, requester *model.User, team *model.Team) (postID, channelID string, err error) {

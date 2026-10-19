@@ -1189,12 +1189,19 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 
 	var outcome string
 	if approve {
-		p.addTeamMembers(req)
+		failed := p.addTeamMembers(req)
 		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
+		if len(failed) > 0 {
+			outcome += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
+		}
+		notifyText := fmt.Sprintf("Approved by @%s. %s added to %s.", actingUser.Username, nominees, teamRef)
+		if len(failed) > 0 {
+			notifyText += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
+		}
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
 			Color: colorApproved,
 			Title: "Team Member Request Approved",
-			Text:  fmt.Sprintf("Approved by @%s. %s added to %s.", actingUser.Username, nominees, teamRef),
+			Text:  notifyText,
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
 		p.logAudit(auditApproved, fmt.Sprintf("@%s added %s to %s (requested by %s)",
@@ -2066,14 +2073,23 @@ func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model
 // ID (so DM ticket threads still resolve), and sets Message to status.
 // Before stripping, the original request card is copied into a thread reply
 // (no action buttons) so reviewers can expand the thread and recover every
-// field after close. Callers pass a short outcome like
-// "✅ Approved by @bob for @alice. Channel ~ops created."
+// field after close. If that archive reply fails, attachments are retained
+// (actions stripped) so request details are not lost. Callers pass a short
+// outcome like "✅ Approved by @bob for @alice. Channel ~ops created."
 func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 	post, appErr := p.API.GetPost(postID)
 	if appErr != nil {
 		return &model.Post{Message: status}
 	}
-	p.archiveApprovalDetailsInThread(post)
+	if err := p.archiveApprovalDetailsInThread(post); err != nil {
+		post.Message = status
+		if att := extractFirstAttachment(post); att != nil {
+			kept := *att
+			kept.Actions = nil
+			model.ParseMessageAttachment(post, []*model.MessageAttachment{&kept})
+		}
+		return post
+	}
 	post.Message = status
 	post.DelProp("attachments")
 	return post
@@ -2081,14 +2097,15 @@ func (p *Plugin) resolvedPost(postID, status string) *model.Post {
 
 // archiveApprovalDetailsInThread posts a reply under the approval card that
 // preserves the original attachment fields (actions stripped). No-ops when the
-// post has already been squashed or has no attachments.
-func (p *Plugin) archiveApprovalDetailsInThread(post *model.Post) {
+// post has already been squashed or has no attachments. Returns an error when
+// the archive reply cannot be created so callers can retain the attachment.
+func (p *Plugin) archiveApprovalDetailsInThread(post *model.Post) error {
 	if post == nil || post.Id == "" || post.ChannelId == "" {
-		return
+		return nil
 	}
 	original := extractFirstAttachment(post)
 	if original == nil {
-		return
+		return nil
 	}
 	archived := *original
 	archived.Actions = nil
@@ -2108,7 +2125,9 @@ func (p *Plugin) archiveApprovalDetailsInThread(post *model.Post) {
 	if _, appErr := p.API.CreatePost(reply); appErr != nil {
 		p.API.LogWarn("failed to archive approval details into thread",
 			"post_id", post.Id, "error", appErr.Error())
+		return appErr
 	}
+	return nil
 }
 
 // resolveUsernameList takes a list of "@alice"/"alice"-style usernames

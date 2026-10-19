@@ -232,13 +232,20 @@ func (p *Plugin) OnConfigurationChange() error {
 
 	// Detect PerTeamApprovalChannels being enabled for the first time so we can
 	// backfill channels for teams that existed before the setting was toggled on.
-	// Only triggers on the false→true transition to avoid an unnecessary team-list
-	// scan on every unrelated config save while the setting is already enabled.
-	prevPerTeamEnabled := p.getConfiguration().PerTeamApprovalChannels
+	// Only triggers on a real false→true change after a previous configuration
+	// exists — OnConfigurationChange runs before OnActivate, and the first load
+	// must not race botUserID or duplicate the OnActivate sweep.
+	p.configurationLock.RLock()
+	hadPrevConfig := p.configuration != nil
+	prevPerTeamEnabled := false
+	if hadPrevConfig {
+		prevPerTeamEnabled = p.configuration.PerTeamApprovalChannels
+	}
+	p.configurationLock.RUnlock()
 
 	p.setConfiguration(configuration)
 
-	if configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
+	if hadPrevConfig && configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
 		go p.ensureAllTeamApprovalChannels()
 	}
 

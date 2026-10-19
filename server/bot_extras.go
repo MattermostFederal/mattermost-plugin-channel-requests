@@ -161,8 +161,15 @@ func (p *Plugin) scheduleTokenPostDeletion(postID string) {
 			_ = json.Unmarshal(raw, &entries)
 		}
 		entries = append(entries, entry)
-		data, _ := json.Marshal(entries)
-		if appErr := p.API.KVSet(tokenPostRegistryKey, data); appErr == nil {
+		data, err := json.Marshal(entries)
+		if err != nil {
+			break
+		}
+		ok, appErr := p.API.KVCompareAndSet(tokenPostRegistryKey, raw, data)
+		if appErr != nil {
+			continue
+		}
+		if ok {
 			break
 		}
 	}
@@ -178,39 +185,54 @@ func (p *Plugin) scheduleTokenPostDeletion(postID string) {
 // cleanupExpiredTokenPosts deletes any token DM posts whose 72-hour window
 // elapsed while the plugin was not running. Called from OnActivate.
 func (p *Plugin) cleanupExpiredTokenPosts() {
-	raw, appErr := p.API.KVGet(tokenPostRegistryKey)
-	if appErr != nil || raw == nil {
-		return
-	}
-	var entries []tokenPostEntry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return
-	}
+	armed := map[string]bool{}
+	for range 3 {
+		raw, appErr := p.API.KVGet(tokenPostRegistryKey)
+		if appErr != nil || raw == nil {
+			return
+		}
+		var entries []tokenPostEntry
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return
+		}
 
-	now := time.Now().Unix()
-	var remaining []tokenPostEntry
-	for _, e := range entries {
-		if e.ExpiresAt <= now {
-			if appErr := p.API.DeletePost(e.PostID); appErr != nil {
-				p.API.LogWarn("cleanup: failed to delete expired token post",
-					"post_id", e.PostID, "error", appErr.Error())
+		now := time.Now().Unix()
+		var remaining []tokenPostEntry
+		for _, e := range entries {
+			if e.ExpiresAt <= now {
+				if delErr := p.API.DeletePost(e.PostID); delErr != nil {
+					p.API.LogWarn("cleanup: failed to delete expired token post",
+						"post_id", e.PostID, "error", delErr.Error())
+				}
+				continue
 			}
-		} else {
 			remaining = append(remaining, e)
-			// Re-arm the in-process timer for the remaining window.
+			if armed[e.PostID] {
+				continue
+			}
+			armed[e.PostID] = true
 			delay := time.Duration(e.ExpiresAt-now) * time.Second
 			postID := e.PostID
 			time.AfterFunc(delay, func() {
-				if appErr := p.API.DeletePost(postID); appErr != nil {
-					p.API.LogWarn("failed to delete expired token post", "post_id", postID, "error", appErr.Error())
+				if delErr := p.API.DeletePost(postID); delErr != nil {
+					p.API.LogWarn("failed to delete expired token post", "post_id", postID, "error", delErr.Error())
 				}
 				p.removeTokenPostFromRegistry(postID)
 			})
 		}
-	}
 
-	data, _ := json.Marshal(remaining)
-	_ = p.API.KVSet(tokenPostRegistryKey, data)
+		data, err := json.Marshal(remaining)
+		if err != nil {
+			return
+		}
+		ok, casErr := p.API.KVCompareAndSet(tokenPostRegistryKey, raw, data)
+		if casErr != nil {
+			continue
+		}
+		if ok {
+			return
+		}
+	}
 }
 
 func (p *Plugin) removeTokenPostFromRegistry(postID string) {
@@ -226,9 +248,16 @@ func (p *Plugin) removeTokenPostFromRegistry(postID string) {
 				filtered = append(filtered, e)
 			}
 		}
-		data, _ := json.Marshal(filtered)
-		if appErr := p.API.KVSet(tokenPostRegistryKey, data); appErr == nil {
-			break
+		data, err := json.Marshal(filtered)
+		if err != nil {
+			return
+		}
+		ok, appErr := p.API.KVCompareAndSet(tokenPostRegistryKey, raw, data)
+		if appErr != nil {
+			continue
+		}
+		if ok {
+			return
 		}
 	}
 }

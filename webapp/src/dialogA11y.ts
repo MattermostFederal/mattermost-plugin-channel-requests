@@ -13,14 +13,21 @@ const FOCUSABLE_SELECTOR =
 // it moves focus into the dialog (first focusable, else the dialog root) and
 // restores the previously focused element on close.
 //
+// isOpen must be passed because every modal mounts while closed (root
+// components). An empty dependency array would run once with dialogRef null
+// and never re-run when the dialog actually opens.
+//
 // The handler yields to children that already consumed the Tab (the
 // MemberPicker uses Tab to complete the highlighted candidate and calls
 // preventDefault), so autocomplete completion still works inside the trap.
-export function useDialogFocusTrap(onClose: () => void) {
+export function useDialogFocusTrap(onClose: () => void, isOpen: boolean) {
     const dialogRef = useRef<HTMLDivElement>(null);
     const previouslyFocused = useRef<HTMLElement | null>(null);
 
     useEffect(() => {
+        if (!isOpen) {
+            return undefined;
+        }
         const root = dialogRef.current;
         if (!root) {
             return undefined;
@@ -43,7 +50,7 @@ export function useDialogFocusTrap(onClose: () => void) {
                 prev.focus();
             }
         };
-    }, []);
+    }, [isOpen]);
 
     const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Escape') {

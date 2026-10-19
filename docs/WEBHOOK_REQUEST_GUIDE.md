@@ -177,7 +177,7 @@ so the final approver can retry.
 | Setting | Purpose |
 |---------|---------|
 | **Approval team** | Owns `mattermost-webhook-requests`. Required. |
-| **Allow webhook requests** | Enables incoming/outgoing entry points. Default **off**. |
+| **Allow webhook requests** | Enables incoming/outgoing entry points. Default **on**. |
 | **Security / System approver attributes** | Same two-step attributes as bot requests. |
 
 See the [Admin Guide](admin-guide.md) for attribute setup and the full settings

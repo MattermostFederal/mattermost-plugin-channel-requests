@@ -85,7 +85,7 @@ export const RequestHubModal = () => {
     const alreadyTeamAdmin = useSelector((state: GlobalState) => isCurrentUserTeamAdmin(state, teamId));
     const [enabled, setEnabled] = useState<EnabledRequestTypes>(defaultEnabled);
     const close = () => dispatch(closeHubModal());
-    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close, isOpen);
 
     useEffect(() => {
         if (!isOpen) {

@@ -520,3 +520,33 @@ func TestResolvedPost_NoArchiveWhenAlreadySquashed(t *testing.T) {
 	require.Equal(t, "This request has already been handled.", out.Message)
 	api.AssertNotCalled(t, "CreatePost", mock.Anything)
 }
+
+func TestResolvedPost_RetainsAttachmentWhenArchiveFails(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	src := &model.Post{
+		Id:        "approval-post",
+		ChannelId: "approval-ch",
+		Message:   "@channel — a channel request needs review.",
+		UserId:    "bot-user-id",
+	}
+	model.ParseMessageAttachment(src, []*model.MessageAttachment{{
+		Title:   "Channel request",
+		Color:   "#F4A221",
+		Fields:  []*model.MessageAttachmentField{{Title: "Requested by", Value: "@alice", Short: true}},
+		Actions: []*model.PostAction{{Name: "Approve"}, {Name: "Deny"}},
+	}})
+
+	api.On("GetPost", "approval-post").Return(src, nil)
+	api.On("CreatePost", mock.Anything).Return(nil, testAppErr("create failed"))
+
+	out := p.resolvedPost("approval-post", "✅ Approved.")
+	require.Equal(t, "✅ Approved.", out.Message)
+	att := extractFirstAttachment(out)
+	require.NotNil(t, att, "attachment must be retained when archive fails")
+	require.Empty(t, att.Actions, "Approve/Deny buttons must still be stripped")
+	require.Len(t, att.Fields, 1)
+}

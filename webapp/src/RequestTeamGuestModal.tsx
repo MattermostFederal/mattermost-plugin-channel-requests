@@ -48,7 +48,7 @@ export const RequestTeamGuestModal = () => {
         reset();
         dispatch(closeTeamGuestRequestModal());
     };
-    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close);
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close, isOpen);
 
     if (!isOpen) {
         return null;

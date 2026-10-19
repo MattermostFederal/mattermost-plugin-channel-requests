@@ -50,11 +50,15 @@ func TestAttributeValueIsSet_SelectResolvesOptionNames(t *testing.T) {
 }
 
 // mockApproverAttr wires the three Property API calls for one attribute lookup.
+// The field is admin-managed so userIsApprover accepts it as an approval gate.
 func mockApproverAttr(api *plugintest.API, attrName, userID string, values []*model.PropertyValue) {
 	api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(&model.PropertyGroup{ID: "grp"}, nil)
 	api.On("GetPropertyFieldByName", "grp", "", attrName).Return(&model.PropertyField{
 		ID:   "fld-" + attrName,
 		Type: model.PropertyFieldTypeText,
+		Attrs: model.StringInterface{
+			model.CustomProfileAttributesPropertyAttrsManaged: "admin",
+		},
 	}, nil)
 	api.On("SearchPropertyValues", "grp", mock.MatchedBy(func(opts model.PropertyValueSearchOpts) bool {
 		return opts.TargetType == model.PropertyValueTargetTypeUser &&
@@ -89,6 +93,21 @@ func TestUserIsApprover(t *testing.T) {
 		ok, err := p.userIsApprover(&model.User{Id: "u1"}, "security_approver")
 		require.NoError(t, err)
 		require.False(t, ok)
+	})
+
+	t.Run("user-writable attribute is rejected", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(&model.PropertyGroup{ID: "grp"}, nil)
+		api.On("GetPropertyFieldByName", "grp", "", "self_serve").Return(&model.PropertyField{
+			ID:   "fld-self",
+			Type: model.PropertyFieldTypeText,
+			// No Managed / LDAP / SAML / Owners — user can write this field.
+		}, nil)
+		ok, err := p.userIsApprover(&model.User{Id: "u1"}, "self_serve")
+		require.Error(t, err)
+		require.False(t, ok)
+		api.AssertNotCalled(t, "SearchPropertyValues", mock.Anything, mock.Anything)
 	})
 }
 

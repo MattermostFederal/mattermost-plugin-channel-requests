@@ -48,7 +48,7 @@ make deploy  # optional: deploy to a running Mattermost server
 **System Console → Plugins → Mattermost Request Hub**
 
 - Set **Approval team**
-- Enable the request types you need (team member / guest default off)
+- Enable the request types you need (guest invites default off; team member / team / bot / webhook default on)
 - Configure channel domain prefixes for channel creation
 - For guests: enable Guest Accounts on the server before relying on emailed invites
 

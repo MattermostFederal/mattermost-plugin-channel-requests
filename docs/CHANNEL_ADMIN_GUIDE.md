@@ -127,11 +127,9 @@ requests, in **System Console → Plugins → Channel Requests** (or
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team that owns the approval channel. Required. |
-| **Approval channel** | The channel where Channel Admin request cards are posted. **Required** — if it's unset, requesters are shown an error instead of the request being dropped. |
+| **Approval team** | The team that owns plugin-managed approval channels. Required. |
 | **Allow channel admin requests** | Enables Channel Admin entry points. |
 | **Team Admins can approve requests** | Also lets Team Admins of the approval team approve/deny. (Team Admins of the *requested channel's* team can always act on that channel's admin requests.) |
-| **Auto-approve requests from these users** | Requests from these users skip approval — nominees are promoted immediately. |
 | **Per-team approval channels** | Default on. Same per-team routing as channel creation — requests go to that team's `mattermost-channel-requests` when it has a Team Admin or System Admin. |
 
 See the [channel-creation guide](CHANNEL_CREATION_GUIDE.md#admin-setup) for the full settings

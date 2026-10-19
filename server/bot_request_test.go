@@ -69,6 +69,30 @@ func TestSubmitBotRequest_SystemAdminWithOwner(t *testing.T) {
 	require.Contains(t, msg, "svc-bot")
 }
 
+func TestSubmitBotRequest_SystemAdminWithExtrasQueues(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowBotTokenRequests: true})
+
+	api.On("GetUser", "u_admin").Return(&model.User{Id: "u_admin", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	api.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id", DisplayName: "App Team"}, nil)
+	api.On("GetChannelByName", "appteam-id", "mattermost-bot-requests", false).
+		Return(&model.Channel{Id: "bots-ch"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "approval-1"}, nil)
+	api.On("GetDirectChannel", "u_admin", "bot-user-id").Return(&model.Channel{Id: "dm-ch"}, nil)
+
+	msg, err := p.submitBotRequest("u_admin", botRequestInput{
+		Username: "tokbot", DisplayName: "Token Bot", RequestToken: true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, msg, "submitted for approval")
+	api.AssertNotCalled(t, "CreateBot", mock.Anything)
+}
+
 func TestSubmitBotRequest_RegularUserQueuesInBotChannel(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)

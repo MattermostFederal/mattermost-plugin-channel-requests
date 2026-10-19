@@ -1,6 +1,6 @@
-# Local-only convenience — NOT committed. GNU make reads GNUmakefile before
-# Makefile, so this file just include's the real Makefile and adds one target.
-# Delete it to remove; it changes nothing in the tracked build.
+# Tracked local-deploy helper. GNU make reads GNUmakefile before Makefile, so
+# this file includes the real Makefile and adds deploy-local. CI and contributors
+# using GNU make pick this up; BSD make still uses Makefile alone.
 #
 # `make deploy-local` mirrors the alertmanager plugin: build the bundle and
 # upload it to an ALREADY-RUNNING Mattermost over the API (no docker managed
