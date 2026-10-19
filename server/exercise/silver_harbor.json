@@ -1,0 +1,66 @@
+{
+  "id": "silver-harbor",
+  "name": "Silver Harbor",
+  "personas": [
+    {"role": "chiefops", "first_name": "Renee", "last_name": "Castellan", "position": "Chief of current operations, Northwind Joint Operations Center"},
+    {"role": "planner", "first_name": "Dana", "last_name": "Okoro", "position": "Air refueling planner, Northwind Joint Operations Center"},
+    {"role": "tankerac", "first_name": "Hannah", "last_name": "Whitmore", "position": "Tanker aircraft commander, Kestrel Tanker Detachment, Kestrel Field"},
+    {"role": "boomop", "first_name": "Luis", "last_name": "Ferrante", "position": "Boom operator, Kestrel Tanker Detachment, Kestrel Field"},
+    {"role": "bomberac", "first_name": "Marcus", "last_name": "Reyland", "position": "Bomber aircraft commander, Dunmore Bomber Detachment, Dunmore Island"},
+    {"role": "airfield", "first_name": "Keiko", "last_name": "Brand", "position": "Airfield manager, Port Vellan Air Station"}
+  ],
+  "operations": [
+    {
+      "act": 1,
+      "operation_id": "current-ops-channel",
+      "kind": "channel",
+      "suffix": "current-ops",
+      "display_name": "Northwind Current Ops",
+      "purpose": "Operations floor coordination for the Silver Harbor refueling plan.",
+      "requester": "chiefops",
+      "members": ["planner", "bomberac"],
+      "admins": ["chiefops"]
+    },
+    {
+      "act": 1,
+      "operation_id": "tanker-contingency-request",
+      "kind": "channel_request",
+      "suffix": "tanker-fallout",
+      "display_name": "Tanker Fallout",
+      "purpose": "Boom failure on the refueling track: replan the offload and recover the bomber.",
+      "requester": "planner",
+      "members": ["boomop", "bomberac"],
+      "admins": ["tankerac"]
+    },
+    {
+      "act": 1,
+      "operation_id": "bomber-divert-request",
+      "kind": "channel_request",
+      "suffix": "bomber-divert",
+      "display_name": "Bomber Divert to Port Vellan",
+      "purpose": "Divert coordination for the bomber that could not take on fuel: ramp, fuel and maintenance at Port Vellan.",
+      "private": true,
+      "requester": "bomberac",
+      "members": ["airfield", "planner"]
+    },
+    {
+      "act": 1,
+      "operation_id": "vellan-ramp-request",
+      "kind": "channel_request",
+      "suffix": "vellan-ramp",
+      "display_name": "Port Vellan Ramp Space",
+      "purpose": "Parking and a maintenance slot for the diverted bomber.",
+      "requester": "airfield",
+      "members": ["bomberac", "tankerac"],
+      "age_days": 45
+    },
+    {
+      "act": 1,
+      "operation_id": "current-ops-admin-request",
+      "kind": "admin_request",
+      "channel": "current-ops-channel",
+      "requester": "chiefops",
+      "nominees": ["planner"]
+    }
+  ]
+}

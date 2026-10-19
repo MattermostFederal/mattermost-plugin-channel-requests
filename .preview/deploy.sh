@@ -52,7 +52,7 @@ for role in team_user system_user; do
 done
 
 config="$(mm_api GET /config | jq -ec --arg id "$id" --arg team "$team_id" --arg channel "$channel_id" \
-  '.PluginSettings.Plugins[$id] = ((.PluginSettings.Plugins[$id] // {}) + {approvalteam: $team, approvalchannel: $channel})')" \
+  '.PluginSettings.Plugins[$id] = ((.PluginSettings.Plugins[$id] // {}) + {approvalteam: $team, approvalchannel: $channel, enableexercise: true})')" \
   || { echo "could not read the server config"; exit 1; }
 mm_api PUT /config "$config" >/dev/null || { echo "could not save the plugin config"; exit 1; }
-echo "configured ${id}: approvals post to ~${APPROVAL_CHANNEL} in ${APPROVAL_TEAM}; non-admins request channels instead of creating them"
+echo "configured ${id}: approvals post to ~${APPROVAL_CHANNEL} in ${APPROVAL_TEAM}; non-admins request channels instead of creating them; exercise mode is on"

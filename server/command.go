@@ -18,11 +18,12 @@ const (
 	subcommandList     = "list"
 	subcommandApprove  = "approve"
 	subcommandDeny     = "deny"
+	subcommandExercise = "exercise"
 	subcommandHelp     = "help"
 )
 
 // subcommandHint lists the subcommands for the autocomplete hint.
-const subcommandHint = "[create|admin|prefixes|list|approve|deny|help]"
+const subcommandHint = "[create|admin|prefixes|list|approve|deny|exercise|help]"
 
 // notConfiguredMessage is shown by every entry point that needs a prefix
 // when none is configured.
@@ -36,6 +37,7 @@ const commandUsage = "Usage:\n" +
 	"- `/channel-request list` lists your pending requests and their IDs.\n" +
 	"- `/channel-request approve <request ID>` approves a request, as its Approve button would.\n" +
 	"- `/channel-request deny <request ID>` denies a request, as its Deny button would.\n" +
+	"- `/channel-request exercise populate|teardown|status` seeds, removes or reports marked exercise data in this team (System Admins, when exercise mode is on).\n" +
 	"- `/channel-request help` shows this message."
 
 func getCommand() *model.Command {
@@ -81,6 +83,12 @@ func getAutocompleteData() *model.AutocompleteData {
 	deny.AddTextArgument("The request ID from the approval card", "<request ID>", "")
 	autocomplete.AddCommand(deny)
 
+	exercise := model.NewAutocompleteData(subcommandExercise, "populate|teardown|status", "Seed, remove or report exercise data (System Admins, exercise mode on)")
+	exercise.AddCommand(model.NewAutocompleteData(exercisePopulate, "", "Seed marked exercise data into this team"))
+	exercise.AddCommand(model.NewAutocompleteData(exerciseTeardown, "", "Remove this team's exercise data"))
+	exercise.AddCommand(model.NewAutocompleteData(exerciseStatus, "", "Compare recorded and live exercise data"))
+	autocomplete.AddCommand(exercise)
+
 	help := model.NewAutocompleteData(subcommandHelp, "", "Show how to use /channel-request")
 	autocomplete.AddCommand(help)
 
@@ -106,6 +114,8 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 		return p.executeDecision(args, fields[2:], true), nil
 	case subcommandDeny:
 		return p.executeDecision(args, fields[2:], false), nil
+	case subcommandExercise:
+		return p.executeExercise(args, fields[2:]), nil
 	case subcommandHelp:
 		return ephemeralResponse(commandUsage), nil
 	default:

@@ -32,6 +32,8 @@ type adminRequest struct {
 	NomineeIDs []string `json:"nominee_ids"`
 	// CreatedAt is when the request was submitted, in milliseconds.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 }
 
 // submitAdminRequest validates the input and either promotes the nominees
@@ -213,10 +215,11 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 // approvers (System Admins + the target channel's Team Admins) so they're
 // pulled into the review when it lands in a channel.
 func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) ([]string, error) {
-	return p.postApprovalAttachment(
-		p.adminApprovalAttachment(req, requester, channel),
-		p.adminApprovalHeader(channel),
-	)
+	header := exerciseMarker + ": a Channel Admin request needs your review."
+	if !req.Exercise {
+		header = p.adminApprovalHeader(channel)
+	}
+	return p.postApprovalAttachment(p.adminApprovalAttachment(req, requester, channel), header)
 }
 
 // adminApprovalHeader builds the message that leads the approval post,
@@ -306,7 +309,7 @@ func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.Use
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel Admin request",
+		Title:   exerciseLabel(req.Exercise) + "Channel Admin request",
 		Color:   "#0058CC",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

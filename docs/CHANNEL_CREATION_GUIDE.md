@@ -95,6 +95,8 @@ things from the message box, and replies are only visible to you:
 - `list` lists your pending requests, with their IDs and expiry dates.
 - `approve <request ID>` and `deny <request ID>` let approvers act on a request
   without clicking its card. The ID is at the bottom of the approval card.
+- `exercise populate|teardown|status` lets System Admins seed, remove or report
+  marked exercise data for training and demonstrations, when exercise mode is on.
 - `help` shows the usage message.
 
 The full reference, with every `create` option and what each error means, is the
@@ -162,6 +164,8 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 | **Request expiry (days)** | Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most `3650`. Default `30`; `0` means requests never expire. A change applies to requests already pending too. |
 | **Audit channel ID** | Optional. Posts an audit line for every approve/deny. Must be an existing private channel; otherwise audit lines are skipped and a warning is logged. |
 | **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. |
+| **Enable exercise mode** | Off by default. **Do not enable in production.** When on, System Admins can run `/channel-request exercise populate`, `teardown` and `status` to seed and remove marked exercise data: persona accounts nobody can sign in as, channels, and pending requests. Approving a seeded request creates a real channel marked EXERCISE; teardown archives it. Personas use `exercise.invalid` email addresses, so a server or team that restricts email domains must allow that domain. |
+| **Exercise scenario (JSON)** | Optional. Blank uses the built-in fictional scenario. Paste a scenario to seed your own; it is stored only in this server's configuration. The format is on the plugin's built-in `commands.html` page. |
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Public/Private Channel** permission from the System User role (System

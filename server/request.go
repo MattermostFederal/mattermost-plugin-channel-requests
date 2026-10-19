@@ -70,6 +70,8 @@ type channelRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 }
 
 // requestExpired reports whether a request created at createdAt (ms) is
@@ -532,11 +534,13 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 
 // postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
 // act on.
+// Exercise requests mention nobody, so seeding doesn't notify the channel.
 func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) ([]string, error) {
-	return p.postApprovalAttachment(
-		p.approvalAttachment(req, requester),
-		"@channel — a new channel request needs your review.",
-	)
+	header := "@channel — a new channel request needs your review."
+	if req.Exercise {
+		header = exerciseMarker + ": a new channel request needs your review."
+	}
+	return p.postApprovalAttachment(p.approvalAttachment(req, requester), header)
 }
 
 // approvalChannel returns the configured approval channel, or an error when
@@ -661,7 +665,7 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel creation request",
+		Title:   exerciseLabel(req.Exercise) + "Channel creation request",
 		Color:   "#0058CC",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

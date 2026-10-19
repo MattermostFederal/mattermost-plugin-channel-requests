@@ -161,15 +161,19 @@ func (p *Plugin) reservePending(kind, userID string, entry pendingEntry, config 
 // pendingRequestExists reports whether the request behind a pending entry
 // is still stored.
 func (p *Plugin) pendingRequestExists(kind, requestID string) (bool, error) {
-	prefix := kvRequestPrefix
-	if kind == pendingKindAdmin {
-		prefix = kvAdminRequestPrefix
-	}
-	data, appErr := p.API.KVGet(prefix + requestID)
+	data, appErr := p.API.KVGet(requestKVPrefix(kind) + requestID)
 	if appErr != nil {
 		return false, errors.Wrap(appErr, "failed to load pending request")
 	}
 	return data != nil, nil
+}
+
+// requestKVPrefix is the KV prefix of the records of a pending kind.
+func requestKVPrefix(kind string) string {
+	if kind == pendingKindAdmin {
+		return kvAdminRequestPrefix
+	}
+	return kvRequestPrefix
 }
 
 func duplicateRequestError(kind, key string) error {

@@ -321,7 +321,7 @@ func TestGetAutocompleteData_ListsEverySubcommand(t *testing.T) {
 		require.NotEmpty(t, sub.HelpText, sub.Trigger)
 		require.Contains(t, commandUsage, "/channel-request "+sub.Trigger, sub.Trigger)
 	}
-	require.Equal(t, []string{subcommandCreate, subcommandAdmin, subcommandPrefixes, subcommandList, subcommandApprove, subcommandDeny, subcommandHelp}, names)
+	require.Equal(t, []string{subcommandCreate, subcommandAdmin, subcommandPrefixes, subcommandList, subcommandApprove, subcommandDeny, subcommandExercise, subcommandHelp}, names)
 	require.NoError(t, data.IsValid())
 	// The hint names every subcommand, in the same order.
 	require.Equal(t, "["+strings.Join(names, "|")+"]", subcommandHint)

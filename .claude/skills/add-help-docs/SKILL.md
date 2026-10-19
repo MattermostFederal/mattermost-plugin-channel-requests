@@ -71,7 +71,7 @@ heading structure.
 | `public/help/help.html` | Overview, opening the request form, filling it out | `server/command.go`, `webapp/src/RequestChannelModal.tsx`, `webapp/src/channelCreationOverride.ts`, `webapp/src/HeaderIcon.tsx` |
 | `public/help/approvals.html` | Who can approve, acting on a request, what happens on approve and deny | `server/decision.go` (`decideChannelRequest`, `decideAdminRequest`), `server/http.go` (`canApprove`), `server/request.go` |
 | `public/help/admin.html` | One entry per setting, and the domain prefix rules | `plugin.json` `settings_schema.settings`, `server/configuration.go`, `webapp/src/PrefixEditor.tsx` |
-| `public/help/commands.html` | Every `/channel-request` subcommand, the `create` options, their error replies, and the Agents tools | `server/command.go`, `server/mcp_tools.go`, `server/request.go`, `server/admin_request.go`, `server/pending.go`, `server/decision.go`, `server/status.go` |
+| `public/help/commands.html` | Every `/channel-request` subcommand, the `create` options, their error replies, the Agents tools, and exercise mode with its scenario format | `server/command.go`, `server/command_exercise.go`, `server/exercise.go`, `server/exercise/silver_harbor.json`, `server/mcp_tools.go`, `server/request.go`, `server/admin_request.go`, `server/pending.go`, `server/decision.go`, `server/status.go` |
 | `public/help/troubleshooting.html` | One section per symptom: the message, its cause and the fix | Every user-visible error and log warning it quotes |
 | `public/help/styles.css` | Shared stylesheet. Rarely changes | |
 | `docs/CHANNEL_CREATION_GUIDE.md` | Requesting, approving and setting up new channels, for all three roles | Everything above |

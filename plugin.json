@@ -78,6 +78,20 @@
                 "type": "bool",
                 "default": false,
                 "help_text": "When true, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
+            },
+            {
+                "key": "EnableExercise",
+                "display_name": "Enable exercise mode",
+                "type": "bool",
+                "default": false,
+                "help_text": "Do not enable in production. When true, System Admins can run /channel-request exercise populate, teardown and status to seed marked EXERCISE data into a team: persona accounts nobody can sign in as, a channel, and pending requests on the approval cards. Approving a seeded request creates a real channel marked EXERCISE. Teardown closes the requests, archives the channels and deactivates the personas."
+            },
+            {
+                "key": "ExerciseScenarioJSON",
+                "display_name": "Exercise scenario (JSON)",
+                "type": "longtext",
+                "default": "",
+                "help_text": "Leave blank to use the built-in fictional scenario. Paste a scenario here to seed your own personas, channels and requests instead. It is stored only in this server's configuration. The format is described in the plugin documentation."
             }
         ]
     }

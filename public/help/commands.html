@@ -51,6 +51,7 @@
                 <tr><td><a href="#list"><code>/channel-request list</code></a></td><td>Lists your pending requests, with their IDs and when they expire.</td></tr>
                 <tr><td><a href="#approve"><code>/channel-request approve &lt;request ID&gt;</code></a></td><td>Approves a request, as its Approve button would.</td></tr>
                 <tr><td><a href="#deny"><code>/channel-request deny &lt;request ID&gt;</code></a></td><td>Denies a request, as its Deny button would.</td></tr>
+                <tr><td><a href="#exercise"><code>/channel-request exercise populate|teardown|status</code></a></td><td>For System Admins, when exercise mode is on: seeds, removes or reports marked exercise data in this team.</td></tr>
                 <tr><td><a href="#help"><code>/channel-request help</code></a></td><td>Shows the usage message.</td></tr>
             </tbody>
         </table>
@@ -193,6 +194,113 @@
                 <tr><td><em>The channel name no longer matches the configured prefixes…</em></td><td>The prefixes changed after the request was made. Deny it and ask for a new request.</td></tr>
                 <tr><td><em>Could not check the requester right now. Try again in a moment.</em></td><td>Run the command again shortly. See <a href="troubleshooting.html#try-again">"Try again" messages</a>.</td></tr>
                 <tr><td><em>Could not create the channel: …</em></td><td>The request stays pending. If the name is already taken, deny it and ask for a new name.</td></tr>
+            </tbody>
+        </table>
+
+        <h2 id="exercise"><code>/channel-request exercise</code></h2>
+<pre><code>/channel-request exercise populate
+/channel-request exercise status
+/channel-request exercise teardown</code></pre>
+        <p>
+            Exercise mode fills a team with believable, clearly marked data for training and
+            demonstrations. Only System Admins can run it, and only while
+            <em>Enable exercise mode</em> is on (see <a href="admin.html">Admin setup</a>). Run
+            it from a channel in the team you want to seed. Each team has its own exercise
+            data.
+        </p>
+        <table class="field-table">
+            <thead>
+                <tr><th>Subcommand</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>populate</code></td><td>Creates the scenario's personas, its channels and its pending requests, and posts their approval cards. Runs once per team until teardown.</td></tr>
+                <tr><td><code>status</code></td><td>Compares what populate recorded with what is still live: active personas, channels not archived, and requests still pending.</td></tr>
+                <tr><td><code>teardown</code></td><td>Closes the exercise requests still pending and marks their cards, archives every exercise channel (including any created by approving an exercise request), and deactivates the personas.</td></tr>
+            </tbody>
+        </table>
+        <p>Everything exercise mode creates is marked:</p>
+        <ul>
+            <li>Personas have the nickname <em>EXERCISE</em> and a position that starts with <em>EXERCISE:</em>. They get a random password that is never shown, so nobody can sign in as one, and email notifications are off.</li>
+            <li>Channel names shown in the sidebar start with <em>EXERCISE</em>, purposes start with <em>[EXERCISE]</em>, and each exercise channel's header is an EXERCISE banner.</li>
+            <li>Approval cards are titled <em>EXERCISE Channel creation request</em> or <em>EXERCISE Channel Admin request</em> and mention nobody, so populate doesn't notify the approval channel.</li>
+            <li>Audit lines about exercise requests start with <em>EXERCISE</em>.</li>
+        </ul>
+        <p>
+            Seeded requests are made by personas and name only personas, so approving one
+            gives no real user access to anything. Approve and deny work exactly as for a
+            real request, on the card or with <code>approve</code> and <code>deny</code>.
+            Seeded requests don't count toward any real user's pending limit. Channel names
+            use the first configured prefix and must pass its suffix rule.
+        </p>
+        <p>
+            Teardown only touches what exercise mode created: the requests, channels and
+            persona accounts it recorded. Real requests, channels and accounts are left alone,
+            even ones that use an exercise name. Teardown waits while a populate is still
+            running in the team.
+        </p>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Nothing is deleted outright</div>
+            <p>
+                Mattermost doesn't let plugins delete users or channels. Teardown archives
+                exercise channels, renaming each first so the name can be used again, and
+                deactivates the personas. The next <code>populate</code> reactivates the same
+                personas.
+            </p>
+        </div>
+
+        <h3 id="exercise-scenario">The exercise scenario</h3>
+        <p>
+            The plugin includes a fictional scenario. To seed your own personas, channels and
+            requests, paste a scenario into <em>Exercise scenario (JSON)</em> in the plugin
+            settings. It is stored only in this server's configuration. A scenario looks like
+            this:
+        </p>
+<pre><code>{
+  "id": "sample",
+  "name": "Sample",
+  "personas": [
+    {"role": "lead", "first_name": "Ana", "last_name": "Lee", "position": "Shift lead"},
+    {"role": "crew", "first_name": "Bo", "last_name": "Ng", "position": "Crew member"}
+  ],
+  "operations": [
+    {"act": 1, "operation_id": "ops-channel", "kind": "channel", "suffix": "ops",
+     "display_name": "Ops", "purpose": "Shift coordination", "requester": "lead", "members": ["crew"]},
+    {"act": 1, "operation_id": "plans-request", "kind": "channel_request", "suffix": "plans",
+     "display_name": "Plans", "purpose": "Planning", "private": true, "requester": "crew",
+     "members": ["lead"], "age_days": 45},
+    {"act": 1, "operation_id": "ops-admin", "kind": "admin_request", "channel": "ops-channel",
+     "requester": "lead", "nominees": ["crew"]}
+  ]
+}</code></pre>
+        <table class="field-table">
+            <thead>
+                <tr><th>Field</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>id</code>, <code>name</code></td><td>Required. The name appears in the populate reply.</td></tr>
+                <tr><td><code>personas</code></td><td>The people in the scenario, at most 50. <code>role</code> is a short lowercase key that becomes part of the username (<code>exercise-&lt;role&gt;-&lt;team&gt;</code>).</td></tr>
+                <tr><td><code>act</code>, <code>operation_id</code></td><td>Identify each operation, at most 200. Operation IDs must be unique.</td></tr>
+                <tr><td><code>kind</code></td><td><code>channel</code> creates an exercise channel at once. <code>channel_request</code> files a pending channel request. <code>admin_request</code> files a pending Channel Admin request on an earlier <code>channel</code> operation, named in <code>channel</code>.</td></tr>
+                <tr><td><code>requester</code>, <code>members</code>, <code>admins</code>, <code>nominees</code></td><td>Persona roles. For a <code>channel</code>, <code>requester</code> creates it.</td></tr>
+                <tr><td><code>suffix</code>, <code>display_name</code>, <code>purpose</code>, <code>private</code></td><td>As in a real request. The suffix follows the first configured prefix.</td></tr>
+                <tr><td><code>age_days</code></td><td>Optional, from <code>0</code> to <code>3650</code>. Backdates a request, for example past the expiry so its card shows as expired when approved.</td></tr>
+            </tbody>
+        </table>
+
+        <h3 id="exercise-errors">When <code>exercise</code> refuses</h3>
+        <table class="field-table">
+            <thead>
+                <tr><th>Reply</th><th>What to do</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><em>Exercise mode is off…</em></td><td>A System Admin turns on <em>Enable exercise mode</em>.</td></tr>
+                <tr><td><em>Only System Admins can run `/channel-request exercise`.</em></td><td>Ask a System Admin.</td></tr>
+                <tr><td><em>exercise data already exists for this team, or a populate is running…</em></td><td>Run <code>status</code> to see it, or <code>teardown</code> to remove it first.</td></tr>
+                <tr><td><em>the username @… is taken by an account that isn't exercise data</em>, <em>a channel named ~… already exists in this team</em>, <em>this server or team only allows accounts with email addresses at…</em></td><td>See <a href="troubleshooting.html#exercise">Exercise mode</a>.</td></tr>
+                <tr><td><em>a populate is still running in this team…</em></td><td>Wait for it to finish, then run <code>teardown</code> again.</td></tr>
+                <tr><td><em>the exercise scenario doesn't fit this server's settings…</em>, <em>…is not valid JSON</em></td><td>Fix the scenario or the prefix list; the reply says what failed. Nothing was created.</td></tr>
+                <tr><td><em>could not finish seeding…</em></td><td>Run <code>teardown</code>, then <code>populate</code> again.</td></tr>
             </tbody>
         </table>
 

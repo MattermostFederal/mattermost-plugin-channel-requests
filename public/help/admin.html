@@ -51,6 +51,8 @@
                 <tr><td><code>Request expiry (days)</code></td><td>Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most <code>3650</code>. Default <code>30</code>; <code>0</code> means requests never expire. A change applies to requests already pending too.</td></tr>
                 <tr><td><code>Audit channel ID</code></td><td>Optional. Posts an audit line for every approve/deny. Must be an existing private channel; otherwise audit lines are skipped and a warning is logged.</td></tr>
                 <tr><td><code>Offer tools to Agents</code></td><td>Off by default. When on, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save.</td></tr>
+                <tr><td><code>Enable exercise mode</code></td><td>Off by default. <strong>Do not enable in production.</strong> When on, System Admins can run <code>/channel-request exercise</code> to seed and remove marked exercise data. Personas use <code>exercise.invalid</code> email addresses, so a server or team that restricts email domains must allow that domain. See <a href="commands.html#exercise">Exercise mode</a>.</td></tr>
+                <tr><td><code>Exercise scenario (JSON)</code></td><td>Optional. Blank uses the built-in fictional scenario. Paste a scenario to seed your own; it is stored only in this server's configuration. See <a href="commands.html#exercise-scenario">The exercise scenario</a>.</td></tr>
             </tbody>
         </table>
 

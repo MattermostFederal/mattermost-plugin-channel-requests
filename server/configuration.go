@@ -45,6 +45,7 @@ type channelPrefix struct {
 //  4. Request limits (pending requests per user, expiry)
 //  5. Notification preferences (DM + audit channel + welcome post)
 //  6. Agents (MCP tools)
+//  7. Exercise mode
 type configuration struct {
 	// --- 1. Approval routing ---
 	// ApprovalTeam and ApprovalChannel hold IDs, not names, so renames
@@ -83,6 +84,13 @@ type configuration struct {
 	// EnableMCP offers the request tools to the Mattermost Agents plugin.
 	// Off by default; syncMCPServer applies changes on save.
 	EnableMCP bool
+
+	// --- 7. Exercise mode ---
+	// EnableExercise lets System Admins run /channel-request exercise.
+	// ExerciseScenarioJSON replaces the built-in fictional scenario when
+	// set; see loadExerciseScenario.
+	EnableExercise       bool
+	ExerciseScenarioJSON string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes           []channelPrefix

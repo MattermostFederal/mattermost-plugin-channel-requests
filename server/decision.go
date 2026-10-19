@@ -74,7 +74,7 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 			requesterID:   req.RequesterID,
 			clickedPostID: clickedPostID,
 			notice:        fmt.Sprintf("Your request for channel **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("EXPIRED: @%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("EXPIRED: @%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
 				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
 		})
 	}
@@ -129,17 +129,20 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 			}
 			return decisionResult{Reply: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())}
 		}
+		if req.Exercise {
+			p.recordExerciseChannel(channel)
+		}
 		outcome = fmt.Sprintf("✅ Approved by @%s. Channel ~%s created.", actingUser.Username, channel.Name)
 		if requester != nil {
 			p.postWelcomeMessage(channel, req, requester, actingUser)
 		}
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was approved. It's now available at ~%s.", escapeMarkdown(req.DisplayName), channel.Name))
-		p.logAudit(config, fmt.Sprintf("APPROVED: @%s approved channel request \"%s\" (~%s) from %s",
+		p.logAudit(config, exerciseLabel(req.Exercise)+fmt.Sprintf("APPROVED: @%s approved channel request \"%s\" (~%s) from %s",
 			actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name, requesterUsername(requester, req.RequesterID)))
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request for channel **%s** was denied.", escapeMarkdown(req.DisplayName)))
-		p.logAudit(config, fmt.Sprintf("DENIED: @%s denied channel request \"%s\" from %s",
+		p.logAudit(config, exerciseLabel(req.Exercise)+fmt.Sprintf("DENIED: @%s denied channel request \"%s\" from %s",
 			actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)))
 	}
 
@@ -199,7 +202,7 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 			requesterID:   req.RequesterID,
 			clickedPostID: clickedPostID,
 			notice:        fmt.Sprintf("Your request to make %s Channel Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, channelRef),
-			audit: fmt.Sprintf("CHANNEL ADMIN EXPIRED: @%s closed the request for %s in %s from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("CHANNEL ADMIN EXPIRED: @%s closed the request for %s in %s from %s, which was not reviewed within %d days",
 				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
 		})
 	}
@@ -243,19 +246,19 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 		if promoted == "" {
 			outcome = fmt.Sprintf("⚠️ Approved by @%s, but nobody was promoted: the nominees are no longer members of %s.", actingUser.Username, channelRef)
 			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved, but nobody was promoted because they are no longer members of the channel.", nominees, channelRef))
-			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED (NO CHANGE): @%s approved %s for %s, but none were still members (requested by %s)",
+			p.logAudit(config, exerciseLabel(req.Exercise)+fmt.Sprintf("CHANNEL ADMIN APPROVED (NO CHANGE): @%s approved %s for %s, but none were still members (requested by %s)",
 				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)))
 		} else {
 			p.postAdminPromotionMessage(channel, req, actingUser)
 			outcome = fmt.Sprintf("✅ Approved by @%s. %s promoted to Channel Admin in %s.", actingUser.Username, promoted, channelRef)
 			p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was approved. Promoted: %s.", nominees, channelRef, promoted))
-			p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by %s)",
+			p.logAudit(config, exerciseLabel(req.Exercise)+fmt.Sprintf("CHANNEL ADMIN APPROVED: @%s promoted %s to Channel Admin in %s (requested by %s)",
 				actingUser.Username, promoted, channelRef, requesterUsername(requester, req.RequesterID)))
 		}
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s.", actingUser.Username)
 		p.notifyRequester(req.RequesterID, fmt.Sprintf("Your request to make %s Channel Admin in %s was denied.", nominees, channelRef))
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
+		p.logAudit(config, exerciseLabel(req.Exercise)+fmt.Sprintf("CHANNEL ADMIN DENIED: @%s denied a Channel Admin request for %s in %s",
 			actingUser.Username, nominees, channelRef))
 	}
 
