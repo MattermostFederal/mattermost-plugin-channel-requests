@@ -297,7 +297,13 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                 addUser(u.username);
             }
         } else if (e.key === 'Escape') {
-            setShowDropdown(false);
+            // Stop the dialog focus trap from treating this Escape as "close
+            // the whole modal" while autocomplete suggestions are open.
+            if (showDropdown) {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowDropdown(false);
+            }
         } else if (e.key === 'Backspace' && !query && selected.length > 0) {
             // Backspace on empty input removes the last selected user.
             commit(selected.slice(0, -1));

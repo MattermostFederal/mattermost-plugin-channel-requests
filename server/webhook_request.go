@@ -295,8 +295,12 @@ func (p *Plugin) internalBaseURL() string {
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
 		host = "localhost"
 	}
-	if scheme == "https" && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
-		return p.siteURL()
+	// TLS certs usually match SiteURL's hostname, not a raw listen IP / loopback.
+	// Prefer SiteURL so webhook/guest/bot-extra API clients pass cert checks.
+	if scheme == "https" {
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" || net.ParseIP(host) != nil {
+			return p.siteURL()
+		}
 	}
 	return scheme + "://" + net.JoinHostPort(host, port)
 }

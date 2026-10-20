@@ -2,8 +2,7 @@ import React, {useMemo, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
 import {submitTeamCreationRequest} from './client';
-import {closeTeamCreationModal, getCurrentTeamId, isTeamCreationModalOpen} from './store';
-import type {GlobalState} from './store';
+import {closeTeamCreationModal, isTeamCreationModalOpen} from './store';
 import {useDialogFocusTrap} from './dialogA11y';
 
 // Slugify mirrors server/team_request.go slugify() so the live URL preview
@@ -44,7 +43,6 @@ const fieldStyle: React.CSSProperties = {marginBottom: 16};
 export const RequestTeamModal = () => {
     const dispatch = useDispatch();
     const isOpen = useSelector(isTeamCreationModalOpen);
-    const currentTeamId = useSelector((state: GlobalState) => getCurrentTeamId(state));
 
     const [displayName, setDisplayName] = useState('');
     const [urlName, setUrlName] = useState('');

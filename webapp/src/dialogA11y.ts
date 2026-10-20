@@ -7,6 +7,11 @@ import {useEffect, useRef} from 'react';
 const FOCUSABLE_SELECTOR =
     'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+function firstFocusable(root: HTMLElement): HTMLElement {
+    const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    return focusable[0] ?? root;
+}
+
 // useDialogFocusTrap wires the keyboard affordances every request modal needs:
 // Escape closes the dialog, and Tab / Shift+Tab are trapped so focus cycles
 // within the modal instead of escaping to the page behind the overlay. On open
@@ -17,9 +22,9 @@ const FOCUSABLE_SELECTOR =
 // components). An empty dependency array would run once with dialogRef null
 // and never re-run when the dialog actually opens.
 //
-// The handler yields to children that already consumed the Tab (the
-// MemberPicker uses Tab to complete the highlighted candidate and calls
-// preventDefault), so autocomplete completion still works inside the trap.
+// While open, a MutationObserver reclaims focus when the form swaps to a
+// success panel (focused controls are unmounted). Escape yields when a child
+// already called preventDefault (MemberPicker dismissing suggestions).
 export function useDialogFocusTrap(onClose: () => void, isOpen: boolean) {
     const dialogRef = useRef<HTMLDivElement>(null);
     const previouslyFocused = useRef<HTMLElement | null>(null);
@@ -36,15 +41,25 @@ export function useDialogFocusTrap(onClose: () => void, isOpen: boolean) {
             ? document.activeElement
             : null;
 
-        const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-        const target = focusable[0] ?? root;
-        // Defer so the dialog is in the DOM before focus moves (hub → child modal).
         const timer = window.setTimeout(() => {
-            target.focus();
+            firstFocusable(root).focus();
         }, 0);
+
+        // When submit replaces the form with a success panel, the focused
+        // control is removed and focus falls to <body>. Reclaim it so Tab /
+        // Escape still hit the dialog handler.
+        const observer = new MutationObserver(() => {
+            const active = document.activeElement;
+            if (active && root.contains(active)) {
+                return;
+            }
+            firstFocusable(root).focus();
+        });
+        observer.observe(root, {childList: true, subtree: true});
 
         return () => {
             window.clearTimeout(timer);
+            observer.disconnect();
             const prev = previouslyFocused.current;
             if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
                 prev.focus();
@@ -54,6 +69,9 @@ export function useDialogFocusTrap(onClose: () => void, isOpen: boolean) {
 
     const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Escape') {
+            if (e.defaultPrevented) {
+                return;
+            }
             e.stopPropagation();
             onClose();
             return;

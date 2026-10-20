@@ -241,8 +241,10 @@ export function installChannelCreationOverride(store: Store): () => void {
     // scan; this keeps the observer from running querySelectorAll over
     // the whole document on essentially every frame.
     let scheduled = false;
+    let rafId = 0;
+    let disposed = false;
     const observer = new MutationObserver((mutations) => {
-        if (scheduled) {
+        if (scheduled || disposed) {
             return;
         }
         const addedElements = mutations.some((m) =>
@@ -252,9 +254,12 @@ export function installChannelCreationOverride(store: Store): () => void {
             return;
         }
         scheduled = true;
-        requestAnimationFrame(() => {
+        rafId = requestAnimationFrame(() => {
+            rafId = 0;
             scheduled = false;
-            processDocument(store);
+            if (!disposed) {
+                processDocument(store);
+            }
         });
     });
     observer.observe(document.body, {childList: true, subtree: true});
@@ -304,8 +309,17 @@ export function installChannelCreationOverride(store: Store): () => void {
     document.addEventListener('click', onClick, true);
 
     return () => {
+        disposed = true;
         document.removeEventListener('click', onClick, true);
         observer.disconnect();
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+        }
+        // Remove injected menu items (and their click listeners) so a disabled
+        // plugin cannot leave a stale "Request new channel" entry that still
+        // dispatches into an unmounted modal.
+        document.querySelectorAll(`[${INJECTED_MARK}]`).forEach((el) => el.remove());
         debug('removed channel-creation override');
     };
 }

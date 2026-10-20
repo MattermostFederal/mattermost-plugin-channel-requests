@@ -324,9 +324,12 @@ func TestHandleAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	require.NoError(t, err)
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
-	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
+	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil).Once()
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Another approver already claimed it — compare-and-delete finds no match.
 	api.On("KVCompareAndDelete", kvRequestPrefix+"req1", raw).Return(false, nil)
+	// Reload finds nothing: truly handled.
+	api.On("KVGet", kvRequestPrefix+"req1").Return(nil, nil).Once()
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
 
 	r := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader(actionBody(t, "req1")))
@@ -335,7 +338,42 @@ func TestHandleAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	p.handleAction(w, r, true)
 
 	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Update)
+	require.Contains(t, resp.Update.Message, "already been handled")
 	// The loser of the race must NOT create a channel.
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestHandleAction_StaleClaimBytesAsksRetry(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Roles: "system_user system_admin"}, nil)
+	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil).Once()
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	api.On("KVCompareAndDelete", kvRequestPrefix+"req1", raw).Return(false, nil)
+	// Metadata re-store raced us — record still pending under different bytes.
+	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil).Once()
+
+	r := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader(actionBody(t, "req1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Nil(t, resp.Update, "must not squash the card while the request is still pending")
+	require.Contains(t, resp.EphemeralText, "just updated")
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
@@ -444,10 +482,12 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
-	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil).Once()
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Another reviewer already claimed and processed the request.
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(nil, nil).Once()
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
 
 	r := httptest.NewRequest(http.MethodPost, routeApproveAdmin, strings.NewReader(actionBody(t, "areq1")))
@@ -461,6 +501,40 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	require.NotNil(t, resp.Update)
 	require.Contains(t, resp.Update.Message, "already been handled")
 	// The loser must not promote anyone.
+	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestHandleAdminAction_StaleClaimBytesAsksRetry(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	raw, err := json.Marshal(areq)
+	require.NoError(t, err)
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil).Once()
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
+	// Post-ID re-store raced the claim — pending record still present.
+	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil).Once()
+
+	r := httptest.NewRequest(http.MethodPost, routeApproveAdmin, strings.NewReader(actionBody(t, "areq1")))
+	r.Header.Set(headerUserID, "admin1")
+	w := httptest.NewRecorder()
+	p.handleAdminAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Nil(t, resp.Update, "must not squash while the request is still pending")
+	require.Contains(t, resp.EphemeralText, "just updated")
 	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
 

@@ -64,13 +64,12 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	// not required — governance is the approval card, not submit-side RBAC.
 	if !forceQueue && requester.IsSystemAdmin() {
 		failed := p.addTeamMembers(req)
-		p.logAudit(auditDirect, fmt.Sprintf("@%s added %s to team %s",
-			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
-		msg := fmt.Sprintf("Added %s to **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName)
-		if len(failed) > 0 {
-			msg += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
+		added := exceptIDs(req.NomineeIDs, failed)
+		if len(added) > 0 {
+			p.logAudit(auditDirect, fmt.Sprintf("@%s added %s to team %s",
+				requester.Username, p.mentionList(added), team.DisplayName), "")
 		}
-		return msg, nil
+		return p.teamMemberOutcomeMessage(added, failed, team.DisplayName), nil
 	}
 
 	if err := p.storeTeamMemberRequest(req); err != nil {
@@ -151,6 +150,36 @@ func (p *Plugin) addTeamMembers(req *teamMemberRequest) []string {
 		}
 	}
 	return failed
+}
+
+// exceptIDs returns members of all that are not in exclude.
+func exceptIDs(all, exclude []string) []string {
+	skip := make(map[string]bool, len(exclude))
+	for _, id := range exclude {
+		skip[id] = true
+	}
+	out := make([]string, 0, len(all))
+	for _, id := range all {
+		if id == "" || skip[id] {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (p *Plugin) teamMemberOutcomeMessage(added, failed []string, teamDisplay string) string {
+	switch {
+	case len(added) > 0 && len(failed) > 0:
+		return fmt.Sprintf("Added %s to **%s**. Failed for %s.",
+			p.mentionList(added), teamDisplay, p.mentionList(failed))
+	case len(added) > 0:
+		return fmt.Sprintf("Added %s to **%s**.", p.mentionList(added), teamDisplay)
+	case len(failed) > 0:
+		return fmt.Sprintf("Could not add %s to **%s**.", p.mentionList(failed), teamDisplay)
+	default:
+		return fmt.Sprintf("No users were added to **%s**.", teamDisplay)
+	}
 }
 
 func (p *Plugin) postTeamMemberApprovalRequest(req *teamMemberRequest, requester *model.User, team *model.Team) (postID, channelID string, err error) {

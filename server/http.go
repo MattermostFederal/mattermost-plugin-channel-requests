@@ -691,9 +691,8 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -831,9 +830,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadAdminRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -1039,9 +1037,8 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadTeamAdminRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -1174,9 +1171,8 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadTeamMemberRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -1190,22 +1186,37 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 	var outcome string
 	if approve {
 		failed := p.addTeamMembers(req)
-		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
-		if len(failed) > 0 {
-			outcome += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
+		added := exceptIDs(req.NomineeIDs, failed)
+		addedMentions := p.mentionList(added)
+		failedMentions := p.mentionList(failed)
+		switch {
+		case len(added) > 0 && len(failed) > 0:
+			outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s. Failed for %s.",
+				actingUser.Username, requesterUsername(requester, req.RequesterID), addedMentions, teamRef, failedMentions)
+		case len(added) > 0:
+			outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s.",
+				actingUser.Username, requesterUsername(requester, req.RequesterID), addedMentions, teamRef)
+		case len(failed) > 0:
+			outcome = fmt.Sprintf("⚠️ Approved by @%s for %s, but could not add %s to %s.",
+				actingUser.Username, requesterUsername(requester, req.RequesterID), failedMentions, teamRef)
+		default:
+			outcome = fmt.Sprintf("✅ Approved by @%s for %s. No users were added to %s.",
+				actingUser.Username, requesterUsername(requester, req.RequesterID), teamRef)
 		}
-		notifyText := fmt.Sprintf("Approved by @%s. %s added to %s.", actingUser.Username, nominees, teamRef)
-		if len(failed) > 0 {
-			notifyText += fmt.Sprintf(" Failed for %s.", p.mentionList(failed))
-		}
+		notifyText := outcome
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
 			Color: colorApproved,
 			Title: "Team Member Request Approved",
 			Text:  notifyText,
 		})
 		p.postOutcomeThreadReply(req.DMChannelID, req.DMRootPostID, true, actingUser.Username)
-		p.logAudit(auditApproved, fmt.Sprintf("@%s added %s to %s (requested by %s)",
-			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
+		if len(added) > 0 {
+			p.logAudit(auditApproved, fmt.Sprintf("@%s added %s to %s (requested by %s)",
+				actingUser.Username, addedMentions, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
+		} else if len(failed) > 0 {
+			p.logAudit(auditApproved, fmt.Sprintf("@%s approved team member request for %s but adds failed for %s",
+				actingUser.Username, teamRef, failedMentions), request.PostId)
+		}
 	} else {
 		outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team member add for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
 		p.notifyRequesterInThreadCard(req.RequesterID, req.DMRootPostID, req.DMChannelID, &model.MessageAttachment{
@@ -1315,9 +1326,8 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadTeamGuestRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -1410,9 +1420,8 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 		return
 	}
 	if !claimed {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-		})
+		still, _, _ := p.loadTeamRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, still != nil)
 		return
 	}
 
@@ -1556,9 +1565,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			return
 		}
 		if !claimed {
-			writeJSON(w, model.PostActionIntegrationResponse{
-				Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-			})
+			still, _, _ := p.loadBotRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, still != nil)
 			return
 		}
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. Bot **@%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.Username)
@@ -1589,9 +1597,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			return
 		}
 		if !claimed {
-			writeJSON(w, model.PostActionIntegrationResponse{
-				Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-			})
+			still, _, _ := p.loadBotRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, still != nil)
 			return
 		}
 
@@ -1863,9 +1870,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			return
 		}
 		if !claimed {
-			writeJSON(w, model.PostActionIntegrationResponse{
-				Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-			})
+			still, _, _ := p.loadWebhookRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, still != nil)
 			return
 		}
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. %s webhook **%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.WebhookType, req.DisplayName)
@@ -1896,9 +1902,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			return
 		}
 		if !claimed {
-			writeJSON(w, model.PostActionIntegrationResponse{
-				Update: p.resolvedPost(request.PostId, "This request has already been handled."),
-			})
+			still, _, _ := p.loadWebhookRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, still != nil)
 			return
 		}
 
@@ -2066,6 +2071,22 @@ func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model
 	post.DelProp("attachments")
 	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
 	return post
+}
+
+
+// respondClaimConflict writes a retry ephemeral when the pending record still
+// exists (CAS lost a race against a concurrent metadata re-store), or soft-
+// squashes the card only when the record is gone (truly already handled).
+func (p *Plugin) respondClaimConflict(w http.ResponseWriter, postID string, stillPending bool) {
+	if stillPending {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			EphemeralText: "This request was just updated. Please click Approve or Deny again.",
+		})
+		return
+	}
+	writeJSON(w, model.PostActionIntegrationResponse{
+		Update: p.resolvedPost(postID, "This request has already been handled."),
+	})
 }
 
 // resolvedPost soft-squashes a finished approval card into a one-line
