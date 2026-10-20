@@ -299,48 +299,6 @@ func (p *Plugin) userIsTeamAdmin(teamID, userID string) bool {
 	return m.SchemeAdmin || slices.Contains(strings.Fields(m.Roles), model.TeamAdminRoleId)
 }
 
-func (p *Plugin) userIsTwoStepChannelApprover(user *model.User) bool {
-	cfg := p.getConfiguration()
-	switch cfg.twoStepMode() {
-	case twoStepModeSystemAdmin:
-		return user.IsSystemAdmin()
-	case twoStepModeUserGroup:
-		for _, step := range []approverStep{stepSecurity, stepSystem} {
-			name := cfg.approverGroupName(step)
-			if name == "" {
-				continue
-			}
-			in, err := p.userInApproverGroup(user.Id, name)
-			if err != nil {
-				p.API.LogWarn("two-step channel access: group check failed",
-					"user_id", user.Id, "group", name, "error", err.Error())
-				continue
-			}
-			if in {
-				return true
-			}
-		}
-		return user.IsSystemAdmin()
-	default:
-		for _, step := range []approverStep{stepSecurity, stepSystem} {
-			attr := cfg.approverAttributeName(step)
-			if attr == "" {
-				continue
-			}
-			ok, err := p.userIsApprover(user, attr)
-			if err != nil {
-				p.API.LogWarn("two-step channel access: attribute check failed",
-					"user_id", user.Id, "attr", attr, "error", err.Error())
-				continue
-			}
-			if ok {
-				return true
-			}
-		}
-		return user.IsSystemAdmin()
-	}
-}
-
 // addUserToTwoStepApprovalChannels ensures the user is on the approval team and
 // a member of the bot + webhook private channels.
 func (p *Plugin) addUserToTwoStepApprovalChannels(userID string) {
