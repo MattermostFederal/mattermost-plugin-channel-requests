@@ -2073,7 +2073,6 @@ func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model
 	return post
 }
 
-
 // respondClaimConflict writes a retry ephemeral when the pending record still
 // exists (CAS lost a race against a concurrent metadata re-store), or soft-
 // squashes the card only when the record is gone (truly already handled).
