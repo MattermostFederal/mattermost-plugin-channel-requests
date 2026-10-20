@@ -214,4 +214,82 @@ test.describe('teamMenuOverride helpers', () => {
         }, {manageMembersLabel: MANAGE_MEMBERS_LABEL, itemSelector: ITEM_SELECTOR});
         expect(found).toBeNull();
     });
+
+    test('injectRequestTeam inserts before Learn about teams when Create a team is absent', async ({page}) => {
+        await page.setContent(`
+            <div id="menu">
+                <a>Team settings</a>
+                <a>Manage members</a>
+                <a>Leave team</a>
+                <a id="learn">Learn about teams</a>
+            </div>
+        `);
+        const order = await page.evaluate(() => {
+            const REQUEST_TEAM_LABEL = 'Request a Team';
+            const REQUEST_TEAM_INJECT_MARK = 'data-mm-plugin-request-team-injected';
+            const ITEM_SELECTOR = 'a, button, li, [role="menuitem"]';
+            const menu = document.getElementById('menu') as HTMLElement;
+            const findByText = (label: string) =>
+                Array.from(menu.querySelectorAll<HTMLElement>(ITEM_SELECTOR)).find(
+                    (el) => (el.textContent ?? '').trim() === label,
+                ) ?? null;
+
+            const learnItem = findByText('Learn about teams');
+            const leaveItem = findByText('Leave team');
+            const template = learnItem ?? leaveItem;
+            if (!template?.parentElement) {
+                return [];
+            }
+            const injected = template.cloneNode(true) as HTMLElement;
+            injected.removeAttribute('id');
+            injected.setAttribute(REQUEST_TEAM_INJECT_MARK, 'true');
+            injected.textContent = REQUEST_TEAM_LABEL;
+            if (learnItem) {
+                template.parentElement.insertBefore(injected, learnItem);
+            } else {
+                template.parentElement.appendChild(injected);
+            }
+            return Array.from(menu.querySelectorAll('a')).map((el) => el.textContent?.trim());
+        });
+        expect(order).toEqual([
+            'Team settings',
+            'Manage members',
+            'Leave team',
+            'Request a Team',
+            'Learn about teams',
+        ]);
+    });
+
+    test('injectRequestTeam inserts after Join another team when present', async ({page}) => {
+        await page.setContent(`
+            <div id="menu">
+                <a>Leave team</a>
+                <a id="join">Join another team</a>
+                <a>Learn about teams</a>
+            </div>
+        `);
+        const order = await page.evaluate(() => {
+            const REQUEST_TEAM_LABEL = 'Request a Team';
+            const REQUEST_TEAM_INJECT_MARK = 'data-mm-plugin-request-team-injected';
+            const menu = document.getElementById('menu') as HTMLElement;
+            const joinItem = Array.from(menu.querySelectorAll('a')).find(
+                (el) => el.textContent?.trim() === 'Join another team',
+            ) as HTMLElement;
+            const injected = joinItem.cloneNode(true) as HTMLElement;
+            injected.setAttribute(REQUEST_TEAM_INJECT_MARK, 'true');
+            injected.textContent = REQUEST_TEAM_LABEL;
+            if (joinItem.nextSibling) {
+                joinItem.parentElement!.insertBefore(injected, joinItem.nextSibling);
+            } else {
+                joinItem.parentElement!.appendChild(injected);
+            }
+            return Array.from(menu.querySelectorAll('a')).map((el) => el.textContent?.trim());
+        });
+        expect(order).toEqual([
+            'Leave team',
+            'Join another team',
+            'Request a Team',
+            'Learn about teams',
+        ]);
+    });
 });

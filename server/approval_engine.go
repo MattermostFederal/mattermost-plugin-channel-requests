@@ -44,41 +44,44 @@ func (s twoStepState) withApproval(step approverStep, userID string, atMillis in
 // which pools the clicking user qualifies for. It returns the step the click
 // fills (when fill is true), or a user-facing reason it can't (when fill is
 // false). Rules:
+//   - Security must be filled before system (ordered two-step review).
 //   - A user may fill only a step they qualify for that isn't already done.
 //   - The two approvals must come from two DISTINCT users, so a user who already
 //     approved one step can't fill the other.
-//   - When a user qualifies for both outstanding steps, they fill security first;
-//     the system step still needs a different, qualified user.
+//   - Dual-role users (security + system): first click fills security; a
+//     different dual-role (or system-only) user fills system next.
 func planApproval(state twoStepState, canSecurity, canSystem bool, userID string) (step approverStep, fill bool, reason string) {
 	if state.complete() {
 		return 0, false, "This request has already been fully approved."
 	}
 
-	// A user can't fill a step if they already approved the other one.
-	canFillSecurity := !state.securityDone() && canSecurity && state.SystemApproverID != userID
-	canFillSystem := !state.systemDone() && canSystem && state.SecurityApproverID != userID
-
-	if canFillSecurity {
-		return stepSecurity, true, ""
-	}
-	if canFillSystem {
-		return stepSystem, true, ""
-	}
-
-	// Nothing to fill — explain why.
+	// Same person cannot fill both steps.
 	if state.approverID(stepSecurity) == userID || state.approverID(stepSystem) == userID {
 		return 0, false, "You've already approved your step. This request needs a different approver to complete it."
 	}
-	if !canSecurity && !canSystem {
+
+	if !state.securityDone() {
+		if canSecurity {
+			return stepSecurity, true, ""
+		}
+		if canSystem {
+			return 0, false, "This request needs a security approver first. After security signs off, a system approver can complete it."
+		}
 		return 0, false, "You don't have permission to approve this request."
 	}
-	// Qualifies for a step, but it's already done and they can't fill the
-	// outstanding one.
-	outstanding := stepSystem
-	if !state.securityDone() {
-		outstanding = stepSecurity
+
+	// Security done — only the system step remains, and it must be a different user.
+	if !state.systemDone() {
+		if canSystem {
+			return stepSystem, true, ""
+		}
+		if canSecurity {
+			return 0, false, "Security already approved. This request now needs a system approver (a different person)."
+		}
+		return 0, false, "You don't have permission to approve this request."
 	}
-	return 0, false, fmt.Sprintf("This request now needs a %s approver, which you're not eligible for.", outstanding)
+
+	return 0, false, "This request has already been fully approved."
 }
 
 // twoStepStatusValue renders the per-step approval status for an approval card,

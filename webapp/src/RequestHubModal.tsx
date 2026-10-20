@@ -5,6 +5,7 @@ import type {Action} from 'redux';
 import {fetchEnabledRequestTypes} from './client';
 import type {EnabledRequestTypes} from './client';
 import {useDialogFocusTrap} from './dialogA11y';
+import manifest from 'manifest';
 import {
     closeHubModal,
     getChannelType,
@@ -23,6 +24,8 @@ import {
     openTeamMemberRequestModal,
 } from './store';
 import type {GlobalState} from './store';
+
+const DOCS_URL = `/plugins/${manifest.id}/public/help/docs.html`;
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.5)',
@@ -52,6 +55,19 @@ const cardStyle: React.CSSProperties = {
     width: '100%',
 };
 
+// Fixed square so emoji glyphs (🤖 vs 📤) paint at the same visual size.
+const iconBoxStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    fontSize: 20,
+    lineHeight: 1,
+    overflow: 'hidden',
+    flexShrink: 0,
+};
+
 type RequestItem = {
     icon: string;
     title: string;
@@ -61,6 +77,10 @@ type RequestItem = {
     hidden?: boolean;
     /** When true, only show in public/private channels (not DM/GM). */
     requiresTeamChannel?: boolean;
+    /** When true, only show when a team is selected (any team — not just the approval team). */
+    requiresTeam?: boolean;
+    /** Override emoji font-size inside the 24×24 box (large glyphs like 🤖). */
+    iconFontSize?: number;
 };
 
 // Fail-closed for newer types until /api/v1/config responds — matches client.ts.
@@ -150,7 +170,7 @@ export const RequestHubModal = () => {
         {
             icon: '👥',
             title: 'Request Team Members',
-            description: 'Ask to add existing users to your current team.',
+            description: 'Ask to add existing users or bots to your current team.',
             action: openTeamMemberRequestModal,
             enabled: enabled.teamMember,
         },
@@ -168,6 +188,8 @@ export const RequestHubModal = () => {
             description: 'Request a bot account, access token, or webhook.',
             action: openBotRequestModal,
             enabled: enabled.bot,
+            // Robot glyph paints larger than tray/building emojis at the same em.
+            iconFontSize: 16,
         },
         {
             icon: '📥',
@@ -175,7 +197,9 @@ export const RequestHubModal = () => {
             description: 'Post messages into a channel from an external system.',
             action: openIncomingWebhookModal,
             enabled: enabled.webhook,
-            requiresTeamChannel: true,
+            // Any team the user is on — not tied to the approval/primary team.
+            // Forms still need an O/P channel; they validate that on submit.
+            requiresTeam: true,
         },
         {
             icon: '📤',
@@ -183,14 +207,15 @@ export const RequestHubModal = () => {
             description: 'Send channel messages to an external endpoint.',
             action: openOutgoingWebhookModal,
             enabled: enabled.webhook,
-            requiresTeamChannel: true,
+            requiresTeam: true,
         },
     ];
 
     const visible = items.filter((item) =>
         !item.hidden &&
         item.enabled &&
-        (!item.requiresTeamChannel || inTeamChannel),
+        (!item.requiresTeamChannel || inTeamChannel) &&
+        (!item.requiresTeam || Boolean(teamId)),
     );
 
     return (
@@ -240,13 +265,48 @@ export const RequestHubModal = () => {
                                     (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
                                 }}
                             >
-                                <span style={{fontSize: 24}}>{item.icon}</span>
+                                <span
+                                    style={item.iconFontSize ? {...iconBoxStyle, fontSize: item.iconFontSize} : iconBoxStyle}
+                                    aria-hidden={true}
+                                >
+                                    {item.icon}
+                                </span>
                                 <span style={{fontWeight: 600, fontSize: 14}}>{item.title}</span>
                                 <span style={{fontSize: 13, opacity: 0.7, lineHeight: 1.4}}>{item.description}</span>
                             </button>
                         ))}
                     </div>
                 )}
+
+                {/* Always shown — docs without needing /mattermost-request-hub slash commands. */}
+                <a
+                    href={DOCS_URL}
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    style={{
+                        ...cardStyle,
+                        marginTop: 16,
+                        textDecoration: 'none',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 14,
+                    }}
+                    onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLAnchorElement).style.background =
+                            'var(--center-channel-color-08, rgba(61,60,64,0.08))';
+                    }}
+                    onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
+                    }}
+                >
+                    <span style={iconBoxStyle} aria-hidden={true}>{'📖'}</span>
+                    <span style={{display: 'flex', flexDirection: 'column', gap: 4}}>
+                        <span style={{fontWeight: 600, fontSize: 14}}>{'Documentation'}</span>
+                        <span style={{fontSize: 13, opacity: 0.7, lineHeight: 1.4}}>
+                            {'Guides for every request type — no slash commands needed.'}
+                        </span>
+                    </span>
+                </a>
             </div>
         </div>
     );

@@ -189,29 +189,42 @@ func (p *Plugin) canRelayApprovalThreadReply(user *model.User, anchor threadAnch
 	}
 	switch anchor.Kind {
 	case requestTypeChannel:
+		// ScopeID holds the team the channel will be created in (per-team cards).
+		if anchor.ScopeID != "" {
+			return p.canApproveChannelRequest(user, anchor.ScopeID)
+		}
 		return p.canApprove(user)
 	case requestTypeChannelAdmin:
 		return p.canApproveAdminRequest(user, anchor.ScopeID)
 	case requestTypeTeam, requestTypeTeamAdmin, requestTypeTeamMember, requestTypeTeamGuest:
 		return user.IsSystemAdmin()
 	case requestTypeBot, requestTypeWebhook:
-		canSec, errSec := p.canApproveStep(user, stepSecurity)
-		canSys, errSys := p.canApproveStep(user, stepSystem)
-		if errSec != nil || errSys != nil {
-			return false
+		// System Admins can always ask clarifying questions in the thread,
+		// even when they aren't in the security-attribute pool (they still
+		// can't fake a security Approve click — that's gated separately).
+		if user.IsSystemAdmin() {
+			return true
 		}
-		return canSec || canSys
+		return p.canRelayTwoStepApprover(user)
 	default:
 		if user.IsSystemAdmin() || p.canApprove(user) {
 			return true
 		}
-		canSec, errSec := p.canApproveStep(user, stepSecurity)
-		canSys, errSys := p.canApproveStep(user, stepSystem)
-		if errSec != nil || errSys != nil {
-			return false
-		}
-		return canSec || canSys
+		return p.canRelayTwoStepApprover(user)
 	}
+}
+
+// canRelayTwoStepApprover is true when the user is eligible for either
+// security or system approval. A lookup error on one step must not block
+// the other — otherwise a misconfigured security attribute would silence
+// System / attribute-based system approvers in the thread.
+func (p *Plugin) canRelayTwoStepApprover(user *model.User) bool {
+	canSec, errSec := p.canApproveStep(user, stepSecurity)
+	if errSec == nil && canSec {
+		return true
+	}
+	canSys, errSys := p.canApproveStep(user, stepSystem)
+	return errSys == nil && canSys
 }
 
 // notifyRequesterInThreadCard updates the root DM post (the yellow "pending" card)

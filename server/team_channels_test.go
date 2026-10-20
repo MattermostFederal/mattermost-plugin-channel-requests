@@ -303,6 +303,7 @@ func TestSubmitRequest_RoutesToPerTeamChannel(t *testing.T) {
 	// Per-team channel already exists — fast path.
 	teamCh := &model.Channel{Id: "team-ch-t1"}
 	api.On("GetChannelByName", "t1", "mattermost-channel-requests", false).Return(teamCh, nil)
+	api.On("GetTeam", "t1").Return(&model.Team{Id: "t1", Name: "t1", DisplayName: "Team One"}, nil)
 
 	// Approval post goes to the per-team channel.
 	var approvalPost *model.Post

@@ -23,44 +23,27 @@ This guide covers:
 
 ## Requesting a channel
 
-There are several ways to open the request form. They all open the same window.
+Same form from every entry point.
 
-### 1. Native: "+" in the sidebar
+### How to open
 
-Click the **+** at the top of the channel sidebar and choose **Request new
-channel**. For members who can't create channels directly, Mattermost's native
-"Create new channel" action is automatically relabeled to this.
+- **+ menu:** channel sidebar **+** → **Request new channel** (native “Create new channel” is relabeled when members can’t create channels directly)
+- **Hub:** right App Bar **plug** → Requests → **Request a Channel** (if several plugins share the strip, pick **Requests** first; with App Bar off, the same control is a channel-header plugin button)
+- **Dropdown:** channel name → More actions → **Request a Channel**
+- **Slash:** `/mattermost-request-hub channel`
 
-![Request new channel in the + menu](images/channel-request/mattermost-creation-plus-menu.png)
-
-### 2. Right-side plug icon (Requests hub)
-
-On the **far right** of the Mattermost window (the App Bar / plugin strip),
-click the **plug** icon. That opens **Requests** (the plugin's request hub).
-Choose **Request a Channel**.
-
-If several plugins share the strip, the plug may open a short menu first —
-pick **Requests**, then the hub tile. When the App Bar is off, the same control
-appears as a channel-header plugin button.
-
-![Plug icon on the right App Bar opening Requests](images/shared/mattermost-requests-plug-appbar.png)
-
-### 3. Dropdown: channel More actions
-
-Click the **channel name** at the top-left, then
-**More actions → Request a Channel**.
-
-### 4. Slash command
-
-Type **`/mattermost-request-hub channel`** in any channel to open the request
-dialog.
+<p>
+<img src="images/channel-request/mattermost-creation-plus-menu.png" alt="+ menu" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/shared/mattermost-request-hub.png" alt="Request Hub" width="440">
+</p>
 
 > Tip: **`/mattermost-request-hub docs`** opens this documentation in a simple
 > browser page (all request types in one place).
 
-### Filling out the request
+### Form
 
-![The Request a Channel form](images/channel-request/mattermost-creation-modal.png)
+<img src="images/channel-request/mattermost-creation-modal.png" alt="Request a Channel form" width="480">
 
 | Field | What it does |
 |-------|--------------|
@@ -91,21 +74,15 @@ one in a DM from the bot. Replies are relayed both ways.
 Use the **Thread** right-hand sidebar (open **Reply** on the card) — not a new
 top-level channel or DM message.
 
-1. An approver replies in the **approval Thread** — for example, *Why do you need
-   this channel?* / *Who else should be a Channel Admin?*
+- **Approver:** ask in the approval Thread (e.g. *Why do you need this channel?*)
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
 
-![Approver asks a clarifying question in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
-
-2. You see that question in your **DM Thread** with the bot as
-   `Message from @admin:`.
-
-![Requester DM Thread RHS showing the relayed question](images/shared/mattermost-thread-requester-dm.png)
-
-3. You **reply in that Thread** (Reply to thread…). Your answer appears back on
-   the approval Thread as `Reply from @you:` — reviewers never need you in the
-   approval channel.
-
-![Approval Thread RHS showing the requester's relayed reply](images/shared/mattermost-thread-relay-back.png)
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
 
 Threads stay usable after approve/deny for follow-ups. Messaging the bot outside
 a ticket thread gets a nudge to reply inside the specific request instead.
@@ -117,14 +94,14 @@ a ticket thread gets a nudge to reply inside the specific request instead.
 Approvers (System Admins, plus Team Admins if your admin enabled it) receive each
 request in the **approval channel** with **Approve** and **Deny** buttons.
 
-![A channel creation request card with Approve/Deny buttons](images/channel-request/mattermost-creation-approval-card.png)
+<img src="images/channel-request/mattermost-creation-approval-card.png" alt="Channel creation approval card" width="720">
 
 - **Approve** — creates the channel, adds the requested members, promotes the
   Channel Admins, places the channel in the requested sidebar category (if any),
   and posts a welcome message that @-mentions everyone added.
 - **Deny** — the request is closed and the requester is notified by DM.
 
-![The welcome message the bot posts in the new channel](images/channel-request/mattermost-creation-welcome.png)
+<img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel" width="720">
 
 Requests from **System Admins** who submit via the webapp Request Hub / modal
 (not the slash-command dialog) skip this step — the channel is created
@@ -136,7 +113,7 @@ immediately. Slash-command dialogs always queue for approval (`ForceQueue`).
 
 Configure the plugin in **System Console → Plugins → Mattermost Request Hub**.
 
-![Finding Channel Requests in the System Console](images/admin/mattermost-admin-settings.png)
+<img src="images/admin/mattermost-admin-settings.png" alt="System Console plugin settings" width="280">
 
 | Setting | Purpose |
 |---------|---------|
@@ -157,7 +134,7 @@ Each prefix is one row with a **prefix**, a **description**, and a **max suffix
 length** (2–48 characters, capping the suffix only — not the prefix). A fresh
 install starts empty:
 
-![The domain-prefix editor, empty state](images/admin/mattermost-admin-prefixes.png)
+<img src="images/admin/mattermost-admin-prefixes.png" alt="Domain-prefix editor, empty state" width="520">
 
 Use **Load preset** to populate the table with a starter pack — **SRE / Ops**,
 **Product org**, **Support / Success**, or **General org**. Loading a preset
@@ -165,7 +142,7 @@ updates prefixes you already have (description + max length) and appends any tha
 are missing. The **Live preview** at the bottom shows exactly what URL a request
 will produce for a given prefix and typed suffix.
 
-![Load preset open with the General org pack loaded, plus the live preview](images/admin/mattermost-admin-prefix-preview.png)
+<img src="images/admin/mattermost-admin-prefix-preview.png" alt="Load preset and live preview" width="520">
 
 See also the [Admin Guide](admin-guide.md) and open **`/mattermost-request-hub docs`**
 in Mattermost for the bundled HTML guide.

@@ -39,14 +39,39 @@
             Webhooks
         </div>
 
-
         <h1>Request a webhook (standalone)</h1>
-        <p class="tagline">Use this when you don't need a new bot. Also two-step approval.</p>
-        <ul>
-            <li>Integrations → Incoming / Outgoing Webhooks</li>
-            <li>More actions / plug hub</li>
-            <li><code>/mattermost-request-hub webhook-incoming</code> or <code>webhook-outgoing</code></li>
+        <p class="tagline">
+            Use this when you don't need a new bot.
+            Two-step approval — see <a href="approving.html">Approving</a>.
+        </p>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>Native:</strong> Main Menu → Integrations → <strong>Incoming</strong> or <strong>Outgoing Webhooks</strong> (non–System Admins)</li>
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request Incoming/Outgoing Webhook</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → the webhook tile</li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub webhook-incoming</code> or <code>webhook-outgoing</code></li>
         </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/webhook-request/mattermost-webhook-integrations-incoming.png" alt="Integrations Incoming Webhooks">
+                <figcaption>Integrations (incoming)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/webhook-request/mattermost-webhook-more-actions-incoming.png" alt="Request Incoming Webhook in More actions">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/webhook-request/mattermost-webhook-hub.png" alt="Request Hub with webhook tiles">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Forms &amp; approve</h2>
         <img src="images/webhook-request/mattermost-webhook-incoming-modal.png" alt="Incoming webhook form">
         <img src="images/webhook-request/mattermost-webhook-outgoing-modal.png" alt="Outgoing webhook form">
         <img src="images/webhook-request/mattermost-webhook-approval-card.png" alt="Webhook approval card">

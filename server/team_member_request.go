@@ -93,47 +93,25 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamMemberRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store team member request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("team member request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeTeamMember,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvTeamMemberRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "team member request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeTeamMember,
+		},
+	})
 
 	return "Your team member request has been submitted for approval. You'll be notified once a System Admin responds.", nil
 }
 
 func (p *Plugin) sendTeamMemberTicketCreatedDM(req *teamMemberRequest, requester *model.User, team *model.Team) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for team member ticket", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.teamMemberApprovalAttachment(req, requester, team)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your team member request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send team member ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.teamMemberApprovalAttachment(req, requester, team),
+		ticketSubmittedIntro("team member request"),
+	)
 }
 
 // addTeamMembers adds each nominee to the team. Returns user IDs that failed
@@ -265,20 +243,21 @@ func (p *Plugin) openTeamMemberRequestDialog(triggerID, teamID string) error {
 		CallbackId: teamMemberDialogCallbackID,
 		Title:      "Request Team Members",
 		IntroductionText: fmt.Sprintf(
-			"Nominate existing Mattermost users to be added to **%s**. System Admin approval is required.",
+			"Nominate existing Mattermost users **or bots** to be added to **%s**. System Admin approval is required.\n\n"+
+				"**Adding a bot:** search for the bot username below (create the bot first via Request a Bot if needed). Same approval process as people.",
 			teamName,
 		),
 		SubmitLabel: "Submit request",
 		State:       teamID,
 		Elements: []model.DialogElement{
 			{
-				DisplayName: "Users to add",
+				DisplayName: "Users or bots to add",
 				Name:        fieldMembers,
 				Type:        "select",
 				DataSource:  "users",
 				MultiSelect: true,
 				Optional:    false,
-				HelpText:    "Select one or more existing users to add to this team.",
+				HelpText:    "Select existing users or bots not already on this team. Bots use the same flow — pick the bot account by username.",
 			},
 			{
 				DisplayName: "Reason",

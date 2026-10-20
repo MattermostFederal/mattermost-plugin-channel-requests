@@ -39,13 +39,34 @@
             Channels
         </div>
 
-
         <h1>Request a channel</h1>
         <p class="tagline">
-            Opens from sidebar <strong>+</strong>, plug hub, More actions, or
-            <code>/mattermost-request-hub channel</code>.
+            Same form from every entry point. Approvers create the channel and post a welcome message.
         </p>
-        <img src="images/channel-request/mattermost-creation-plus-menu.png" alt="Request new channel in the + menu">
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>+ menu:</strong> channel sidebar <strong>+</strong> → <strong>Request new channel</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request a Channel</strong></li>
+            <li><strong>Dropdown:</strong> channel name → More actions → <strong>Request a Channel</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub channel</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/channel-request/mattermost-creation-plus-menu.png" alt="Request new channel in the + menu">
+                <figcaption>+ menu</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-request-hub.png" alt="Request Hub with Request a Channel">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form</h2>
         <img src="images/channel-request/mattermost-creation-modal.png" alt="Request a Channel form">
 
         <table class="field-table">
@@ -59,6 +80,8 @@
                 <tr><td>Sidebar category</td><td>Optional; pick existing or type a new name (created on approval).</td></tr>
             </tbody>
         </table>
+
+        <h2>On approve</h2>
         <p>Approval card → Approve creates the channel and posts a welcome message.</p>
         <img src="images/channel-request/mattermost-creation-approval-card.png" alt="Channel creation approval card">
         <img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel">

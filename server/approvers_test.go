@@ -54,8 +54,9 @@ func TestAttributeValueIsSet_SelectResolvesOptionNames(t *testing.T) {
 func mockApproverAttr(api *plugintest.API, attrName, userID string, values []*model.PropertyValue) {
 	api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(&model.PropertyGroup{ID: "grp"}, nil)
 	api.On("GetPropertyFieldByName", "grp", "", attrName).Return(&model.PropertyField{
-		ID:   "fld-" + attrName,
-		Type: model.PropertyFieldTypeText,
+		ID:      "fld-" + attrName,
+		GroupID: "grp",
+		Type:    model.PropertyFieldTypeText,
 		Attrs: model.StringInterface{
 			model.CustomProfileAttributesPropertyAttrsManaged: "admin",
 		},
@@ -143,4 +144,178 @@ func TestCanApproveStep(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 	})
+
+	t.Run("missing CPA field: configured security pool still blocks system admin", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{SecurityApproverAttribute: "security_approver"})
+		api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(&model.PropertyGroup{ID: "grp"}, nil)
+		api.On("GetPropertyFieldByName", "grp", "", "security_approver").Return(
+			nil, model.NewAppError("GetPropertyFieldByName", "app.property_field.get_by_name.app_error", nil, "not found", 404),
+		)
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSecurity)
+		require.NoError(t, err)
+		require.False(t, ok, "forced security review: System Admins must not cover a configured security pool")
+	})
+
+	t.Run("empty security attribute: system admin covers security", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{})
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSecurity)
+		require.NoError(t, err)
+		require.True(t, ok)
+		api.AssertNotCalled(t, "GetPropertyGroup", mock.Anything)
+	})
+
+	t.Run("CPA group failure: configured security pool still blocks system admin", func(t *testing.T) {
+		api := &plugintest.API{}
+		api.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{SecurityApproverAttribute: "security_approver"})
+		api.On("GetPropertyGroup", model.AccessControlPropertyGroupName).Return(
+			nil, model.NewAppError("GetPropertyGroup", "app.error", nil, "unavailable", 500),
+		)
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSecurity)
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+
+	t.Run("system_admin mode: only system admins qualify for security", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{TwoStepApproverMode: twoStepModeSystemAdmin})
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSecurity)
+		require.NoError(t, err)
+		require.True(t, ok)
+		ok, err = p.canApproveStep(&model.User{Id: "u"}, stepSecurity)
+		require.NoError(t, err)
+		require.False(t, ok)
+		api.AssertNotCalled(t, "GetPropertyGroup", mock.Anything)
+		api.AssertNotCalled(t, "GetGroupsForUser", mock.Anything)
+	})
+
+	t.Run("usergroup mode: group member qualifies for security", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{
+			TwoStepApproverMode:   twoStepModeUserGroup,
+			SecurityApproverGroup: "security-approvers",
+		})
+		groupName := "security-approvers"
+		api.On("GetGroupsForUser", "u2").Return([]*model.Group{{Name: &groupName}}, nil)
+		ok, err := p.canApproveStep(&model.User{Id: "u2"}, stepSecurity)
+		require.NoError(t, err)
+		require.True(t, ok)
+	})
+
+	t.Run("usergroup mode: missing security group does not let system admin skip review", func(t *testing.T) {
+		api := &plugintest.API{}
+		stubLogs(api)
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{
+			TwoStepApproverMode:   twoStepModeUserGroup,
+			SecurityApproverGroup: "missing-group",
+		})
+		api.On("GetGroupsForUser", "a").Return([]*model.Group{}, nil)
+		api.On("GetGroupByName", "missing-group").Return(
+			nil, model.NewAppError("GetGroupByName", "app.group.not_found", nil, "", 404),
+		)
+		api.On("GetGroups", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*model.Group{}, nil).Maybe()
+		api.On("GetGroupsBySource", mock.Anything).Return([]*model.Group{}, nil).Maybe()
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSecurity)
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+
+	t.Run("usergroup mode: system admin still qualifies for system step", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{
+			TwoStepApproverMode:   twoStepModeUserGroup,
+			SecurityApproverGroup: "security-approvers",
+			SystemApproverGroup:   "system-approvers",
+		})
+		ok, err := p.canApproveStep(&model.User{Id: "a", Roles: model.SystemAdminRoleId}, stepSystem)
+		require.NoError(t, err)
+		require.True(t, ok)
+		api.AssertNotCalled(t, "GetGroupsForUser", mock.Anything)
+	})
+}
+
+func TestApplyTwoStepApproval(t *testing.T) {
+	t.Run("attribute mode never one-clicks both steps for system admin", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		// Empty security attribute used to solo-complete; that was the dual-role bug.
+		p.setConfiguration(&configuration{SecurityApproverAttribute: ""})
+
+		admin := &model.User{Id: "admin", Roles: model.SystemAdminRoleId}
+		state := p.applyTwoStepApproval(twoStepState{}, stepSecurity, admin, 100)
+		require.False(t, state.complete())
+		require.Equal(t, "admin", state.SecurityApproverID)
+		require.Empty(t, state.SystemApproverID)
+	})
+
+	t.Run("usergroup dual-role system admin fills only security on first click", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{
+			TwoStepApproverMode:   twoStepModeUserGroup,
+			SecurityApproverGroup: "security-approvers",
+			SystemApproverGroup:   "system-approvers",
+		})
+
+		dual := &model.User{Id: "dual", Roles: model.SystemAdminRoleId}
+		state := p.applyTwoStepApproval(twoStepState{}, stepSecurity, dual, 100)
+		require.False(t, state.complete(), "security+sysadmin must not complete both steps alone")
+		require.Equal(t, "dual", state.SecurityApproverID)
+		require.Empty(t, state.SystemApproverID)
+	})
+
+	t.Run("configured security attribute keeps two-person rule for system admin", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{SecurityApproverAttribute: "security_approver"})
+
+		admin := &model.User{Id: "admin", Roles: model.SystemAdminRoleId}
+		state := p.applyTwoStepApproval(twoStepState{}, stepSecurity, admin, 100)
+		require.False(t, state.complete())
+		require.Equal(t, "admin", state.SecurityApproverID)
+		require.Empty(t, state.SystemApproverID)
+	})
+
+	t.Run("healthy security pool keeps two-person rule", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{SecurityApproverAttribute: "security_approver"})
+		mockApproverAttr(api, "security_approver", "sec", []*model.PropertyValue{{Value: json.RawMessage(`"yes"`)}})
+
+		sec := &model.User{Id: "sec"}
+		state := p.applyTwoStepApproval(twoStepState{}, stepSecurity, sec, 100)
+		require.False(t, state.complete())
+		require.Equal(t, "sec", state.SecurityApproverID)
+		require.Empty(t, state.SystemApproverID)
+	})
+
+	t.Run("system_admin mode: solo system admin completes both steps", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{TwoStepApproverMode: twoStepModeSystemAdmin})
+
+		admin := &model.User{Id: "admin", Roles: model.SystemAdminRoleId}
+		state := p.applyTwoStepApproval(twoStepState{}, stepSecurity, admin, 100)
+		require.True(t, state.complete())
+		require.Equal(t, "admin", state.SecurityApproverID)
+		require.Equal(t, "admin", state.SystemApproverID)
+	})
+}
+
+func TestTwoStepMode(t *testing.T) {
+	require.Equal(t, twoStepModeAttribute, (&configuration{}).twoStepMode())
+	require.Equal(t, twoStepModeAttribute, (&configuration{TwoStepApproverMode: "attribute"}).twoStepMode())
+	require.Equal(t, twoStepModeUserGroup, (&configuration{TwoStepApproverMode: "usergroup"}).twoStepMode())
+	require.Equal(t, twoStepModeUserGroup, (&configuration{TwoStepApproverMode: "group"}).twoStepMode())
+	require.Equal(t, twoStepModeSystemAdmin, (&configuration{TwoStepApproverMode: "system_admin"}).twoStepMode())
+	require.Equal(t, twoStepModeSystemAdmin, (&configuration{TwoStepApproverMode: "sysadmin"}).twoStepMode())
 }

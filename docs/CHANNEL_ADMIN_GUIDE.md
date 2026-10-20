@@ -7,8 +7,10 @@ on approval the nominee is added to the channel (if not already a member) and
 granted the Channel Admin role.
 
 > Companion guides: [new channels](CHANNEL_CREATION_GUIDE.md) ·
-> [teams](TEAM_REQUEST_GUIDE.md) · [bots](BOT_REQUEST_GUIDE.md) ·
-> [webhooks](WEBHOOK_REQUEST_GUIDE.md) · [Admin Guide](admin-guide.md).
+> [teams](TEAM_REQUEST_GUIDE.md) ·
+> [team membership & guests](TEAM_MEMBERSHIP_GUIDE.md) ·
+> [bots](BOT_REQUEST_GUIDE.md) · [webhooks](WEBHOOK_REQUEST_GUIDE.md) ·
+> [Admin Guide](admin-guide.md).
 >
 > In Mattermost, open the full in-app guide anytime with
 > **`/mattermost-request-hub docs`**.
@@ -24,43 +26,30 @@ This guide covers:
 
 ## Requesting a Channel Admin
 
-There are several ways to open the request form. They all open the same window.
-The option is **only shown to members who aren't already an admin** of the
-channel — if you're already a Channel Admin (or a System Admin), you can manage
-the channel directly and won't see the menu items (the slash command still works
-if the feature is enabled).
+Same form from every entry point. The option is **only shown to members who
+aren't already an admin** of the channel — if you're already a Channel Admin
+(or a System Admin), you can manage the channel directly and won't see the menu
+items (the slash command still works if the feature is enabled).
 
-### 1. Native: Members panel
+### How to open
 
-Open the channel's **Members** list (click the member count in the channel
-header). Next to **Add** you'll see a **Request Admin** button.
+- **Members:** channel Members panel → **Request Admin**
+- **Dropdown:** channel name → More actions → **Request Channel Admin**
+- **Hub:** right App Bar **plug** → Requests → **Request Channel Admin**
+- **Slash:** `/mattermost-request-hub channel-admin`
 
-![The Request Admin button in the Members panel](images/channel-admin-request/mattermost-promotion-members-button.png)
-
-### 2. Dropdown: channel More actions
-
-Click the channel name at the top-left, then **More actions → Request Channel
-Admin**.
-
-![Request Channel Admin under the channel-name menu](images/channel-admin-request/mattermost-promotion-menu.png)
-
-### 3. Right-side plug icon (Requests hub)
-
-On the **far right** of the window (the App Bar / plugin strip), click the
-**plug** icon → **Requests** → **Request Channel Admin**.
-
-![Plug icon on the right App Bar opening Requests](images/shared/mattermost-requests-plug-appbar.png)
-
-### 4. Slash command
-
-Type **`/mattermost-request-hub channel-admin`** in any channel to open the
-request dialog (you'll pick the channel and nominees in the form).
+<p>
+<img src="images/channel-admin-request/mattermost-promotion-members-button.png" alt="Members panel" width="380">
+<img src="images/channel-admin-request/mattermost-promotion-menu.png" alt="More actions" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/shared/mattermost-request-hub.png" alt="Request Hub" width="440">
+</p>
 
 > Tip: **`/mattermost-request-hub docs`** opens the full documentation page.
 
-### Filling out the request
+### Form
 
-![The Request a Channel Admin form](images/channel-admin-request/mattermost-promotion-modal.png)
+<img src="images/channel-admin-request/mattermost-promotion-modal.png" alt="Request a Channel Admin form" width="480">
 
 | Field | What it does |
 |-------|--------------|
@@ -82,19 +71,15 @@ Channel Admin requests use the same **two-way Thread relay** as channel creation
 Open the **Thread** RHS from the card (**Reply**) — don't post a new top-level
 message.
 
-1. An approver asks in the **approval Thread** — for example, *Why does this
-   person need Channel Admin?*
+- **Approver:** ask in the approval Thread (e.g. *Why does this person need Channel Admin?*)
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
 
-![Approver asks a clarifying question in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
-
-2. You see `Message from @admin:` in your **DM Thread** with the bot.
-
-![Requester DM Thread RHS showing the relayed question](images/shared/mattermost-thread-requester-dm.png)
-
-3. You **reply in that Thread**. Your answer is posted back to the approval
-   Thread as `Reply from @you:`.
-
-![Approval Thread RHS showing the requester's relayed reply](images/shared/mattermost-thread-relay-back.png)
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
 
 You never need access to the approval channel. Use **Reply to thread…** in the
 ticket DM Thread (not a new root DM to the bot).
@@ -107,7 +92,7 @@ The request is posted to the **approval channel**, and everyone who can act on i
 is @-mentioned there: every **System Admin** plus the **Team Admins** of the
 channel's team. Any of them can **Approve** or **Deny**.
 
-![A Channel Admin request card with Approve/Deny buttons](images/channel-admin-request/mattermost-promotion-approval-card.png)
+<img src="images/channel-admin-request/mattermost-promotion-approval-card.png" alt="Channel Admin approval card" width="720">
 
 - **Approve** — each nominee is added to the channel (if needed) and promoted to
   Channel Admin. A bot message in the channel announces who can now manage it,
@@ -122,8 +107,7 @@ step — the nominees are promoted immediately.
 ## Admin setup
 
 Channel Admin requests reuse the same approval settings as channel-creation
-requests, in **System Console → Plugins → Channel Requests** (or
-**Mattermost Request Hub**):
+requests, in **System Console → Plugins → Mattermost Request Hub**:
 
 | Setting | Purpose |
 |---------|---------|

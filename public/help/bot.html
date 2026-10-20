@@ -39,19 +39,51 @@
             Bots
         </div>
 
-
         <h1>Request a bot</h1>
-        <ul>
-            <li><strong>Native:</strong> Integrations → Bot Accounts (non–System Admins)</li>
-            <li>More actions / plug hub</li>
-            <li><code>/mattermost-request-hub bot</code></li>
+        <p class="tagline">
+            Optional access token + incoming/outgoing webhooks on the same ticket.
+            <strong>Two-step</strong> approval (security + system) — see <a href="approving.html">Approving</a>.
+        </p>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>Native:</strong> Main Menu → Integrations → <strong>Bot Accounts</strong> (non–System Admins)</li>
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request a Bot</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request a Bot</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub bot</code></li>
         </ul>
-        <p>Optional access token + incoming/outgoing webhooks on the same ticket. <strong>Two-step</strong> approval (security + system).</p>
-        <img src="images/bot-request/mattermost-bot-integrations.png" alt="Integrations Bot Accounts">
+        <div class="entry-shots">
+            <figure>
+                <img src="images/bot-request/mattermost-bot-integrations.png" alt="Integrations Bot Accounts">
+                <figcaption>Integrations</figcaption>
+            </figure>
+            <figure>
+                <img src="images/bot-request/mattermost-bot-more-actions.png" alt="Request a Bot in More actions">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/bot-request/mattermost-bot-hub.png" alt="Request Hub with Request a Bot">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form &amp; approve</h2>
         <img src="images/bot-request/mattermost-bot-modal.png" alt="Request a Bot Account form">
         <img src="images/bot-request/mattermost-bot-approval-card.png" alt="Bot approval card">
         <img src="images/bot-request/mattermost-bot-token-dm.png" alt="Bot token DM">
         <p>Tokens in the approval DM auto-delete after <strong>72 hours</strong> — save them securely.</p>
+
+        <h2>Add the bot to a team</h2>
+        <p>
+            Creating a bot does not put it on a team. After the bot exists, use
+            <a href="team-member.html">Request Team Members</a> — search for the bot username
+            and submit the same way you would add a person. System Admins approve that ticket
+            in <code>mattermost-team-requests</code>.
+        </p>
 
     </main>
 </div>

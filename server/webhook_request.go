@@ -42,6 +42,29 @@ type webhookRequest struct {
 	twoStepState
 }
 
+// requireWebhookTargetChannel loads channelID and ensures it is a public or
+// private team channel the requester may target. System Admins skip membership.
+// Used by standalone webhook requests and bot webhook extras.
+func (p *Plugin) requireWebhookTargetChannel(requester *model.User, channelID string) (*model.Channel, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, errors.New("a target channel is required")
+	}
+	channel, appErr := p.API.GetChannel(channelID)
+	if appErr != nil {
+		return nil, errors.Wrap(appErr, "failed to load target channel")
+	}
+	if channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate {
+		return nil, errors.New("webhooks can only target public or private channels")
+	}
+	if requester != nil && !requester.IsSystemAdmin() {
+		if _, memErr := p.API.GetChannelMember(channelID, requester.Id); memErr != nil {
+			return nil, errors.New("you must be a member of the channel to request a webhook for it")
+		}
+	}
+	return channel, nil
+}
+
 // submitWebhookRequest validates input and queues a webhook request in the
 // dedicated webhook approval channel. Unlike other request types, System Admin
 // callers are NOT given a creation bypass — the webhook creation call requires
@@ -60,14 +83,14 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 		return "", errors.New("a callback URL is required for outgoing webhooks")
 	}
 
-	channel, appErr := p.API.GetChannel(channelID)
-	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load target channel")
-	}
-
 	requester, appErr := p.API.GetUser(requesterID)
 	if appErr != nil {
 		return "", errors.Wrap(appErr, "failed to load requesting user")
+	}
+
+	channel, err := p.requireWebhookTargetChannel(requester, channelID)
+	if err != nil {
+		return "", err
 	}
 
 	req := &webhookRequest{
@@ -81,8 +104,8 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 		CallbackURL: strings.TrimSpace(callbackURL),
 	}
 
-	if err := p.storeWebhookRequest(req); err != nil {
-		return "", err
+	if storeErr := p.storeWebhookRequest(req); storeErr != nil {
+		return "", storeErr
 	}
 	rawBefore, snapErr := json.Marshal(req)
 	if snapErr != nil {
@@ -102,53 +125,29 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvWebhookRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store webhook request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("webhook request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeWebhook,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvWebhookRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "webhook request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeWebhook,
+		},
+	})
 
 	msg := "Your webhook request has been submitted for approval. It needs a security approval and a system approval."
 	if requester.IsSystemAdmin() {
-		msg = "Your webhook request has been posted for two-step approval. As a System Admin you can fill the system step; a security approver must fill the other."
+		msg = "Your webhook request has been posted for two-step approval. A security approver must sign off first; then you (or another System Admin) can fill the system step."
 	}
 	return msg, nil
 }
 
-// sendWebhookTicketCreatedDM opens a DM and posts a card mirroring the
-// webhook approval post (same fields, no buttons) as the root of the ticket thread.
 func (p *Plugin) sendWebhookTicketCreatedDM(req *webhookRequest, requester *model.User, channel *model.Channel) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for webhook ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.webhookApprovalAttachment(req, requester, channel)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your webhook request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send webhook ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.webhookApprovalAttachment(req, requester, channel),
+		ticketSubmittedIntro("webhook request"),
+	)
 }
 
 // createWebhookForRequest creates the webhook via the Mattermost REST API using
@@ -170,9 +169,9 @@ func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string
 		return p.createWebhookFn(req, adminUserID)
 	}
 
-	session, appErr := p.API.CreateSession(&model.Session{UserId: adminUserID})
-	if appErr != nil {
-		return "", "", errors.Wrap(appErr, "failed to create admin session for webhook creation")
+	session, sessErr := p.createUserSession(adminUserID)
+	if sessErr != nil {
+		return "", "", errors.Wrap(sessErr, "failed to create admin session for webhook creation")
 	}
 	defer func() {
 		if revErr := p.API.RevokeSession(session.Id); revErr != nil {
@@ -223,6 +222,20 @@ func (p *Plugin) createWebhookForRequest(req *webhookRequest, adminUserID string
 // deleteWebhook removes a hook created by createWebhookForRequest. Used when
 // the requester DM fails after creation so we don't leave an unowned secret.
 // adminUserID is the approver whose session is used for the REST delete.
+// hookIDFromPublicURL extracts the hook id from a SiteURL/hooks/<id> string.
+func hookIDFromPublicURL(publicURL string) string {
+	const marker = "/hooks/"
+	i := strings.LastIndex(publicURL, marker)
+	if i < 0 {
+		return ""
+	}
+	id := strings.TrimSpace(publicURL[i+len(marker):])
+	if id == "" || strings.ContainsAny(id, "/?#") {
+		return ""
+	}
+	return id
+}
+
 func (p *Plugin) deleteWebhook(webhookType, hookID, adminUserID string) error {
 	if strings.TrimSpace(hookID) == "" {
 		return nil
@@ -235,9 +248,9 @@ func (p *Plugin) deleteWebhook(webhookType, hookID, adminUserID string) error {
 	if internalURL == "" {
 		return errors.New("site URL is not configured — cannot delete webhook")
 	}
-	session, appErr := p.API.CreateSession(&model.Session{UserId: adminUserID})
-	if appErr != nil {
-		return errors.Wrap(appErr, "failed to create admin session for webhook deletion")
+	session, sessErr := p.createUserSession(adminUserID)
+	if sessErr != nil {
+		return errors.Wrap(sessErr, "failed to create admin session for webhook deletion")
 	}
 	defer func() {
 		if revErr := p.API.RevokeSession(session.Id); revErr != nil {
@@ -307,6 +320,7 @@ func (p *Plugin) internalBaseURL() string {
 
 func (p *Plugin) postWebhookApprovalRequest(req *webhookRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
 	webhookCh := p.ensureWebhookApprovalChannel()
+	go p.reconcileTwoStepApproverChannels()
 	return p.postApprovalAttachment(
 		p.webhookApprovalAttachment(req, requester, channel),
 		p.webhookApprovalHeader(),

@@ -100,49 +100,25 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamAdminRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store team admin request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("team admin request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeTeamAdmin,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvTeamAdminRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "team admin request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeTeamAdmin,
+		},
+	})
 
 	return "Your Team Admin request has been submitted for approval. You'll be notified once a System Admin responds.", nil
 }
 
-// sendTeamAdminTicketCreatedDM opens a DM and posts a card mirroring the
-// Team Admin approval post (same fields, no buttons) as the root of the ticket thread.
 func (p *Plugin) sendTeamAdminTicketCreatedDM(req *teamAdminRequest, requester *model.User, team *model.Team) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for team admin ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.teamAdminApprovalAttachment(req, requester, team)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your Team Admin request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send team admin ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.teamAdminApprovalAttachment(req, requester, team),
+		ticketSubmittedIntro("Team Admin request"),
+	)
 }
 
 // promoteTeamAdmins adds each nominee to the team (ensuring membership) then

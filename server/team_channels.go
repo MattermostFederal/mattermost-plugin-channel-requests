@@ -199,30 +199,32 @@ func (p *Plugin) addChannelToPermissionsCategory(userID, teamID, channelID strin
 			"user_id", userID, "team_id", teamID, "error", appErr.Error())
 		return
 	}
-
-	for _, cat := range cats.Categories {
-		if !isManagedSidebarCategory(cat.DisplayName) {
-			continue
-		}
-		changed := false
-		if cat.DisplayName != sidebarCategoryName {
-			cat.DisplayName = sidebarCategoryName
-			changed = true
-		}
-		already := slices.Contains(cat.Channels, channelID)
-		if !already {
-			cat.Channels = append([]string{channelID}, cat.Channels...)
-			changed = true
-		}
-		if !changed {
+	// GetChannelSidebarCategories can return (nil, nil) on some builds.
+	if cats != nil {
+		for _, cat := range cats.Categories {
+			if cat == nil || !isManagedSidebarCategory(cat.DisplayName) {
+				continue
+			}
+			changed := false
+			if cat.DisplayName != sidebarCategoryName {
+				cat.DisplayName = sidebarCategoryName
+				changed = true
+			}
+			already := slices.Contains(cat.Channels, channelID)
+			if !already {
+				cat.Channels = append([]string{channelID}, cat.Channels...)
+				changed = true
+			}
+			if !changed {
+				return
+			}
+			if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID,
+				[]*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
+				p.API.LogWarn("sidebar: failed to update category",
+					"user_id", userID, "category_id", cat.Id, "error", updateErr.Error())
+			}
 			return
 		}
-		if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID,
-			[]*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
-			p.API.LogWarn("sidebar: failed to update category",
-				"user_id", userID, "category_id", cat.Id, "error", updateErr.Error())
-		}
-		return
 	}
 
 	// Category doesn't exist yet — create it.
@@ -326,7 +328,9 @@ func (p *Plugin) ensureNamedApprovalChannel(name, displayName, purpose string) *
 	})
 
 	// Seed all System Admins immediately so they can see and act on requests
-	// without waiting for the next activation cycle.
+	// without waiting for the next activation cycle. Security/system pool
+	// members are seeded separately via syncTwoStepApproverChannels (activate /
+	// config change / login) to avoid an init cycle with ensure* helpers.
 	p.addSystemAdminsToChannel(ch.Id)
 
 	return ch

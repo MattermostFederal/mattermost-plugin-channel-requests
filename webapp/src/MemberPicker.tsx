@@ -35,8 +35,13 @@ type Props = {
     onChange: (value: string) => void;
     placeholder?: string;
 
-    // teamId, when set, scopes autocomplete to members of that team.
+    // teamId, when set, scopes autocomplete to members of that team
+    // (channel create / Channel Admin). Mutually exclusive with notInTeamId.
     teamId?: string;
+
+    // notInTeamId scopes autocomplete to users who are NOT on that team
+    // (team member add — find people elsewhere on the instance).
+    notInTeamId?: string;
 
     // usernameBadges maps username -> a short label ("Channel Admin",
     // "Member", "Auto-approved", etc.). When a candidate's username
@@ -125,7 +130,7 @@ const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) =>
     );
 };
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, usernameBadges}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, notInTeamId, usernameBadges}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -164,16 +169,21 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         setSelected(parseUsernames(value));
     }, [value]);
 
-    // Debounced autocomplete fetch. Team-scoped via ?team_id when the
-    // parent passed teamId. Strips leading @ from the query before
-    // sending — MM usernames don't contain @, so "@cfi" would never
-    // match a real username; users expect to be able to type @-prefixed
-    // like every other mention affordance.
+    // Debounced autocomplete fetch. Scoped via ?team_id (in-team) or
+    // ?not_in_team_id (everyone else). Strips leading @ from the query —
+    // MM usernames don't contain @, so "@cfi" would never match; users
+    // expect to type @-prefixed like every other mention affordance.
     useEffect(() => {
         // Strip any leading @ AND trim. If nothing meaningful left,
         // clear the dropdown.
         const q = query.trim().replace(/^@+/, '').trim();
         if (!q) {
+            setCandidates([]);
+            return undefined;
+        }
+        // Need exactly one scope — otherwise the API returns [].
+        if ((teamId && notInTeamId) || (!teamId && !notInTeamId)) {
+            debug('missing or conflicting scope', {teamId, notInTeamId});
             setCandidates([]);
             return undefined;
         }
@@ -187,9 +197,11 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                 const params = new URLSearchParams({q});
                 if (teamId) {
                     params.set('team_id', teamId);
+                } else if (notInTeamId) {
+                    params.set('not_in_team_id', notInTeamId);
                 }
                 const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
-                debug('fetching', {url, q, teamId, selectedCount: selected.length});
+                debug('fetching', {url, q, teamId, notInTeamId, selectedCount: selected.length});
                 const response = await fetch(url, {
                     credentials: 'same-origin',
                     headers: {'X-Requested-With': 'XMLHttpRequest'},
@@ -228,7 +240,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [query, selected, teamId]);
+    }, [query, selected, teamId, notInTeamId]);
 
     // Close dropdown when clicking outside.
     useEffect(() => {

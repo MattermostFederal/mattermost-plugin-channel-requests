@@ -93,13 +93,52 @@ func TestHandleUserAutocomplete_SoftDeletedMemberGetsEmpty(t *testing.T) {
 	api.AssertNotCalled(t, "SearchUsers", mock.Anything)
 }
 
-func TestHandleUserAutocomplete_RequiresTeamID(t *testing.T) {
+func TestHandleUserAutocomplete_RequiresTeamScope(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 
 	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=alice", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleUserAutocomplete(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.JSONEq(t, "[]", strings.TrimSpace(w.Body.String()))
+	api.AssertNotCalled(t, "SearchUsers", mock.Anything)
+}
+
+func TestHandleUserAutocomplete_NotInTeamHappyPath(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
+	api.On("SearchUsers", mock.MatchedBy(func(s *model.UserSearch) bool {
+		return s.NotInTeamId == "t1" && s.TeamId == "" && s.Term == "bob"
+	})).Return([]*model.User{{Id: "id_bob", Username: "bob"}}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=bob&not_in_team_id=t1", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleUserAutocomplete(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	require.Equal(t, "bob", out[0]["username"])
+}
+
+func TestHandleUserAutocomplete_BothScopesRejected(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=alice&team_id=t1&not_in_team_id=t1", nil)
 	req.Header.Set(headerUserID, "u1")
 	w := httptest.NewRecorder()
 	p.handleUserAutocomplete(w, req)
@@ -117,8 +156,12 @@ func TestHandleAction_MissingHeaderUnauthorized(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.handleAction(w, req, true)
 
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-	// Identity is never looked up from a forged/absent header.
+	// Action handlers must return JSON (not plain-text 401) or the client
+	// shows the opaque "Action integration error."
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp.EphemeralText, "verify your identity")
 	api.AssertNotCalled(t, "GetUser", mock.Anything)
 }
 
@@ -414,19 +457,95 @@ func TestHandleAction_NonApproverRejected(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{}) // AllowTeamAdminApprovers false
 
-	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
+	creq := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team_new", Name: "x", DisplayName: "X", ChannelType: "O"}
+	raw, err := json.Marshal(creq)
+	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader("{}"))
-	req.Header.Set(headerUserID, "u1")
+	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
+	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
+	// Plain member of the target team — not Team Admin.
+	api.On("GetTeamMember", "team_new", "u1").Return(&model.TeamMember{Roles: "team_user"}, nil)
+
+	r := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader(actionBody(t, "req1")))
+	r.Header.Set(headerUserID, "u1")
 	w := httptest.NewRecorder()
-	p.handleAction(w, req, true)
+	p.handleAction(w, r, true)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp model.PostActionIntegrationResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(t, resp.EphemeralText, "permission")
-	// A non-approver never reaches the pending request.
-	api.AssertNotCalled(t, "KVGet", mock.Anything)
+	api.AssertNotCalled(t, "KVCompareAndDelete", mock.Anything, mock.Anything)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestHandleAction_PerTeamTeamAdminMayApprove(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	// Global ApprovalTeam Team Admins are NOT opted in — only the target team's
+	// Team Admins (per-team approval cards) may approve besides System Admins.
+	p.setConfiguration(&configuration{AllowTeamAdminApprovers: false})
+
+	creq := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team_new", Name: "ops-test-6", DisplayName: "test 6", ChannelType: "O"}
+	raw, err := json.Marshal(creq)
+	require.NoError(t, err)
+
+	api.On("GetUser", "u_ta").Return(&model.User{Id: "u_ta", Username: "lead", Roles: "system_user"}, nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
+	api.On("GetTeamMember", "team_new", "u_ta").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	api.On("KVCompareAndDelete", kvRequestPrefix+"req1", raw).Return(true, nil)
+	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "ops-test-6", TeamId: "team_new"}, nil)
+	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("UpdateChannelMemberRoles", "ch1", "u_req", channelAdminRoleString).Return(&model.ChannelMember{}, nil)
+	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
+
+	r := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader(actionBody(t, "req1")))
+	r.Header.Set(headerUserID, "u_ta")
+	w := httptest.NewRecorder()
+	p.handleAction(w, r, true)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Update)
+	require.Empty(t, resp.EphemeralText)
+	api.AssertCalled(t, "CreateChannel", mock.Anything)
+}
+
+func TestCanApproveChannelRequest(t *testing.T) {
+	t.Run("system admin always", func(t *testing.T) {
+		p := newTestPlugin(&plugintest.API{})
+		p.setConfiguration(&configuration{})
+		require.True(t, p.canApproveChannelRequest(&model.User{Id: "a", Roles: "system_user system_admin"}, "team_new"))
+	})
+
+	t.Run("target team admin may approve", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{AllowTeamAdminApprovers: false})
+		api.On("GetTeamMember", "team_new", "u_ta").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
+		require.True(t, p.canApproveChannelRequest(&model.User{Id: "u_ta", Roles: "system_user"}, "team_new"))
+	})
+
+	t.Run("plain member denied", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{AllowTeamAdminApprovers: false})
+		api.On("GetTeamMember", "team_new", "u1").Return(&model.TeamMember{Roles: "team_user"}, nil)
+		require.False(t, p.canApproveChannelRequest(&model.User{Id: "u1", Roles: "system_user"}, "team_new"))
+	})
+
+	t.Run("empty team id denied for non-global-approver", func(t *testing.T) {
+		p := newTestPlugin(&plugintest.API{})
+		p.setConfiguration(&configuration{})
+		require.False(t, p.canApproveChannelRequest(&model.User{Id: "u1", Roles: "system_user"}, ""))
+	})
 }
 
 func TestHandleAdminAction_ApproveClaimsAndPromotes(t *testing.T) {

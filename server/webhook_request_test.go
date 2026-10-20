@@ -98,7 +98,7 @@ func TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
-	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts"}, nil)
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts", Type: model.ChannelTypeOpen}, nil)
 	api.On("GetUser", "u_admin").Return(&model.User{Id: "u_admin", Username: "admin", Roles: "system_user system_admin"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
@@ -125,8 +125,9 @@ func TestSubmitWebhookRequest_RegularUserQueuesInWebhookChannel(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
-	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts"}, nil)
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "alerts", Type: model.ChannelTypeOpen}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
 	stubWebhookChannel(api, "appteam", "wh-ch")
@@ -154,8 +155,9 @@ func TestSubmitWebhookRequest_OutgoingQueuesWithCallbackURL(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{ApprovalTeam: "appteam", AllowWebhookRequests: true})
 
-	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "ops"}, nil)
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "ops", Type: model.ChannelTypeOpen}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 
 	stubWebhookChannel(api, "appteam", "wh-ch")
@@ -187,6 +189,7 @@ func TestCreateWebhookForRequest_IncomingReturnsURL(t *testing.T) {
 	})
 	// createWebhookForRequest creates a short-lived session for the admin and
 	// revokes it immediately after the REST API call.
+	api.On("GetUser", "test-admin-user-id").Return(&model.User{Id: "test-admin-user-id", Roles: model.SystemAdminRoleId}, nil)
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess1", Token: "tok1"}, nil)
 	api.On("RevokeSession", "sess1").Return(nil)
 
@@ -215,6 +218,7 @@ func TestCreateWebhookForRequest_OutgoingReturnsConfirmation(t *testing.T) {
 	api.On("GetConfig").Return(&model.Config{
 		ServiceSettings: model.ServiceSettings{SiteURL: new(ts.URL)},
 	})
+	api.On("GetUser", "test-admin-user-id").Return(&model.User{Id: "test-admin-user-id", Roles: model.SystemAdminRoleId}, nil)
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess2", Token: "tok2"}, nil)
 	api.On("RevokeSession", "sess2").Return(nil)
 
@@ -268,6 +272,7 @@ func TestCreateWebhookForRequest_APIErrorPropagates(t *testing.T) {
 	api.On("GetConfig").Return(&model.Config{
 		ServiceSettings: model.ServiceSettings{SiteURL: new(ts.URL)},
 	})
+	api.On("GetUser", "bad-user-id").Return(&model.User{Id: "bad-user-id", Roles: model.SystemAdminRoleId}, nil)
 	api.On("CreateSession", mock.Anything).Return(&model.Session{Id: "sess3", Token: "bad-token"}, nil)
 	api.On("RevokeSession", "sess3").Return(nil)
 
@@ -280,4 +285,41 @@ func TestCreateWebhookForRequest_APIErrorPropagates(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to create incoming webhook")
+}
+
+func TestSubmitWebhookRequest_RejectsNonMember(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team-id", Name: "secret", Type: model.ChannelTypePrivate}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(nil, testAppErr("not a member"))
+
+	_, err := p.submitWebhookRequest("u_req", webhookTypeIncoming, "ch1", "Hook", "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "member of the channel")
+}
+
+func TestSubmitWebhookRequest_RejectsDirectMessageChannel(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
+	api.On("GetChannel", "dm1").Return(&model.Channel{Id: "dm1", Type: model.ChannelTypeDirect}, nil)
+
+	_, err := p.submitWebhookRequest("u_req", webhookTypeIncoming, "dm1", "Hook", "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "public or private")
+}
+
+func TestIsTeamAdminOfTeamID_RejectsSoftDeleted(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{
+		TeamId: "t1", UserId: "u1", SchemeAdmin: true, DeleteAt: 99,
+	}, nil)
+	require.False(t, p.isTeamAdminOfTeamID("u1", "t1"))
 }

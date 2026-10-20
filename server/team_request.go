@@ -128,49 +128,25 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store team request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("team request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeTeam,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvTeamRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "team request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeTeam,
+		},
+	})
 
 	return "Your team creation request has been submitted for approval. You'll be notified once a System Admin responds.", nil
 }
 
-// sendTeamCreationTicketCreatedDM opens a DM and posts a card mirroring the
-// team creation approval post (same fields, no buttons) as the root of the ticket thread.
 func (p *Plugin) sendTeamCreationTicketCreatedDM(req *teamCreationRequest, requester *model.User) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for team creation ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.teamCreationApprovalAttachment(req, requester)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your team creation request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send team creation ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.teamCreationApprovalAttachment(req, requester),
+		ticketSubmittedIntro("team creation request"),
+	)
 }
 
 // createTeamForRequest creates the team, adds the requester as a member, and

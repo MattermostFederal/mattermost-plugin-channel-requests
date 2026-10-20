@@ -325,55 +325,27 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	// Re-store with the post IDs filled in. Best-effort: if this fails the ticket
-	// still works (approve/deny still finds the request), but thread forwarding and
-	// threaded outcome notifications won't work for this ticket.
-	if ok, casErr := p.kvUpdateIfUnchanged(kvRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("channel request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeChannel,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "channel request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeChannel, ScopeID: req.TeamID,
+		},
+	})
 
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
 
-// sendTicketCreatedDM opens a DM between the bot and the requester and posts a
-// card mirroring the approval post (same fields, no buttons) as the root of
-// the ticket thread. The requester can reply here to add context; replies are
-// forwarded to the approval thread by MessageHasBeenPosted. Returns the root
-// post ID and DM channel ID; both empty on failure (non-fatal).
+// sendTicketCreatedDM posts the channel-request pending card as the requester's
+// ticket DM root (shared postTicketCreatedDM path).
 func (p *Plugin) sendTicketCreatedDM(req *channelRequest, requester *model.User) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.approvalAttachment(req, requester)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your channel request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.approvalAttachment(req, requester),
+		ticketSubmittedIntro("channel request"),
+	)
 }
 
 // postWelcomeMessage posts a bot message in the newly-created channel announcing who requested it
@@ -689,7 +661,8 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
-// Core identifying fields (requester, visibility, channel name, URL) are always visible.
+// Team is first and full-width so approvers scanning root or per-team queues see which
+// team the channel will live in without relying on the message preamble alone.
 // Verbose details (purpose, members, admins) go in Text so Mattermost's native "Show more"
 // collapses them on long requests — the approval channel stays scannable.
 func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.MessageAttachment {
@@ -698,7 +671,9 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		visibility = "Private"
 	}
 
+	teamName := p.teamDisplayName(req.TeamID)
 	fields := []*model.MessageAttachmentField{
+		{Title: "Team", Value: teamName, Short: false},
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
@@ -719,14 +694,38 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		details = append(details, fmt.Sprintf("**Channel Admins to add:** %s", p.mentionList(req.AdminMemberIDs)))
 	}
 
+	title := "Channel creation request"
+	if teamName != "" && teamName != "(unknown team)" {
+		title = fmt.Sprintf("Channel creation request — %s", teamName)
+	}
+
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel creation request",
+		Title:   title,
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    strings.Join(details, "\n"),
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
+}
+
+// teamDisplayName returns the team's display name for approval cards.
+// Falls back to the team ID when lookup fails so the Team field is never blank.
+func (p *Plugin) teamDisplayName(teamID string) string {
+	if teamID == "" {
+		return "(unknown team)"
+	}
+	team, appErr := p.API.GetTeam(teamID)
+	if appErr != nil || team == nil {
+		return teamID
+	}
+	if name := strings.TrimSpace(team.DisplayName); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(team.Name); name != "" {
+		return name
+	}
+	return teamID
 }
 
 func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction {
@@ -789,7 +788,8 @@ func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName 
 	}
 	cats, appErr := p.API.GetChannelSidebarCategories(userID, teamID)
 	if appErr != nil {
-		return appErr
+		// Never return a typed-nil *model.AppError as error — interfaces as non-nil.
+		return errors.New(appErr.Error())
 	}
 	if cats != nil {
 		for _, cat := range cats.Categories {
@@ -801,7 +801,7 @@ func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName 
 			}
 			cat.Channels = append(cat.Channels, channelID)
 			if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
-				return updateErr
+				return errors.New(updateErr.Error())
 			}
 			return nil
 		}
@@ -816,7 +816,7 @@ func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName 
 		},
 		Channels: []string{channelID},
 	}); createErr != nil {
-		return createErr
+		return errors.New(createErr.Error())
 	}
 	return nil
 }

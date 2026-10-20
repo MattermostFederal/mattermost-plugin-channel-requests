@@ -115,51 +115,25 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvAdminRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store admin request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("admin request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeChannelAdmin,
-			ScopeID:           channelID,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvAdminRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "admin request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeChannelAdmin, ScopeID: channelID,
+		},
+	})
 
 	return "Your Channel Admin request has been submitted for approval. You'll be notified once an admin responds.", nil
 }
 
-// sendAdminTicketCreatedDM opens a DM and posts a card mirroring the Channel
-// Admin approval post (same fields, no buttons) as the root of the ticket
-// thread. Returns the root post ID and DM channel ID; both empty on failure.
 func (p *Plugin) sendAdminTicketCreatedDM(req *adminRequest, requester *model.User, channel *model.Channel) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for admin ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.adminApprovalAttachment(req, requester, channel)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your Channel Admin request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send admin ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.adminApprovalAttachment(req, requester, channel),
+		ticketSubmittedIntro("Channel Admin request"),
+	)
 }
 
 // promoteChannelAdmins adds each nominee to the channel (a no-op for existing
@@ -311,14 +285,21 @@ func (p *Plugin) adminApproverIDs(teamID string) []string {
 // channel) are always visible; the nominee list goes in Text so a large
 // nomination doesn't dominate the card.
 func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.User, channel *model.Channel) *model.MessageAttachment {
+	teamName := p.teamDisplayName(channel.TeamId)
 	fields := []*model.MessageAttachmentField{
+		{Title: "Team", Value: teamName, Short: false},
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Channel", Value: fmt.Sprintf("~%s", channel.Name), Short: true},
 	}
 
+	title := "Channel Admin request"
+	if teamName != "" && teamName != "(unknown team)" {
+		title = fmt.Sprintf("Channel Admin request — %s", teamName)
+	}
+
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel Admin request",
+		Title:   title,
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    fmt.Sprintf("**Proposed Channel Admins:** %s", p.mentionList(req.NomineeIDs)),

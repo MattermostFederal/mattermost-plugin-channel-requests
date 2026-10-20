@@ -1,71 +1,176 @@
 # Team Membership & Guest Invites — User Guide
 
-Mattermost Request Hub lets members request **adding existing users to a team**
-and **guest invites** for a team. Both ticket types route to
-`mattermost-team-requests` for System Admin approval.
+Mattermost Request Hub lets members **request adding existing users to a team**
+and **request a guest invite** for a team — without granting everyone the
+permission to manage membership directly. Both ticket types route to the
+plugin-managed **`mattermost-team-requests`** channel for System Admin approval.
 
-> In Mattermost: **`/mattermost-request-hub docs`** opens the full HTML guide.
+> **Not the same as Team Admin.** [Request Team Admin](TEAM_REQUEST_GUIDE.md#requesting-team-admin)
+> promotes someone to the Team Admin *role*. This guide is about **membership**:
+> adding people to the team, or inviting an external guest.
 >
-> Related: [Team Requests](TEAM_REQUEST_GUIDE.md) (create team / Team Admin).
+> Companion guides: [new channels](CHANNEL_CREATION_GUIDE.md) ·
+> [Channel Admin](CHANNEL_ADMIN_GUIDE.md) · [teams](TEAM_REQUEST_GUIDE.md) ·
+> [bots](BOT_REQUEST_GUIDE.md) · [webhooks](WEBHOOK_REQUEST_GUIDE.md) ·
+> [Admin Guide](admin-guide.md).
+>
+> In Mattermost, open the full in-app guide anytime with
+> **`/mattermost-request-hub docs`**.
+
+This guide covers:
+
+- [Requesting team members](#requesting-team-members) — add existing users to a team
+- [Requesting a guest invite](#requesting-a-guest-invite) — channel-scoped guest email
+- [Messaging while a request is pending](#messaging-while-a-request-is-pending) — two-way threads
+- [Approving requests](#approving-requests) — System Admins
+- [Admin setup](#admin-setup) — system admins
 
 ---
 
-## Request adding team members
+## Requesting team members
 
-Any authenticated user can nominate existing Mattermost users onto a team —
-you do **not** need to already be a member of that team. System Admins review
-and approve; that approval step is the access-control gate.
+Use this when you need **existing Mattermost users or bots added to a team**
+(full membership). Any authenticated user can nominate people or bots onto a
+team — you do **not** need to already be a member of that team. System Admin
+approval is the access-control gate.
+
+**Bots use the same process:** after the bot account exists (Request a Bot),
+open **Request Team Members**, search for the bot username, and submit. Approvers
+treat it like any other team-add ticket.
+
+Hub tile label: **Request Team Members** — “Ask to add existing users or bots to
+your current team.” If that tile is missing, turn on **Allow team member requests**
+in System Console (see [Admin setup](#admin-setup)).
 
 ### How to open
 
-- Slash: **`/mattermost-request-hub team-member`**
-- Request Hub tile: **Request Team Members**
-- Channel **More actions → Request Team Members**
+- **Dropdown:** channel More actions → **Request Team Members**
+- **Hub:** right App Bar **plug** → Requests → **Request Team Members**
+- **Slash:** `/mattermost-request-hub team-member`
+
+<p>
+<img src="images/team-user-request/mattermost-team-member-more-actions.png" alt="More actions" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/team-user-request/mattermost-team-member-hub.png" alt="Request Hub" width="440">
+</p>
 
 ### Form
 
-| Field | Notes |
-|-------|--------|
-| Users to add | Existing Mattermost users (picker / multi-select) |
-| Reason | Optional context for reviewers |
+The form targets the **team you are currently viewing**. Switch teams first if
+you need a different one.
 
-### On approve
+<img src="images/team-user-request/mattermost-team-member-modal.png" alt="Request Team Members form" width="480">
 
-Nominees are added to the target team via `CreateTeamMember`. You get a DM in
-the ticket thread.
+| Field | What it does |
+|-------|--------------|
+| **Users or bots to add** | Type a name — suggestions populate as you type (same picker as channel requests). Results are users **or bots** not already on this team. |
+| **Reason** | Optional. Context for reviewers. |
+
+Click **Submit request**. You'll get a DM when a System Admin responds.
 
 ---
 
-## Request a guest invite
+## Requesting a guest invite
 
-You must be a **member of the target team** (System Admins may invite for any
-team). Guest channel picks must belong to that same team.
+Use this when an **external person** should join as a **guest** with access to
+specific channels — not as a regular team member. You must already be a
+**member of the target team** (System Admins may invite for any team).
+
+Guest Accounts must be enabled in System Console for the emailed invite to
+succeed on approve.
+
+Hub tile label: **Request Guest Invite**. Guest invites **default off** — enable
+**Allow team guest requests** or the tile and menu items stay hidden.
 
 ### How to open
 
-- Slash: **`/mattermost-request-hub team-guest`**
-- Request Hub tile: **Request Guest Invite**
-- Channel **More actions → Request Guest Invite** (public/private channels)
+- **Dropdown:** channel More actions → **Request Guest Invite**
+- **Hub:** right App Bar **plug** → Requests → **Request Guest Invite**
+- **Slash:** `/mattermost-request-hub team-guest`
+
+<p>
+<img src="images/team-user-request/mattermost-team-guest-more-actions.png" alt="More actions" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/team-user-request/mattermost-team-guest-hub.png" alt="Request Hub" width="440">
+</p>
 
 ### Form
 
-| Field | Notes |
-|-------|--------|
-| Guest email | **Required.** Mattermost emails a channel-scoped guest invitation on approve. |
-| Channels | At least one channel the guest should access (hub modal uses the current channel) |
-| Message / reason | Optional note for reviewers / invite email |
+The form uses the **current team** and includes the **current channel** as the
+guest's initial channel access. Switch to the right channel before opening the
+form if needed.
 
-### On approve
+<img src="images/team-user-request/mattermost-team-guest-modal.png" alt="Request Guest Invite form" width="480">
 
-Mattermost sends a **guest invitation email** to the address you provided
-(Guest Accounts must be enabled in System Console). This flow does **not** use
-the team's regular invite link (`/signup_user_complete/?id=…`), which would grant
-ordinary membership instead of guest access.
+| Field | What it does |
+|-------|--------------|
+| **Guest email** | **Required.** Address Mattermost will email a channel-scoped guest invitation to on approve. |
+| **Message / reason** | Optional note for reviewers. |
+
+Click **Submit request**. You'll get a DM when a System Admin responds.
+
+> This flow does **not** return the team's regular invite link
+> (`/signup_user_complete/?id=…`). That link grants ordinary membership, not
+> guest access.
+
+---
+
+## Messaging while a request is pending
+
+Team member and guest requests use the same **two-way Thread relay** as other
+Request Hub tickets. Open the **Thread** RHS from the card (**Reply**) — don't
+post a new top-level message.
+
+- **Approver:** ask in the approval Thread
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
+
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
+
+---
+
+## Approving requests
+
+Both request types post to **`mattermost-team-requests`**. Only **System Admins**
+can Approve or Deny.
+
+### Team members
+
+<img src="images/team-user-request/mattermost-team-member-approval-card.png" alt="Team member approval card" width="720">
+
+- **Approve** — each nominee is added to the target team. The requester is
+  notified by DM. Partial failures are listed in the outcome message.
+- **Deny** — closes the request and notifies the requester by DM.
+
+System Admins who submit skip the queue — nominees are added immediately.
+
+### Guest invites
+
+<img src="images/team-user-request/mattermost-team-guest-approval-card.png" alt="Guest invite approval card" width="720">
+
+- **Approve** — Mattermost emails a **channel-scoped guest invitation** to the
+  address on the ticket. The requester is notified by DM.
+- **Deny** — closes the request and notifies the requester by DM.
+
+System Admins who submit skip the queue — the invitation is emailed immediately.
 
 ---
 
 ## Admin setup
 
-Enable **Allow team member requests** and/or **Allow team guest requests** in
-**System Console → Plugins → Mattermost Request Hub**. Ensure Guest Accounts are
-enabled before relying on emailed guest invites.
+**System Console → Plugins → Mattermost Request Hub:**
+
+| Setting | Purpose |
+|---------|---------|
+| **Approval team** | Team that owns plugin-managed approval channels (use the team **name**, e.g. `test`). Required. |
+| **Allow team member requests** | Shows **Request Team Members** (add existing users). Default **on**. |
+| **Allow team guest requests** | Shows **Request Guest Invite**. Default **off**. |
+
+Also enable **Guest Accounts** before relying on emailed guest invites.
+
+Both ticket types land in **`mattermost-team-requests`**. See the
+[Admin Guide](admin-guide.md) for the full settings reference.

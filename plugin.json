@@ -78,18 +78,55 @@
                 "help_text": "When enabled, users can request incoming or outgoing webhooks. Webhook requests require two-step approval (security + system)."
             },
             {
+                "key": "TwoStepApproverMode",
+                "display_name": "Bot/webhook two-step approver mode",
+                "type": "dropdown",
+                "default": "attribute",
+                "help_text": "Bot/webhook requests require two distinct approvers: (1) a security review from the security pool, then (2) a System Admin or member of the system pool. Use User Attributes when ABAC/CPA is configured; User Groups when you manage approvers via Mattermost groups; System Admins only as a setup backup (one System Admin can complete both steps).",
+                "options": [
+                    {
+                        "display_name": "User Attributes (ABAC / CPA)",
+                        "value": "attribute"
+                    },
+                    {
+                        "display_name": "User Groups",
+                        "value": "usergroup"
+                    },
+                    {
+                        "display_name": "System Admins only (no ABAC)",
+                        "value": "system_admin"
+                    }
+                ]
+            },
+            {
                 "key": "SecurityApproverAttribute",
-                "display_name": "Security approver attribute",
+                "display_name": "Security approver attribute name",
                 "type": "text",
                 "default": "security_approver",
-                "help_text": "Name of the User Attribute (in the access_control group) that marks a user as a security-step approver for two-step bot and webhook requests. Manage attributes in System Console → User Management → Attributes."
+                "help_text": "Used when mode is User Attributes. Exact CPA / User Attribute name for the forced security review. System Admins do not auto-qualify for this step while this name is set. Manage attributes in System Console → User Management → Attributes (admin-managed or LDAP/SAML-synced)."
             },
             {
                 "key": "SystemApproverAttribute",
-                "display_name": "System approver attribute",
+                "display_name": "System approver attribute name",
                 "type": "text",
                 "default": "system_approver",
-                "help_text": "Name of the User Attribute that marks a user as a system/admin-step approver for two-step requests. System Admins also qualify for this step automatically."
+                "help_text": "Used when mode is User Attributes. Exact CPA / User Attribute name for the system step. System Admins OR holders of this attribute can approve (must be a different person than the security reviewer)."
+            },
+            {
+                "key": "SecurityApproverGroup",
+                "display_name": "Security approver user group",
+                "type": "text",
+                "default": "security-approvers",
+                "placeholder": "security-approvers",
+                "help_text": "Used when mode is User Groups. Members of this group must complete the security review (System Admins do not auto-qualify for this step). Default is security-approvers — change freely. Clear the field only if you intentionally want System Admins to cover security during setup."
+            },
+            {
+                "key": "SystemApproverGroup",
+                "display_name": "System approver user group",
+                "type": "text",
+                "default": "system-approvers",
+                "placeholder": "system-approvers",
+                "help_text": "Used when mode is User Groups. Members of this group OR any System Admin can complete the system step (must be a different person than the security reviewer). Default is system-approvers — change freely. Clear the field to use System Admins only for that step."
             },
             {
                 "key": "ApprovalTeam",

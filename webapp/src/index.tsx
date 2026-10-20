@@ -158,7 +158,13 @@ export default class Plugin {
         // Hidden for existing Team Admins — they don't need to request a role they already hold.
         safe('channel-header menu: request team admin', () => registry.registerChannelHeaderMenuAction(
             'Request Team Admin',
-            () => {
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.teamAdmin) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Team Admin requests are disabled by an administrator.');
+                    return;
+                }
                 store.dispatch(openTeamAdminRequestModal());
             },
             (state: GlobalState) => {
@@ -201,7 +207,13 @@ export default class Plugin {
         // meaningful "target channel" context for a webhook request.
         safe('channel-header menu: request incoming webhook', () => registry.registerChannelHeaderMenuAction(
             'Request Incoming Webhook',
-            () => {
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.webhook) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Webhook requests are disabled by an administrator.');
+                    return;
+                }
                 store.dispatch(openIncomingWebhookModal());
             },
             (state: GlobalState) => {
@@ -212,7 +224,13 @@ export default class Plugin {
 
         safe('channel-header menu: request outgoing webhook', () => registry.registerChannelHeaderMenuAction(
             'Request Outgoing Webhook',
-            () => {
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.webhook) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Webhook requests are disabled by an administrator.');
+                    return;
+                }
                 store.dispatch(openOutgoingWebhookModal());
             },
             (state: GlobalState) => {
@@ -223,7 +241,13 @@ export default class Plugin {
 
         safe('channel-header menu: request bot', () => registry.registerChannelHeaderMenuAction(
             'Request a Bot',
-            () => {
+            async () => {
+                const enabled = await fetchEnabledRequestTypes();
+                if (!enabled.bot) {
+                    // eslint-disable-next-line no-console
+                    console.info('[request-hub] Bot requests are disabled by an administrator.');
+                    return;
+                }
                 store.dispatch(openBotRequestModal());
             },
         ));

@@ -30,44 +30,26 @@ This guide covers:
 
 ## Requesting a webhook
 
-Incoming and outgoing each have the same three entry-point patterns: the native
-Integrations page, the channel **More actions** menu, and the **plug icon** on
-the right App Bar (Requests hub).
-
 Webhook menu items appear only in **public and private channels** — not in DMs
 or group messages (those can't be webhook targets).
 
-### Incoming webhook
+### How to open
 
-#### 1. Native: Integrations page
+- **Native:** Main Menu → Integrations → **Incoming** or **Outgoing Webhooks** (non–System Admins)
+- **Dropdown:** channel More actions → **Request Incoming/Outgoing Webhook**
+- **Hub:** right App Bar **plug** → Requests → the webhook tile
+- **Slash:** `/mattermost-request-hub webhook-incoming` or `webhook-outgoing`
 
-Open **Main Menu (≡) → Integrations → Incoming Webhooks**. If you aren't a
-System Admin, the plugin opens the request form instead of the native management
-page.
+<p>
+<img src="images/webhook-request/mattermost-webhook-integrations-incoming.png" alt="Integrations (incoming)" width="720">
+<img src="images/webhook-request/mattermost-webhook-more-actions-incoming.png" alt="More actions" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/webhook-request/mattermost-webhook-hub.png" alt="Request Hub" width="440">
+</p>
 
-![Integrations page — Incoming Webhooks for non-admins](images/webhook-request/mattermost-webhook-integrations-incoming.png)
+### Incoming webhook — form
 
-#### 2. Dropdown: channel More actions
-
-Click the **channel name**, then **More actions → Request Incoming Webhook**.
-
-![Request Incoming Webhook under More actions](images/webhook-request/mattermost-webhook-more-actions-incoming.png)
-
-#### 3. Right-side plug icon (Requests hub)
-
-On the **far right** of the window (the App Bar / plugin strip), click the
-**plug** icon → **Requests** → **Request Incoming Webhook**.
-
-If several plugins share the strip, the plug may open a short menu first —
-pick **Requests**, then the hub tile.
-
-![Plug icon on the right App Bar opening Requests](images/shared/mattermost-requests-plug-appbar.png)
-
-![Request Hub with Incoming Webhook highlighted](images/webhook-request/mattermost-webhook-hub.png)
-
-#### Filling out an incoming webhook request
-
-![The Request an Incoming Webhook form](images/webhook-request/mattermost-webhook-incoming-modal.png)
+<img src="images/webhook-request/mattermost-webhook-incoming-modal.png" alt="Incoming webhook form" width="480">
 
 | Field | What it does |
 |-------|--------------|
@@ -75,29 +57,13 @@ pick **Requests**, then the hub tile.
 | **Display name** | Label shown on the Integrations page. |
 | **Description** | Optional. What system posts here and why. |
 
-### Outgoing webhook
+### Outgoing webhook — form
 
-#### 1. Native: Integrations page
+<img src="images/webhook-request/mattermost-webhook-integrations-outgoing.png" alt="Integrations (outgoing)" width="720">
 
-Open **Main Menu (≡) → Integrations → Outgoing Webhooks**. Non–System Admins get
-the request form; System Admins get the native UI.
+<img src="images/webhook-request/mattermost-webhook-more-actions-outgoing.png" alt="More actions (outgoing)" width="240">
 
-![Integrations page — Outgoing Webhooks for non-admins](images/webhook-request/mattermost-webhook-integrations-outgoing.png)
-
-#### 2. Dropdown: channel More actions
-
-Click the **channel name**, then **More actions → Request Outgoing Webhook**.
-
-![Request Outgoing Webhook under More actions](images/webhook-request/mattermost-webhook-more-actions-outgoing.png)
-
-#### 3. Right-side plug icon (Requests hub)
-
-Click the **plug** icon on the right App Bar → **Requests** → **Request Outgoing
-Webhook** (same hub as incoming — see the plug-icon screenshot above).
-
-#### Filling out an outgoing webhook request
-
-![The Request an Outgoing Webhook form](images/webhook-request/mattermost-webhook-outgoing-modal.png)
+<img src="images/webhook-request/mattermost-webhook-outgoing-modal.png" alt="Outgoing webhook form" width="480">
 
 | Field | What it does |
 |-------|--------------|
@@ -115,28 +81,21 @@ then another when both approvers have acted.
 
 ## Messaging while a request is pending
 
-Webhook tickets use the same **two-way thread relay**. Reviewers can ask things
-like *Which system posts to this incoming webhook?* or *What does the callback
-URL do?* without adding you to the webhooks approval channel.
+Webhook tickets use the same **two-way thread relay**. Open the **Thread** RHS
+from the card — not a new top-level channel or DM message.
 
-Open the **Thread** RHS from the card — not a new top-level channel or DM message.
+- **Approver:** ask in the approval Thread
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
 
-1. Approver asks in the **approval Thread**:
-
-![Approver asks a clarifying question in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
-
-2. You see `Message from @admin:` in your **DM Thread** with the bot:
-
-![Requester DM Thread RHS showing the relayed question](images/shared/mattermost-thread-requester-dm.png)
-
-3. You **reply in that Thread**. Your answer is relayed back as
-   `Reply from @you:`:
-
-![Approval Thread RHS showing the requester's relayed reply](images/shared/mattermost-thread-relay-back.png)
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
 
 Always reply inside the ticket DM Thread — not a new root message to the bot.
-Threads stay open after approve/deny for follow-ups (for example, if a webhook
-URL needs clarification).
+Threads stay open after approve/deny for follow-ups.
 
 ---
 
@@ -146,7 +105,7 @@ All standalone webhook requests post to
 **`mattermost-webhook-requests`**. They use **two-step approval** (security +
 system, two different people). The card shows both status lines.
 
-![A webhook approval card with two-step Approve/Deny](images/webhook-request/mattermost-webhook-approval-card.png)
+<img src="images/webhook-request/mattermost-webhook-approval-card.png" alt="Webhook approval card" width="720">
 
 When both steps are filled, the final approval creates the webhook. On success
 the requester gets a DM with:
@@ -154,7 +113,7 @@ the requester gets a DM with:
 - The **webhook URL** (incoming)
 - Confirmation that the outgoing webhook is live (outgoing)
 
-![DM after webhook approval with the webhook URL](images/webhook-request/mattermost-webhook-dm.png)
+<img src="images/webhook-request/mattermost-webhook-dm.png" alt="Webhook URL DM" width="720">
 
 If an incoming webhook URL can't be delivered to the requester, the hook is
 **deleted automatically** so no unowned secret endpoint is left live.

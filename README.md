@@ -21,7 +21,7 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 - [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**
 - [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**
 - [Team Requests](docs/TEAM_REQUEST_GUIDE.md) — create team / Team Admin
-- [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md) — add members / guest invite link
+- [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md) — add members / guest invite email
 - [Bot Accounts](docs/BOT_REQUEST_GUIDE.md)
 - [Webhooks](docs/WEBHOOK_REQUEST_GUIDE.md)
 - [Admin Guide](docs/admin-guide.md)

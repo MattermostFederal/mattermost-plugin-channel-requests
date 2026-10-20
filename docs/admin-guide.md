@@ -63,7 +63,7 @@ The plugin intercepts the sidebar UI for non-admins, but it can't veto the nativ
 
 ## Approval channels
 
-The plugin creates and manages four dedicated private channels in the configured approval team. All System Admins are added as members when the plugin activates (and when each channel is first created).
+The plugin creates and manages five dedicated private channels in the configured approval team. All System Admins are added as members when the plugin activates (and when each channel is first created).
 
 | Channel | What routes here |
 |---------|-----------------|

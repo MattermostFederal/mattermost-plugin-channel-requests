@@ -7,9 +7,11 @@ import type {GlobalState} from './store';
 
 // The team sidebar dropdown contains two plugin-owned items:
 //
-//   1. "Request a Team" — replaces or intercepts the native "Create a team"
-//      item for non-System Admin users. System Admins see the native create
-//      flow unchanged.
+//   1. "Request a Team" — for non-System Admin users:
+//        a. Native "Create a team" present → relabel + intercept click.
+//        b. Native item missing (no CREATE_TEAM permission) → inject a
+//           "Request a Team" item where Create would have been.
+//      System Admins always keep the native create flow.
 //
 //   2. "Request Team Admin" — injected next to "Manage members". Shown only
 //      when the current user is NOT already a Team Admin or System Admin for
@@ -21,12 +23,16 @@ import type {GlobalState} from './store';
 // use a capture-phase click listener for reliable interception.
 
 const CREATE_TEAM_LABEL = 'Create a team';
+const JOIN_TEAM_LABEL = 'Join another team';
 const MANAGE_MEMBERS_LABEL = 'Manage members';
 const VIEW_MEMBERS_LABEL = 'View members'; // label shown to non-admin members
+const LEAVE_TEAM_LABEL = 'Leave team';
+const LEARN_ABOUT_TEAMS_LABEL = 'Learn about teams';
 const REQUEST_TEAM_LABEL = 'Request a Team';
 const REQUEST_TEAM_ADMIN_LABEL = 'Request Team Admin';
 
 const CREATE_TEAM_MARK = 'data-mm-plugin-create-team-intercepted';
+const REQUEST_TEAM_INJECT_MARK = 'data-mm-plugin-request-team-injected';
 const REQUEST_TEAM_ADMIN_MARK = 'data-mm-plugin-request-team-admin';
 
 const ITEM_SELECTOR = 'a, button, li, [role="menuitem"]';
@@ -113,22 +119,122 @@ function findItemByText(root: ParentNode, label: string): HTMLElement | null {
 
 // interceptCreateTeam relabels the native "Create a team" item to
 // "Request a Team" and marks it so the click listener can intercept it.
-function interceptCreateTeam(menuRoot: HTMLElement): void {
+// Returns true when the native item was found (and intercepted or already marked).
+function interceptCreateTeam(menuRoot: HTMLElement): boolean {
     // Already intercepted — the label was already swapped on a prior scan.
     if (menuRoot.querySelector(`[${CREATE_TEAM_MARK}]`)) {
-        return;
+        return true;
     }
 
     const native = findItemByText(menuRoot, CREATE_TEAM_LABEL);
     if (!native) {
         debug('interceptCreateTeam: native item not found');
-        return;
+        return false;
     }
 
     if (replaceTextNode(native, CREATE_TEAM_LABEL, REQUEST_TEAM_LABEL)) {
         native.setAttribute(CREATE_TEAM_MARK, 'true');
         debug('relabeled "Create a team" → "Request a Team"');
+    } else {
+        // Label rewrite failed (composed item) — still mark so clicks route.
+        native.setAttribute(CREATE_TEAM_MARK, 'true');
+        debug('marked native Create a team without text rewrite');
     }
+    return true;
+}
+
+// injectRequestTeam clones a sibling menu item into a "Request a Team" entry
+// when the user lacks CREATE_TEAM (native item is absent). Placement mirrors
+// where "Create a team" sits: after "Join another team" when present, otherwise
+// before "Learn about teams" / after "Leave team".
+function injectRequestTeam(menuRoot: HTMLElement, store: Store): void {
+    if (
+        menuRoot.querySelector(`[${CREATE_TEAM_MARK}]`) ||
+        menuRoot.querySelector(`[${REQUEST_TEAM_INJECT_MARK}]`) ||
+        findItemByText(menuRoot, REQUEST_TEAM_LABEL)
+    ) {
+        debug('injectRequestTeam: already present');
+        return;
+    }
+
+    const joinItem = findItemByText(menuRoot, JOIN_TEAM_LABEL);
+    const learnItem = findItemByText(menuRoot, LEARN_ABOUT_TEAMS_LABEL);
+    const leaveItem = findItemByText(menuRoot, LEAVE_TEAM_LABEL);
+    const manageItem =
+        findItemByText(menuRoot, MANAGE_MEMBERS_LABEL) ??
+        findItemByText(menuRoot, VIEW_MEMBERS_LABEL);
+    const template = joinItem ?? learnItem ?? leaveItem ?? manageItem;
+    if (!template) {
+        debug('injectRequestTeam: no sibling template found');
+        return;
+    }
+
+    const container = template.parentElement;
+    if (!container) {
+        return;
+    }
+
+    const injected = template.cloneNode(true) as HTMLElement;
+    injected.removeAttribute('id');
+    injected.setAttribute(REQUEST_TEAM_INJECT_MARK, 'true');
+    injected.setAttribute('data-testid', 'teamMenuRequestTeam');
+
+    const templateLabel = (template.textContent ?? '').trim();
+    const replaced = replaceTextNode(injected, templateLabel, REQUEST_TEAM_LABEL);
+    if (!replaced) {
+        const iconClone = injected.firstElementChild?.cloneNode(true) ?? null;
+        injected.textContent = '';
+        if (iconClone) {
+            injected.appendChild(iconClone);
+        }
+        injected.appendChild(document.createTextNode(' ' + REQUEST_TEAM_LABEL));
+    }
+
+    if (injected instanceof HTMLAnchorElement) {
+        injected.href = '#';
+    }
+
+    injected.addEventListener(
+        'click',
+        (event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+            fetchEnabledRequestTypes().then((enabled) => {
+                if (!enabled.team) {
+                    debug('team requests disabled — injected Request a Team ignored');
+                    return;
+                }
+                store.dispatch(openTeamCreationModal());
+                debug('injected Request a Team opened modal');
+            });
+        },
+        true,
+    );
+
+    if (joinItem?.parentElement === container) {
+        // After "Join another team" — same slot as native Create a team.
+        if (joinItem.nextSibling) {
+            container.insertBefore(injected, joinItem.nextSibling);
+        } else {
+            container.appendChild(injected);
+        }
+    } else if (learnItem?.parentElement === container) {
+        // No Join item — put Request a Team just above "Learn about teams".
+        container.insertBefore(injected, learnItem);
+    } else if (leaveItem?.parentElement === container) {
+        if (leaveItem.nextSibling) {
+            container.insertBefore(injected, leaveItem.nextSibling);
+        } else {
+            container.appendChild(injected);
+        }
+    } else if (manageItem?.nextSibling) {
+        container.insertBefore(injected, manageItem.nextSibling);
+    } else {
+        container.appendChild(injected);
+    }
+
+    debug('injected "Request a Team" (native Create a team absent)');
 }
 
 // injectRequestTeamAdmin clones the "Manage members" item and inserts a
@@ -181,7 +287,13 @@ function injectRequestTeamAdmin(menuRoot: HTMLElement, store: Store): void {
             event.preventDefault();
             event.stopImmediatePropagation();
             document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-            store.dispatch(openTeamAdminRequestModal());
+            fetchEnabledRequestTypes().then((enabled) => {
+                if (!enabled.teamAdmin) {
+                    debug('team admin requests disabled — ignoring Request Team Admin click');
+                    return;
+                }
+                store.dispatch(openTeamAdminRequestModal());
+            });
         },
         true,
     );
@@ -197,8 +309,7 @@ function injectRequestTeamAdmin(menuRoot: HTMLElement, store: Store): void {
 }
 
 // processTeamMenu scans the document for the team dropdown and applies both
-// DOM patches: the "Create a team" label swap and the "Request Team Admin"
-// injection.
+// DOM patches: "Request a Team" (relabel or inject) and "Request Team Admin".
 // Set to true the first time processTeamMenu successfully finds the team dropdown.
 // Used by the install-time timeout to detect silent failures.
 let menuFoundOnce = false;
@@ -210,15 +321,19 @@ function processTeamMenu(store: Store): void {
     }
     menuFoundOnce = true;
 
-    // Non-admins get the "Request a Team" relabel.
+    // Non-admins: relabel native Create a team, or inject when it's stripped.
     if (!isSystemAdmin(store)) {
-        interceptCreateTeam(menuRoot);
+        if (!interceptCreateTeam(menuRoot)) {
+            injectRequestTeam(menuRoot, store);
+        }
     }
 
     // "Request Team Admin" is injected for members who are not already
-    // Team Admin or System Admin.
+    // Team Admin or System Admin. Remove a stale inject after promotion.
     if (!isSystemAdmin(store) && !isTeamAdmin(store)) {
         injectRequestTeamAdmin(menuRoot, store);
+    } else {
+        menuRoot.querySelector(`[${REQUEST_TEAM_ADMIN_MARK}]`)?.remove();
     }
 }
 
@@ -392,6 +507,19 @@ export function installTeamSidebarAddOverride(store: Store): () => void {
 export function installTeamMenuOverride(store: Store): () => void {
     debug('installing team-menu override');
 
+    // Cache AllowTeamRequests so Create Team intercept does not preventDefault
+    // before knowing whether native create should remain available.
+    let teamRequestsEnabled: boolean | null = null;
+    const refreshTeamEnabled = () => {
+        fetchEnabledRequestTypes().then((enabled) => {
+            teamRequestsEnabled = enabled.team;
+            if (!enabled.teamAdmin) {
+                document.querySelectorAll(`[${REQUEST_TEAM_ADMIN_MARK}]`).forEach((n) => n.remove());
+            }
+        });
+    };
+    refreshTeamEnabled();
+
     processTeamMenu(store);
 
     let scheduled = false;
@@ -438,8 +566,8 @@ export function installTeamMenuOverride(store: Store): () => void {
         }
     });
 
-    // Capture-phase listener: intercepts clicks on the relabeled "Create a team"
-    // item and routes them to the team creation request modal (when enabled).
+    // Capture-phase listener: intercepts clicks on the relabeled native
+    // "Create a team" item. Injected items handle their own click.
     const onClick = (event: MouseEvent) => {
         if (isSystemAdmin(store)) {
             // System Admins keep the native Create Team flow — the plugin
@@ -451,24 +579,30 @@ export function installTeamMenuOverride(store: Store): () => void {
             return;
         }
 
+        // Injected "Request a Team" has its own listener.
+        if (target.closest(`[${REQUEST_TEAM_INJECT_MARK}]`)) {
+            return;
+        }
+
         const intercepted = target.closest<HTMLElement>(`[${CREATE_TEAM_MARK}]`);
         if (!intercepted) {
+            return;
+        }
+
+        // When team requests are disabled, leave the native Create Team click alone.
+        if (teamRequestsEnabled === false) {
+            return;
+        }
+        if (teamRequestsEnabled === null) {
+            refreshTeamEnabled();
             return;
         }
 
         event.preventDefault();
         event.stopImmediatePropagation();
         document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-
-        // Honor AllowTeamRequests — don't open a doomed modal when disabled.
-        fetchEnabledRequestTypes().then((enabled) => {
-            if (!enabled.team) {
-                debug('team requests disabled — ignoring Create Team click');
-                return;
-            }
-            store.dispatch(openTeamCreationModal());
-            debug('routed "Create a team" click to Request Team modal');
-        });
+        store.dispatch(openTeamCreationModal());
+        debug('routed "Create a team" click to Request Team modal');
     };
     document.addEventListener('click', onClick, true);
 

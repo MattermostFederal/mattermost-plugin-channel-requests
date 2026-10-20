@@ -114,13 +114,28 @@ export const RequestTeamMemberModal = () => {
                             <strong>{teamDisplayName || 'this team'}</strong>
                             {'. A System Admin will review the request.'}
                         </p>
+                        <p
+                            style={{
+                                opacity: 0.85,
+                                fontSize: 13,
+                                marginTop: -4,
+                                marginBottom: 16,
+                                padding: '8px 10px',
+                                borderRadius: 4,
+                                background: 'rgba(var(--center-channel-color-rgb, 63, 67, 80), 0.08)',
+                            }}
+                        >
+                            <strong>{'Bots: '}</strong>
+                            {'To put an existing bot on this team, search for the bot username here and submit the same way. Create the bot first (Request a Bot) if it does not exist yet. This flow only adds accounts that already exist in Mattermost.'}
+                        </p>
                         <div style={fieldStyle}>
-                            <label htmlFor='rtm-nominees'>{'Users to add'}</label>
+                            <label htmlFor='rtm-nominees'>{'Users or bots to add'}</label>
                             <MemberPicker
                                 value={nomineesText}
+                                notInTeamId={teamId}
                                 onChange={setNomineesText}
                                 disabled={submitting}
-                                placeholder='Search users…'
+                                placeholder='Type a user or bot username — Tab / Enter to add'
                             />
                         </div>
                         <div style={fieldStyle}>

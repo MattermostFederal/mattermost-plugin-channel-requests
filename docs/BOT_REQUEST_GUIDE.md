@@ -26,40 +26,25 @@ This guide covers:
 
 ## Requesting a bot
 
-There are several ways to open the same **Request a Bot Account** form.
+Same **Request a Bot Account** form from every entry point.
 
-### 1. Native: Integrations page
+### How to open
 
-Open **Main Menu (≡) → Integrations**. Click **Bot Accounts**. If you aren't a
-System Admin, the plugin opens the request form instead of the native bot
-management page.
+- **Native:** Main Menu → Integrations → **Bot Accounts** (non–System Admins; System Admins still get native bot management)
+- **Dropdown:** channel More actions → **Request a Bot**
+- **Hub:** right App Bar **plug** → Requests → **Request a Bot**
+- **Slash:** `/mattermost-request-hub bot`
 
-![Integrations page — Bot Accounts opens the request form for non-admins](images/bot-request/mattermost-bot-integrations.png)
+<p>
+<img src="images/bot-request/mattermost-bot-integrations.png" alt="Integrations" width="720">
+<img src="images/bot-request/mattermost-bot-more-actions.png" alt="More actions" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/bot-request/mattermost-bot-hub.png" alt="Request Hub" width="440">
+</p>
 
-System Admins still get the native Bot Accounts management UI.
+### Form
 
-### 2. Dropdown: channel More actions
-
-Click the **channel name** at the top-left, then **More actions → Request a Bot**.
-
-![Request a Bot under More actions](images/bot-request/mattermost-bot-more-actions.png)
-
-### 3. Right-side plug icon (Requests hub)
-
-On the **far right** of the window (the App Bar / plugin strip), click the
-**plug** icon. Open **Requests**, then in the **Request Hub** choose
-**Request a Bot**.
-
-If several plugins share the strip, the plug may open a short menu first —
-pick **Requests**, then the hub tile.
-
-![Plug icon on the right App Bar opening Requests](images/shared/mattermost-requests-plug-appbar.png)
-
-![Request Hub with Request a Bot highlighted](images/bot-request/mattermost-bot-hub.png)
-
-### Filling out the request
-
-![The Request a Bot Account form](images/bot-request/mattermost-bot-modal.png)
+<img src="images/bot-request/mattermost-bot-modal.png" alt="Request a Bot Account form" width="480">
 
 #### Required fields
 
@@ -112,24 +97,17 @@ webhooks you checked. You'll get a DM when both approvers have acted.
 ## Messaging while a request is pending
 
 Bot tickets use the same **two-way thread relay** as other request types.
-Reviewers (security or system) can ask clarifying questions in the approval
-thread — for example, *What systems will this bot call?* or *Why do you need an
-access token?* — without adding you to `mattermost-bot-requests`.
-
 Open the **Thread** RHS from the card (Reply / reply count) — not a new root post.
 
-1. Approver replies in the approval **Thread**:
+- **Approver:** ask in the approval Thread (e.g. *What systems will this bot call?*)
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
 
-![Approver asks a clarifying question in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
-
-2. You see `Message from @admin:` in your **DM Thread** with the bot:
-
-![Requester DM Thread RHS showing the relayed question](images/shared/mattermost-thread-requester-dm.png)
-
-3. You **reply in that Thread**. Your answer appears on the approval Thread as
-   `Reply from @you:`:
-
-![Approval Thread RHS showing the requester's relayed reply](images/shared/mattermost-thread-relay-back.png)
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
 
 Reply inside the ticket Thread only. A brand-new DM to the bot gets a nudge to
 use the specific request thread. Threads remain open after approve/deny (useful
@@ -143,7 +121,7 @@ Bot requests post to **`mattermost-bot-requests`**. They need **two different
 people**: one security-step approver and one system-step approver. The card shows
 both status lines.
 
-![A bot approval card with two-step Approve/Deny](images/bot-request/mattermost-bot-approval-card.png)
+<img src="images/bot-request/mattermost-bot-approval-card.png" alt="Bot approval card" width="720">
 
 Each eligible approver clicks **Approve** once for their step. When both steps
 are complete, the plugin:
@@ -158,7 +136,7 @@ notifies the requester.
 
 ### DM to the requester
 
-![DM after bot approval with token and webhook URLs](images/bot-request/mattermost-bot-token-dm.png)
+<img src="images/bot-request/mattermost-bot-token-dm.png" alt="Bot token DM" width="720">
 
 The DM includes:
 

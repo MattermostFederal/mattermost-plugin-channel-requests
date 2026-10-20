@@ -383,6 +383,7 @@ func TestSubmitRequest_ForceQueueSkipsSystemAdminBypass(t *testing.T) {
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 	api.On("GetChannelByNameForTeamName", "appteam", "mattermost-channel-requests", false).
 		Return(&model.Channel{Id: "approval-ch"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "team", DisplayName: "Team"}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "approval-1"}, nil)
 	api.On("GetDirectChannel", "admin1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 
@@ -628,4 +629,27 @@ func TestAuditCardStyle(t *testing.T) {
 	color, title = auditCardStyle(auditDirect)
 	require.Equal(t, colorDirect, color)
 	require.Equal(t, "⚡ Direct", title)
+}
+
+func TestApprovalAttachment_IncludesTeamProminently(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	api.On("GetTeam", "team1").Return(&model.Team{
+		Id: "team1", Name: "testing-team", DisplayName: "Testing Team Creation Admin",
+	}, nil)
+
+	att := p.approvalAttachment(&channelRequest{
+		ID:          "req1",
+		TeamID:      "team1",
+		DisplayName: "testing 2",
+		Name:        "ops-testing-2",
+		ChannelType: channelTypeOpen,
+	}, &model.User{Id: "u1", Username: "chris.fickess"})
+
+	require.Equal(t, "Channel creation request — Testing Team Creation Admin", att.Title)
+	require.NotEmpty(t, att.Fields)
+	require.Equal(t, "Team", att.Fields[0].Title)
+	require.Equal(t, "Testing Team Creation Admin", att.Fields[0].Value)
+	require.False(t, bool(att.Fields[0].Short), "Team should be full-width so it stands out")
 }

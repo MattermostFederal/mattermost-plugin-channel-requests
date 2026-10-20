@@ -90,6 +90,19 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		return "", errors.Wrap(appErr, "failed to load requesting user")
 	}
 
+	incomingChID := strings.TrimSpace(input.IncomingWebhookChannelID)
+	outgoingChID := strings.TrimSpace(input.OutgoingWebhookChannelID)
+	if incomingChID != "" {
+		if _, err := p.requireWebhookTargetChannel(requester, incomingChID); err != nil {
+			return "", errors.Wrap(err, "incoming webhook channel")
+		}
+	}
+	if outgoingChID != "" {
+		if _, err := p.requireWebhookTargetChannel(requester, outgoingChID); err != nil {
+			return "", errors.Wrap(err, "outgoing webhook channel")
+		}
+	}
+
 	req := &botRequest{
 		ID:                         model.NewId(),
 		RequesterID:                requesterID,
@@ -98,9 +111,9 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		Description:                strings.TrimSpace(input.Description),
 		OwnerUserID:                strings.TrimSpace(input.OwnerUserID),
 		RequestToken:               input.RequestToken,
-		IncomingWebhookChannelID:   strings.TrimSpace(input.IncomingWebhookChannelID),
+		IncomingWebhookChannelID:   incomingChID,
 		IncomingWebhookDisplayName: strings.TrimSpace(input.IncomingWebhookDisplayName),
-		OutgoingWebhookChannelID:   strings.TrimSpace(input.OutgoingWebhookChannelID),
+		OutgoingWebhookChannelID:   outgoingChID,
 		OutgoingWebhookDisplayName: strings.TrimSpace(input.OutgoingWebhookDisplayName),
 		OutgoingWebhookCallbackURL: strings.TrimSpace(input.OutgoingWebhookCallbackURL),
 	}
@@ -142,49 +155,25 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvBotRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store bot request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("bot request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeBot,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvBotRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "bot request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeBot,
+		},
+	})
 
 	return "Your bot account request has been submitted for approval. It needs a security approval and a system approval. You'll be notified as each step completes.", nil
 }
 
-// sendBotTicketCreatedDM opens a DM and posts a card mirroring the bot
-// approval post (same fields, no buttons) as the root of the ticket thread.
 func (p *Plugin) sendBotTicketCreatedDM(req *botRequest, requester *model.User) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for bot ticket notification", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.botApprovalAttachment(req, requester)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your bot account request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send bot ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.botApprovalAttachment(req, requester),
+		ticketSubmittedIntro("bot account request"),
+	)
 }
 
 // createBotForRequest creates the Mattermost bot account. OwnerId is set to
@@ -209,6 +198,9 @@ func (p *Plugin) createBotForRequest(req *botRequest) (*model.Bot, error) {
 // postBotApprovalRequest posts to the dedicated bot-requests approval channel.
 func (p *Plugin) postBotApprovalRequest(req *botRequest, requester *model.User) (postID, channelID string, err error) {
 	ch := p.ensureBotApprovalChannel()
+	// Light reconcile (group member list only) so new/re-added security
+	// approvers see this card without waiting for the 2m ticker.
+	go p.reconcileTwoStepApproverChannels()
 	return p.postApprovalAttachment(
 		p.botApprovalAttachment(req, requester),
 		p.botApprovalHeader(),

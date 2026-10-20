@@ -42,7 +42,7 @@ func getAutocompleteData() *model.AutocompleteData {
 	root.AddCommand(model.NewAutocompleteData("channel-admin", "", "Request Channel Admin role on an existing channel"))
 	root.AddCommand(model.NewAutocompleteData("team-admin", "", "Request Team Admin role in the current team"))
 	root.AddCommand(model.NewAutocompleteData("team", "", "Request creation of a new team"))
-	root.AddCommand(model.NewAutocompleteData("team-member", "", "Request adding users to the current team"))
+	root.AddCommand(model.NewAutocompleteData("team-member", "", "Request adding users or bots to the current team"))
 	root.AddCommand(model.NewAutocompleteData("team-guest", "", "Request a guest invite to the current team"))
 	root.AddCommand(model.NewAutocompleteData("bot", "", "Request creation of a bot account"))
 	root.AddCommand(model.NewAutocompleteData("webhook-incoming", "", "Request an incoming webhook (external → Mattermost)"))
@@ -265,7 +265,7 @@ func commandHelpText() string {
 		"| `/mattermost-request-hub channel-admin` | Request Channel Admin role |\n" +
 		"| `/mattermost-request-hub team-admin` | Request Team Admin role in this team |\n" +
 		"| `/mattermost-request-hub team` | Request a new team |\n" +
-		"| `/mattermost-request-hub team-member` | Request adding users to this team |\n" +
+		"| `/mattermost-request-hub team-member` | Request adding users or bots to this team |\n" +
 		"| `/mattermost-request-hub team-guest` | Request a guest invite to this team |\n" +
 		"| `/mattermost-request-hub bot` | Request a bot account |\n" +
 		"| `/mattermost-request-hub webhook-incoming` | Request an incoming webhook |\n" +

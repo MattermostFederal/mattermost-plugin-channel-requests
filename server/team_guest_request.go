@@ -114,47 +114,25 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 	req.DMRootPostID = dmRootPostID
 	req.DMChannelID = dmChannelID
 
-	if ok, casErr := p.kvUpdateIfUnchanged(kvTeamGuestRequestPrefix+req.ID, rawBefore, req); casErr != nil {
-		p.API.LogWarn("failed to re-store team guest request with post IDs", "request_id", req.ID, "error", casErr.Error())
-	} else if !ok {
-		p.API.LogWarn("team guest request already claimed before post IDs were written", "request_id", req.ID)
-	} else {
-		p.storeTicketLookups(threadAnchor{
-			ApprovalPostID:    approvalPostID,
-			ApprovalChannelID: approvalChannelID,
-			DMRootPostID:      dmRootPostID,
-			DMChannelID:       dmChannelID,
-			Kind:              requestTypeTeamGuest,
-		})
-	}
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvTeamGuestRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "team guest request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeTeamGuest,
+		},
+	})
 
 	return "Your guest invite request has been submitted for approval. You'll be notified once a System Admin responds.", nil
 }
 
 func (p *Plugin) sendTeamGuestTicketCreatedDM(req *teamGuestRequest, requester *model.User, team *model.Team) (dmRootPostID, dmChannelID string) {
-	dm, appErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM for team guest ticket", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-
-	attachment := p.teamGuestApprovalAttachment(req, requester, team)
-	attachment.Actions = nil
-	attachment.Color = colorPending
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: dm.Id,
-		Message:   "Your guest invite request has been submitted for approval. Reply to this thread to add context — your reply will be forwarded to the reviewers.",
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-
-	created, appErr := p.API.CreatePost(post)
-	if appErr != nil {
-		p.API.LogWarn("failed to send team guest ticket-created DM", "user_id", req.RequesterID, "error", appErr.Error())
-		return "", ""
-	}
-	return created.Id, dm.Id
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.teamGuestApprovalAttachment(req, requester, team),
+		ticketSubmittedIntro("guest invite request"),
+	)
 }
 
 // fulfillTeamGuestRequest emails a channel-scoped guest invitation via the
@@ -168,7 +146,7 @@ func (p *Plugin) fulfillTeamGuestRequest(req *teamGuestRequest, actingAdminID st
 		return errors.Wrap(appErr, "failed to load team")
 	}
 
-	adminSession, sessErr := p.API.CreateSession(&model.Session{UserId: actingAdminID})
+	adminSession, sessErr := p.createUserSession(actingAdminID)
 	if sessErr != nil {
 		return fmt.Errorf("could not send guest email (%s)", sessErr.Error())
 	}

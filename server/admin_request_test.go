@@ -86,6 +86,7 @@ func TestSubmitAdminRequest_PostsToApprovalChannelMentioningApprovers(t *testing
 	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Team One"}, nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
@@ -140,6 +141,7 @@ func TestSubmitAdminRequest_NoApprovalChannelFallsBackToSystemAdmins(t *testing.
 	p.setConfiguration(&configuration{})
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Team One"}, nil).Maybe()
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
@@ -180,6 +182,7 @@ func TestSubmitAdminRequest_RejectsNonChannelMember(t *testing.T) {
 	p := newTestPlugin(api)
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Team One"}, nil).Maybe()
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", Roles: "system_user"}, nil)
 	// The requester is not a member of the channel.
 	api.On("GetChannelMember", "ch1", "u_req").Return(nil, testAppErr("not a member"))
@@ -200,6 +203,7 @@ func TestCanApproveAdminRequest_TeamAdminMayApprove(t *testing.T) {
 	p := newTestPlugin(api)
 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Team One"}, nil).Maybe()
 
 	// A Team Admin of the target channel's team may approve.
 	teamAdmin := &model.User{Id: "u_ta", Username: "lead", Roles: "system_user"}

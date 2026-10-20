@@ -29,28 +29,35 @@ func TestPlanApproval(t *testing.T) {
 		require.Equal(t, stepSecurity, step)
 	})
 
-	t.Run("fresh request, system-only approver fills system", func(t *testing.T) {
-		step, fill, _ := planApproval(twoStepState{}, false, true, "u1")
-		require.True(t, fill)
-		require.Equal(t, stepSystem, step)
+	t.Run("fresh request, system-only must wait for security first", func(t *testing.T) {
+		_, fill, reason := planApproval(twoStepState{}, false, true, "u1")
+		require.False(t, fill)
+		require.Contains(t, reason, "security approver first")
 	})
 
-	t.Run("qualifies for both on a fresh request fills security first", func(t *testing.T) {
+	t.Run("dual-role on a fresh request fills security first", func(t *testing.T) {
 		step, fill, _ := planApproval(twoStepState{}, true, true, "u1")
 		require.True(t, fill)
 		require.Equal(t, stepSecurity, step)
 	})
 
-	t.Run("second distinct approver completes the system step", func(t *testing.T) {
+	t.Run("second distinct system-only approver completes the system step", func(t *testing.T) {
 		state := twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1}
 		step, fill, _ := planApproval(state, false, true, "u_sys")
 		require.True(t, fill)
 		require.Equal(t, stepSystem, step)
 	})
 
+	t.Run("second dual-role approver takes system after security", func(t *testing.T) {
+		// Both users are security+system eligible; first took security, second
+		// must take system (not block as "security already done").
+		state := twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1}
+		step, fill, _ := planApproval(state, true, true, "u_dual")
+		require.True(t, fill)
+		require.Equal(t, stepSystem, step)
+	})
+
 	t.Run("same user cannot fill both steps", func(t *testing.T) {
-		// u1 already did security; even though they qualify for system, the
-		// distinct-user rule blocks them.
 		state := twoStepState{SecurityApproverID: "u1", SecurityApprovedAt: 1}
 		_, fill, reason := planApproval(state, true, true, "u1")
 		require.False(t, fill)
@@ -63,9 +70,7 @@ func TestPlanApproval(t *testing.T) {
 		require.Contains(t, reason, "permission")
 	})
 
-	t.Run("only-outstanding step is one the user can't fill", func(t *testing.T) {
-		// Security already done by someone else; remaining step is system, but
-		// this user only qualifies for security.
+	t.Run("security-only cannot take system after security is done", func(t *testing.T) {
 		state := twoStepState{SecurityApproverID: "u_other", SecurityApprovedAt: 1}
 		_, fill, reason := planApproval(state, true, false, "u1")
 		require.False(t, fill)

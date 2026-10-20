@@ -4,6 +4,7 @@ import {useDispatch, useSelector} from 'react-redux';
 import {submitOutgoingWebhookRequest} from './client';
 import {
     closeOutgoingWebhookModal,
+    getChannelType,
     getCurrentChannelId,
     getCurrentTeamDisplayName,
     getChannelDisplayName,
@@ -28,7 +29,9 @@ export const RequestOutgoingWebhookModal = () => {
     const isOpen = useSelector(isOutgoingWebhookModalOpen);
     const channelId = useSelector((state: GlobalState) => getCurrentChannelId(state));
     const channelName = useSelector((state: GlobalState) => getChannelDisplayName(state, channelId));
+    const channelType = useSelector((state: GlobalState) => getChannelType(state, channelId));
     const teamName = useSelector((state: GlobalState) => getCurrentTeamDisplayName(state));
+    const inTeamChannel = channelType === 'O' || channelType === 'P';
 
     const [displayName, setDisplayName] = useState('');
     const [callbackUrl, setCallbackUrl] = useState('');
@@ -54,6 +57,10 @@ export const RequestOutgoingWebhookModal = () => {
         if (!callbackUrl.trim()) { setError('A callback URL is required.'); return; }
         if (!callbackUrl.trim().startsWith('http://') && !callbackUrl.trim().startsWith('https://')) {
             setError('Callback URL must start with http:// or https://');
+            return;
+        }
+        if (!inTeamChannel) {
+            setError('Open a public or private channel on this team first, then submit. Webhooks cannot target DMs or group messages.');
             return;
         }
 
@@ -112,7 +119,11 @@ export const RequestOutgoingWebhookModal = () => {
                                 {channelName || channelId}
                                 {teamName ? <span style={{marginLeft: 6, fontSize: 12}}>{`(Team: ${teamName})`}</span> : null}
                             </div>
-                            <small style={{opacity: 0.6}}>{'The webhook will fire on messages in this channel. Change your active channel to target a different one.'}</small>
+                            <small style={{opacity: 0.6}}>
+                                {inTeamChannel ?
+                                    'The webhook will fire on messages in this channel. Switch channels before opening the form to change the source.' :
+                                    'Open a public or private channel on this team before submitting — DMs and group messages cannot be webhook targets.'}
+                            </small>
                         </div>
                         <div style={fieldStyle}>
                             <label htmlFor='owh-display-name'>{'Display name'}</label>

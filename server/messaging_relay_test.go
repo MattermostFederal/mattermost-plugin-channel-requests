@@ -33,6 +33,26 @@ func TestCanRelayApprovalThreadReply(t *testing.T) {
 		p := newTestPlugin(&plugintest.API{})
 		require.False(t, p.canRelayApprovalThreadReply(nil, threadAnchor{Kind: requestTypeChannel}))
 	})
+
+	t.Run("system admin can relay bot tickets", func(t *testing.T) {
+		p := newTestPlugin(&plugintest.API{})
+		user := &model.User{Id: "a", Roles: model.SystemAdminRoleId}
+		require.True(t, p.canRelayApprovalThreadReply(user, threadAnchor{Kind: requestTypeBot}))
+	})
+
+	t.Run("system admin can relay webhook tickets", func(t *testing.T) {
+		p := newTestPlugin(&plugintest.API{})
+		user := &model.User{Id: "a", Roles: model.SystemAdminRoleId}
+		require.True(t, p.canRelayApprovalThreadReply(user, threadAnchor{Kind: requestTypeWebhook}))
+	})
+
+	t.Run("plain user cannot relay bot tickets without attributes", func(t *testing.T) {
+		api := &plugintest.API{}
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{})
+		user := &model.User{Id: "u", Roles: "system_user"}
+		require.False(t, p.canRelayApprovalThreadReply(user, threadAnchor{Kind: requestTypeBot}))
+	})
 }
 
 func TestSubmitTeamGuestRequest_RequiresMembership(t *testing.T) {

@@ -5,11 +5,17 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/pkg/errors"
 )
+
+// how often to pull security/system group members into bot/webhook channels.
+// Custom user groups have no membership plugin hook; this closes the gap when
+// someone is re-added while already logged in.
+const twoStepChannelReconcileInterval = 2 * time.Minute
 
 type Plugin struct {
 	plugin.MattermostPlugin
@@ -20,6 +26,9 @@ type Plugin struct {
 	// botUserID is the user ID of the bot account used to post approval requests and notify
 	// requesters of the outcome.
 	botUserID string
+
+	// twoStepSyncStop cancels the periodic two-step channel reconciler.
+	twoStepSyncStop chan struct{}
 
 	// Test seams for webhook create/delete side effects (nil in production).
 	createWebhookFn func(req *webhookRequest, adminUserID string) (dmMsg, hookID string, err error)
@@ -69,6 +78,9 @@ func (p *Plugin) OnActivate() error {
 				p.addSystemAdminsToChannel(ch.Id)
 			}
 		}
+		// Security / system pool members (usergroup or ABAC) into bot + webhook
+		// private channels so they can see and click Approve.
+		p.syncTwoStepApproverChannels()
 		if p.getConfiguration().PerTeamApprovalChannels {
 			p.ensureAllTeamApprovalChannels()
 		}
@@ -79,10 +91,17 @@ func (p *Plugin) OnActivate() error {
 		p.migrateTicketChannelsToManagedCategory()
 	}()
 
+	p.startTwoStepChannelReconciler()
+
 	// Delete any token DM posts whose 72-hour window lapsed while the plugin
 	// was not running, and re-arm in-process timers for the remainder.
 	go p.cleanupExpiredTokenPosts()
 
+	return nil
+}
+
+func (p *Plugin) OnDeactivate() error {
+	p.stopTwoStepChannelReconciler()
 	return nil
 }
 

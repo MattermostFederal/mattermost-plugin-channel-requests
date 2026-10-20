@@ -107,13 +107,24 @@ type configuration struct {
 	AllowBotTokenRequests     bool // covers full bot-account requests
 	AllowWebhookRequests      bool
 
-	// --- 5. Multi-step approver pools (attribute-based) ---
-	// SecurityApproverAttribute and SystemApproverAttribute name the User
-	// Attributes (custom profile attributes in the access_control group)
-	// that mark eligibility for the security and system steps of two-step
-	// bot and webhook approvals. See approvers.go.
+	// --- 5. Multi-step approver pools (bot / webhook two-step) ---
+	// TwoStepApproverMode selects how security + system pools are resolved:
+	//   "attribute"    — User Attributes / ABAC (CPA); default
+	//   "usergroup"    — Mattermost custom / synced user groups by name
+	//   "system_admin" — System Admins only (backup when ABAC/groups unavailable)
+	TwoStepApproverMode string
+
+	// SecurityApproverAttribute / SystemApproverAttribute: CPA field names used
+	// when TwoStepApproverMode is "attribute". Rename to match your ABAC schema.
 	SecurityApproverAttribute string
 	SystemApproverAttribute   string
+
+	// SecurityApproverGroup / SystemApproverGroup: Mattermost group names
+	// (handles) used when TwoStepApproverMode is "usergroup". Defaults in
+	// plugin.json are "security-approvers" / "system-approvers"; admins can
+	// rename them in System Console. Empty → fall back to System Admins.
+	SecurityApproverGroup string
+	SystemApproverGroup   string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes []channelPrefix
@@ -238,8 +249,10 @@ func (p *Plugin) OnConfigurationChange() error {
 	p.configurationLock.RLock()
 	hadPrevConfig := p.configuration != nil
 	prevPerTeamEnabled := false
+	prevTwoStep := ""
 	if hadPrevConfig {
 		prevPerTeamEnabled = p.configuration.PerTeamApprovalChannels
+		prevTwoStep = twoStepPoolFingerprint(p.configuration)
 	}
 	p.configurationLock.RUnlock()
 
@@ -248,8 +261,29 @@ func (p *Plugin) OnConfigurationChange() error {
 	if hadPrevConfig && configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
 		go p.ensureAllTeamApprovalChannels()
 	}
+	// Reseed bot/webhook channels when two-step pool settings change (mode,
+	// group names, or attribute names) so newly configured security approvers
+	// are added without a plugin restart.
+	if hadPrevConfig && twoStepPoolFingerprint(configuration) != prevTwoStep {
+		go p.syncTwoStepApproverChannels()
+	}
 
 	return nil
+}
+
+// twoStepPoolFingerprint captures the settings that control who must be in the
+// bot/webhook approval channels.
+func twoStepPoolFingerprint(c *configuration) string {
+	if c == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		c.twoStepMode(),
+		strings.TrimSpace(c.SecurityApproverGroup),
+		strings.TrimSpace(c.SystemApproverGroup),
+		strings.TrimSpace(c.SecurityApproverAttribute),
+		strings.TrimSpace(c.SystemApproverAttribute),
+	}, "|")
 }
 
 // bumpLegacyDefaultSuffixMax rewrites numeric third fields equal to the
