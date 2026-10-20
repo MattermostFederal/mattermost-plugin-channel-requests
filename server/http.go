@@ -691,8 +691,8 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -830,8 +830,8 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadAdminRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadAdminRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -1037,8 +1037,8 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadTeamAdminRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadTeamAdminRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -1171,8 +1171,8 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadTeamMemberRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadTeamMemberRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -1326,8 +1326,8 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadTeamGuestRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadTeamGuestRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -1420,8 +1420,8 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 		return
 	}
 	if !claimed {
-		still, _, _ := p.loadTeamRequest(req.ID)
-		p.respondClaimConflict(w, request.PostId, still != nil)
+		still, _, loadErr := p.loadTeamRequest(req.ID)
+		p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 		return
 	}
 
@@ -1565,8 +1565,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			return
 		}
 		if !claimed {
-			still, _, _ := p.loadBotRequest(req.ID)
-			p.respondClaimConflict(w, request.PostId, still != nil)
+			still, _, loadErr := p.loadBotRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 			return
 		}
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. Bot **@%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.Username)
@@ -1597,8 +1597,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			return
 		}
 		if !claimed {
-			still, _, _ := p.loadBotRequest(req.ID)
-			p.respondClaimConflict(w, request.PostId, still != nil)
+			still, _, loadErr := p.loadBotRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 			return
 		}
 
@@ -1870,8 +1870,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			return
 		}
 		if !claimed {
-			still, _, _ := p.loadWebhookRequest(req.ID)
-			p.respondClaimConflict(w, request.PostId, still != nil)
+			still, _, loadErr := p.loadWebhookRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 			return
 		}
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. %s webhook **%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.WebhookType, req.DisplayName)
@@ -1902,8 +1902,8 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			return
 		}
 		if !claimed {
-			still, _, _ := p.loadWebhookRequest(req.ID)
-			p.respondClaimConflict(w, request.PostId, still != nil)
+			still, _, loadErr := p.loadWebhookRequest(req.ID)
+			p.respondClaimConflict(w, request.PostId, loadErr != nil || still != nil)
 			return
 		}
 
@@ -2074,8 +2074,8 @@ func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model
 }
 
 // respondClaimConflict writes a retry ephemeral when the pending record still
-// exists (CAS lost a race against a concurrent metadata re-store), or soft-
-// squashes the card only when the record is gone (truly already handled).
+// exists or could not be reloaded (CAS race / transient KV error), or soft-
+// squashes the card only when the record is confirmed gone (already handled).
 func (p *Plugin) respondClaimConflict(w http.ResponseWriter, postID string, stillPending bool) {
 	if stillPending {
 		writeJSON(w, model.PostActionIntegrationResponse{
