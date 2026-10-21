@@ -46,12 +46,14 @@ func stubMCP(t *testing.T) *mcpStub {
 	return stub
 }
 
-// newMCPTestPlugin returns an activated plugin with MCP enabled and its
-// server running.
+// newMCPTestPlugin returns an activated plugin with MCP enabled, its
+// server running, and channel and Channel Admin requests turned on.
 func newMCPTestPlugin(t *testing.T, api *plugintest.API, config *configuration) *Plugin {
 	t.Helper()
 	p := newTestPlugin(api)
 	config.EnableMCP = true
+	config.AllowChannelRequests = true
+	config.AllowChannelAdminRequests = true
 	p.setConfiguration(config)
 	p.mcpActive = true
 	require.NoError(t, p.syncMCPServer())
@@ -106,6 +108,21 @@ func serveMCP(p *Plugin, method, path, pluginID string) *httptest.ResponseRecord
 	return w
 }
 
+// stubActivation mocks the calls OnActivate makes besides the MCP server.
+// The config it sets has no approval team and System Admin two-step
+// approvers, so the background channel setup has nothing to create.
+func stubActivation(t *testing.T, api *plugintest.API, p *Plugin, config *configuration, commandErr error) {
+	t.Helper()
+	config.TwoStepApproverMode = twoStepModeSystemAdmin
+	p.setConfiguration(config)
+	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
+	api.On("GetBundlePath").Return("", testAppErr("no bundle")).Maybe()
+	api.On("RegisterCommand", mock.Anything).Return(commandErr)
+	api.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	api.On("GetTeams").Return([]*model.Team{}, nil).Maybe()
+}
+
 func TestSyncMCPServer_DoesNothingBeforeActivation(t *testing.T) {
 	stub := stubMCP(t)
 	p := newTestPlugin(&plugintest.API{})
@@ -126,11 +143,10 @@ func TestOnActivate_LeavesMCPOffByDefault(t *testing.T) {
 	p := &Plugin{}
 	p.SetAPI(api)
 
-	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
-	api.On("GetPluginConfig").Return(map[string]any{})
-	api.On("RegisterCommand", mock.Anything).Return(nil)
+	stubActivation(t, api, p, &configuration{}, nil)
 
 	require.NoError(t, p.OnActivate())
+	defer p.stopTwoStepChannelReconciler()
 	require.Nil(t, p.currentMCPServer())
 	require.Empty(t, stub.registered)
 }
@@ -143,13 +159,11 @@ func TestOnActivate_StartsMCPServerWhenEnabled(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
-	p.setConfiguration(&configuration{EnableMCP: true})
 
-	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
-	api.On("GetPluginConfig").Return(map[string]any{})
-	api.On("RegisterCommand", mock.Anything).Return(nil)
+	stubActivation(t, api, p, &configuration{EnableMCP: true}, nil)
 
 	require.NoError(t, p.OnActivate())
+	defer p.stopTwoStepChannelReconciler()
 	require.NotNil(t, p.currentMCPServer())
 	require.Equal(t, []*pluginmcp.Server{p.currentMCPServer()}, stub.registered)
 }
@@ -162,13 +176,10 @@ func TestOnActivate_CommandFailureStopsActivation(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
-	p.setConfiguration(&configuration{EnableMCP: true})
 
-	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
-	api.On("GetPluginConfig").Return(map[string]any{})
-	api.On("RegisterCommand", mock.Anything).Return(errors.New("no command"))
+	stubActivation(t, api, p, &configuration{EnableMCP: true}, errors.New("no command"))
 
-	require.EqualError(t, p.OnActivate(), "no command")
+	require.EqualError(t, p.OnActivate(), "failed to register slash command: no command")
 	require.Nil(t, p.currentMCPServer())
 	require.Empty(t, stub.registered)
 }
@@ -185,11 +196,8 @@ func TestOnActivate_IncompleteManifestStopsActivation(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
-	p.setConfiguration(&configuration{EnableMCP: true})
 
-	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
-	api.On("GetPluginConfig").Return(map[string]any{})
-	api.On("RegisterCommand", mock.Anything).Return(nil)
+	stubActivation(t, api, p, &configuration{EnableMCP: true}, nil)
 
 	require.ErrorContains(t, p.OnActivate(), "failed to initialize the MCP server")
 	require.Nil(t, p.currentMCPServer())
@@ -205,13 +213,11 @@ func TestOnActivate_RegistrationFailureIsLoggedNotFatal(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
-	p.setConfiguration(&configuration{EnableMCP: true})
 
-	api.On("EnsureBotUser", mock.Anything).Return("bot-id", nil)
-	api.On("GetPluginConfig").Return(map[string]any{})
-	api.On("RegisterCommand", mock.Anything).Return(nil)
+	stubActivation(t, api, p, &configuration{EnableMCP: true}, nil)
 
 	require.NoError(t, p.OnActivate())
+	defer p.stopTwoStepChannelReconciler()
 	require.NotNil(t, p.currentMCPServer())
 	api.AssertCalled(t, "LogWarn", "MCP registration unavailable; continuing activation", "error", "agents unavailable")
 }
@@ -225,6 +231,7 @@ func TestOnConfigurationChange_TogglesMCPServer(t *testing.T) {
 	p.mcpActive = true
 
 	enabled := false
+	api.On("KVGet", kvPrefixMaxLenV48).Return([]byte("1"), nil)
 	api.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
 		args.Get(0).(*configuration).EnableMCP = enabled
 	}).Return(nil)
@@ -268,6 +275,7 @@ func TestOnConfigurationChange_LogsMCPFailure(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.mcpActive = true
+	api.On("KVGet", kvPrefixMaxLenV48).Return([]byte("1"), nil)
 	api.On("LoadPluginConfiguration", mock.Anything).Run(func(args mock.Arguments) {
 		args.Get(0).(*configuration).EnableMCP = true
 	}).Return(nil)
@@ -359,10 +367,10 @@ func TestMCP_ListsOnlyTheRequestTools(t *testing.T) {
 		}
 	}
 	require.ElementsMatch(t, []string{
-		"com_mattermostfederal_channel-requests__list_prefixes",
-		"com_mattermostfederal_channel-requests__request_channel",
-		"com_mattermostfederal_channel-requests__request_channel_admin",
-		"com_mattermostfederal_channel-requests__list_my_requests",
-		"com_mattermostfederal_channel-requests__get_request_status",
+		"com_mattermostfederal_mattermost-plugin-request-hub__list_prefixes",
+		"com_mattermostfederal_mattermost-plugin-request-hub__request_channel",
+		"com_mattermostfederal_mattermost-plugin-request-hub__request_channel_admin",
+		"com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests",
+		"com_mattermostfederal_mattermost-plugin-request-hub__get_request_status",
 	}, names)
 }

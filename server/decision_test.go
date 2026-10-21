@@ -28,7 +28,7 @@ func runCommandAs(p *Plugin, userID, command string) *model.CommandResponse {
 
 // approvalCard is a bot-authored approval post with buttons.
 func approvalCard(id string) *model.Post {
-	post := &model.Post{Id: id, UserId: "bot-user-id", Message: "header"}
+	post := &model.Post{Id: id, ChannelId: "ch-" + id, UserId: "bot-user-id", Message: "header"}
 	model.ParseMessageAttachment(post, []*model.MessageAttachment{{
 		Title:   "Channel creation request",
 		Footer:  requestIDFooter("x"),
@@ -37,34 +37,69 @@ func approvalCard(id string) *model.Post {
 	return post
 }
 
-// decisionFixture is a plugin backed by fakeKV with a stored channel
-// request from u_req, recorded on cards post1 and post2.
-func decisionFixture(t *testing.T) (*plugintest.API, *Plugin, map[string][]byte) {
+// ticketRoot is the requester's ticket DM root card.
+func ticketRoot() *model.Post {
+	root := &model.Post{Id: "dmroot", ChannelId: "dm1", UserId: "bot-user-id"}
+	model.ParseMessageAttachment(root, []*model.MessageAttachment{{Title: "Channel request", Color: colorPending}})
+	return root
+}
+
+// updatedPosts records every UpdatePost by post ID.
+func updatedPosts(api *plugintest.API) map[string]*model.Post {
+	updated := map[string]*model.Post{}
+	api.On("UpdatePost", mock.Anything).Run(func(args mock.Arguments) {
+		post := args.Get(0).(*model.Post)
+		updated[post.Id] = post
+	}).Return(&model.Post{}, nil).Maybe()
+	return updated
+}
+
+// decisionFixture is a plugin backed by fakeKV with a stored channel request
+// from u_req and its ticket DM. With approvalPostID set the request was
+// posted to an approval channel; without it, it went to System Admin DMs
+// recorded as post1 and post2. The per-type toggles are off: decisions
+// don't depend on them, as the card buttons don't.
+func decisionFixture(t *testing.T, approvalPostID string) (*plugintest.API, *Plugin, map[string][]byte) {
 	t.Helper()
 	api := &plugintest.API{}
-	stubLogs(api)
+	stubLogLines(api)
 	t.Cleanup(func() { api.AssertExpectations(t) })
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 	store := fakeKV(api)
 
-	req := &channelRequest{ID: testChannelRequestID, RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O", CreatedAt: model.GetMillis()}
+	req := &channelRequest{
+		ID: testChannelRequestID, RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O", CreatedAt: model.GetMillis(),
+		ApprovalPostID: approvalPostID, DMRootPostID: "dmroot", DMChannelID: "dm1",
+	}
+	if approvalPostID != "" {
+		req.ApprovalChannelID = "appch"
+	} else {
+		store[kvApprovalPostsPrefix+req.ID] = recordJSON(t, []string{"post1", "post2"})
+	}
 	store[kvRequestPrefix+req.ID] = recordJSON(t, req)
 	store[pendingListKey(pendingKindChannel, "u_req")] = recordJSON(t, []pendingEntry{{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}})
-	store[kvApprovalPostsPrefix+req.ID] = recordJSON(t, []string{"post1", "post2"})
 
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil).Maybe()
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil).Maybe()
-	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil).Maybe()
+	api.On("GetPost", "dmroot").Return(ticketRoot(), nil).Maybe()
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 	return api, p, store
 }
 
+// mockChannelCreate lets an approval of the fixture's request create its channel.
+func mockChannelCreate(api *plugintest.API) {
+	stubActiveTeamMember(api, "team1", "u_req")
+	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-x", TeamId: "team1"}, nil)
+	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("UpdateChannelMemberRoles", "ch1", "u_req", channelAdminRoleString).Return(&model.ChannelMember{}, nil)
+}
+
 func TestExecuteDecision_NeedsOneValidID(t *testing.T) {
 	for _, command := range []string{
-		"/channel-request approve",
-		"/channel-request approve not-an-id",
-		"/channel-request deny " + testChannelRequestID + " extra",
+		"/mattermost-request-hub approve",
+		"/mattermost-request-hub approve not-an-id",
+		"/mattermost-request-hub deny " + testChannelRequestID + " extra",
 	} {
 		t.Run(command, func(t *testing.T) {
 			api := &plugintest.API{}
@@ -76,6 +111,7 @@ func TestExecuteDecision_NeedsOneValidID(t *testing.T) {
 			require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 			// Nothing is mocked, so any KV read would have panicked.
 			require.Contains(t, resp.Text, "Give the request ID from the approval card")
+			require.Contains(t, resp.Text, "/mattermost-request-hub")
 		})
 	}
 }
@@ -87,7 +123,7 @@ func TestExecuteDecision_UnknownIDIsAlreadyHandled(t *testing.T) {
 	fakeKV(api)
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 
-	resp := runCommandAs(p, "admin1", "/channel-request deny "+model.NewId())
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub deny "+model.NewId())
 
 	require.Equal(t, alreadyHandledText, resp.Text)
 }
@@ -99,155 +135,206 @@ func TestExecuteDecision_LookupFailure(t *testing.T) {
 	p := newTestPlugin(api)
 	api.On("KVGet", kvRequestPrefix+testChannelRequestID).Return(nil, testAppErr("kv down"))
 
-	resp := runCommandAs(p, "admin1", "/channel-request approve "+testChannelRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
 	require.Equal(t, "Could not load that request.", resp.Text)
 }
 
-func TestExecuteDecision_ApproveResolvesEveryCard(t *testing.T) {
-	api, p, store := decisionFixture(t)
-	stubActiveTeamMember(api, "team1", "u_req")
-	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-x"}, nil)
-	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
+func TestExecuteDecision_ApproveUpdatesTheStoredCardAndTicket(t *testing.T) {
+	api, p, store := decisionFixture(t, "card1")
+	mockChannelCreate(api)
+	api.On("GetPost", "card1").Return(approvalCard("card1"), nil)
+	updated := updatedPosts(api)
+
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
+
+	const outcome = "✅ Approved by @admin for @req. Channel ~team-x created."
+	require.Equal(t, outcome, resp.Text)
+	// The approval-channel card is tombstoned with the outcome, its details
+	// archived into its thread.
+	require.Contains(t, updated, "card1")
+	require.Equal(t, outcome, updated["card1"].Message)
+	require.Empty(t, updated["card1"].Attachments())
+	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.RootId == "card1" }))
+	// The requester's ticket is closed as approved.
+	ticket := extractFirstAttachment(updated["dmroot"])
+	require.Equal(t, "Channel Request Approved", ticket.Title)
+	require.Equal(t, colorApproved, ticket.Color)
+	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
+		return post.RootId == "dmroot" && post.Message == "✅ **Approved** by @admin."
+	}))
+	require.NotContains(t, store, kvRequestPrefix+testChannelRequestID)
+	require.NotContains(t, store, pendingListKey(pendingKindChannel, "u_req"))
+}
+
+func TestExecuteDecision_ApproveResolvesEverySystemAdminCopy(t *testing.T) {
+	api, p, store := decisionFixture(t, "")
+	mockChannelCreate(api)
 	api.On("GetPost", "post1").Return(approvalCard("post1"), nil)
 	api.On("GetPost", "post2").Return(approvalCard("post2"), nil)
-	var updated []*model.Post
-	api.On("UpdatePost", mock.Anything).Run(func(args mock.Arguments) {
-		updated = append(updated, args.Get(0).(*model.Post))
-	}).Return(&model.Post{}, nil)
+	updated := updatedPosts(api)
 
-	resp := runCommandAs(p, "admin1", "/channel-request approve "+testChannelRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
-	require.Equal(t, "✅ Approved by @admin. Channel ~team-x created.", resp.Text)
-	require.Len(t, updated, 2)
-	for _, post := range updated {
-		require.Equal(t, resp.Text, post.Message)
-		attachments := post.Attachments()
-		require.Len(t, attachments, 1)
-		require.Empty(t, attachments[0].Actions)
-		require.Equal(t, resp.Text, attachments[0].Footer)
+	require.Equal(t, "✅ Approved by @admin for @req. Channel ~team-x created.", resp.Text)
+	for _, id := range []string{"post1", "post2"} {
+		require.Contains(t, updated, id)
+		require.Equal(t, resp.Text, updated[id].Message)
+		require.Empty(t, updated[id].Attachments())
 	}
+	require.Contains(t, updated, "dmroot")
 	require.NotContains(t, store, kvRequestPrefix+testChannelRequestID)
 	require.NotContains(t, store, kvApprovalPostsPrefix+testChannelRequestID)
-	require.NotContains(t, store, pendingListKey(pendingKindChannel, "u_req"))
 }
 
 func TestExecuteDecision_RefusalsLeaveTheRequestPending(t *testing.T) {
 	t.Run("not an approver", func(t *testing.T) {
-		api, p, store := decisionFixture(t)
+		api, p, store := decisionFixture(t, "")
 		api.On("GetUser", "u_other").Return(&model.User{Id: "u_other", Roles: "system_user"}, nil)
+		api.On("GetTeamMember", "team1", "u_other").Return(&model.TeamMember{TeamId: "team1", UserId: "u_other"}, nil)
 
-		resp := runCommandAs(p, "u_other", "/channel-request approve "+testChannelRequestID)
+		resp := runCommandAs(p, "u_other", "/mattermost-request-hub approve "+testChannelRequestID)
 
-		require.Contains(t, resp.Text, "You don't have permission to approve or deny channel requests")
+		require.Contains(t, resp.Text, "You don't have permission to approve or deny this channel request")
 		require.Contains(t, store, kvRequestPrefix+testChannelRequestID)
 		require.Contains(t, store, kvApprovalPostsPrefix+testChannelRequestID)
 	})
 
 	t.Run("own request", func(t *testing.T) {
-		// A Team Admin approver who filed the request.
-		api, p, store := decisionFixture(t)
-		config := approvableConfig()
-		config.AllowTeamAdminApprovers = true
-		config.ApprovalTeam = "appteam"
-		p.setConfiguration(config)
-		api.On("GetTeamMember", "appteam", "u_req").Return(&model.TeamMember{TeamId: "appteam", UserId: "u_req", SchemeAdmin: true}, nil)
+		// A Team Admin of the request's team who filed it.
+		api, p, store := decisionFixture(t, "card1")
+		api.On("GetTeamMember", "team1", "u_req").Return(&model.TeamMember{TeamId: "team1", UserId: "u_req", SchemeAdmin: true}, nil)
 
-		resp := runCommandAs(p, "u_req", "/channel-request approve "+testChannelRequestID)
+		resp := runCommandAs(p, "u_req", "/mattermost-request-hub approve "+testChannelRequestID)
 
-		require.Equal(t, "You can't approve your own request. Another approver has to review it.", resp.Text)
+		require.Equal(t, ownRequestText, resp.Text)
 		require.Contains(t, store, kvRequestPrefix+testChannelRequestID)
 	})
+
+	t.Run("requester left the team", func(t *testing.T) {
+		api, p, store := decisionFixture(t, "card1")
+		api.On("GetTeamMember", "team1", "u_req").Return(nil, &model.AppError{StatusCode: http.StatusNotFound})
+
+		resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
+
+		require.Equal(t, "The requester is no longer a member of the team. Deny this request instead.", resp.Text)
+		require.Contains(t, store, kvRequestPrefix+testChannelRequestID)
+		api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+	})
+}
+
+func TestExecuteDecision_LostClaimAsksToRunAgain(t *testing.T) {
+	req := &channelRequest{ID: testChannelRequestID, RequesterID: "u_req", TeamID: "team1", Name: "team-x"}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
+	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+	api.On("KVGet", kvRequestPrefix+req.ID).Return(raw, nil)
+	api.On("KVCompareAndDelete", kvRequestPrefix+req.ID, raw).Return(false, nil)
+
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub deny "+req.ID)
+
+	require.Equal(t, "This request was just updated. Please run the command again.", resp.Text)
 }
 
 func TestExecuteDecision_DenyAdminRequest(t *testing.T) {
 	api := &plugintest.API{}
-	stubLogs(api)
+	stubLogLines(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 	store := fakeKV(api)
 
-	req := &adminRequest{ID: testAdminRequestID, RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: model.GetMillis()}
+	req := &adminRequest{
+		ID: testAdminRequestID, RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: model.GetMillis(),
+		ApprovalPostID: "card1", ApprovalChannelID: "appch", DMRootPostID: "dmroot", DMChannelID: "dm1",
+	}
 	store[kvAdminRequestPrefix+req.ID] = recordJSON(t, req)
-	store[kvApprovalPostsPrefix+req.ID] = recordJSON(t, []string{"post1"})
 
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town", TeamId: "team1"}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
-	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
-	api.On("GetPost", "post1").Return(approvalCard("post1"), nil)
-	api.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetPost", "card1").Return(approvalCard("card1"), nil)
+	api.On("GetPost", "dmroot").Return(ticketRoot(), nil)
+	updated := updatedPosts(api)
 
-	resp := runCommandAs(p, "admin1", "/channel-request deny "+testAdminRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub deny "+testAdminRequestID)
 
-	require.Equal(t, "❌ Denied by @admin.", resp.Text)
-	api.AssertNumberOfCalls(t, "UpdatePost", 1)
+	require.Equal(t, "❌ Denied by @admin for @req. Channel Admin for @nom in ~town.", resp.Text)
+	require.Equal(t, resp.Text, updated["card1"].Message)
+	require.Equal(t, "Channel Admin Request Denied", extractFirstAttachment(updated["dmroot"]).Title)
 	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 	require.NotContains(t, store, kvAdminRequestPrefix+testAdminRequestID)
-	require.NotContains(t, store, kvApprovalPostsPrefix+testAdminRequestID)
 }
 
-func TestExecuteDecision_ExpiredResolvesCards(t *testing.T) {
-	api, p, store := decisionFixture(t)
+func TestExecuteDecision_ExpiredClosesCardsAndTicket(t *testing.T) {
+	api, p, store := decisionFixture(t, "")
 	config := approvableConfig()
 	config.expiryDays = 30
 	p.setConfiguration(config)
-	req := &channelRequest{ID: testChannelRequestID, RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", CreatedAt: expiredMillis()}
+	req := &channelRequest{ID: testChannelRequestID, RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", CreatedAt: expiredMillis(), DMRootPostID: "dmroot", DMChannelID: "dm1"}
 	store[kvRequestPrefix+req.ID] = recordJSON(t, req)
-	api.On("GetPost", mock.Anything).Return(approvalCard("p"), nil)
-	api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool {
-		return post.Message == "⌛ Expired: not reviewed within 30 days."
-	})).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(approvalCard("post1"), nil)
+	api.On("GetPost", "post2").Return(approvalCard("post2"), nil)
+	updated := updatedPosts(api)
 
-	resp := runCommandAs(p, "admin1", "/channel-request approve "+testChannelRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
 	require.Equal(t, expiredText, resp.Text)
-	api.AssertNumberOfCalls(t, "UpdatePost", 2)
+	require.Equal(t, "⌛ Expired: not reviewed within 30 days.", updated["post1"].Message)
+	require.Equal(t, "⌛ Expired: not reviewed within 30 days.", updated["post2"].Message)
+	require.Equal(t, "Channel Request Expired", extractFirstAttachment(updated["dmroot"]).Title)
 	require.NotContains(t, store, kvApprovalPostsPrefix+testChannelRequestID)
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
-func TestHandleAction_ResolvesTheOtherCards(t *testing.T) {
-	api, p, store := decisionFixture(t)
+func TestHandleAction_ResolvesTheOtherSystemAdminCopies(t *testing.T) {
+	api, p, store := decisionFixture(t, "")
 	api.On("GetPost", "post1").Return(approvalCard("post1"), nil)
 	api.On("GetPost", "post2").Return(approvalCard("post2"), nil)
-	var updatedIDs []string
-	api.On("UpdatePost", mock.Anything).Run(func(args mock.Arguments) {
-		updatedIDs = append(updatedIDs, args.Get(0).(*model.Post).Id)
-	}).Return(&model.Post{}, nil)
+	updated := updatedPosts(api)
 
 	// actionBody clicks post1, which the response updates.
 	w := callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAction(w, r, false) },
 		http.MethodPost, routeDeny, "admin1", actionBody(t, testChannelRequestID))
 
 	resp := actionResponse(t, w)
-	require.Equal(t, "❌ Denied by @admin.", resp.Update.Message)
-	require.Equal(t, []string{"post2"}, updatedIDs)
+	const outcome = "❌ Denied by @admin for @req. Channel request **X** (`team-x`)."
+	require.Empty(t, resp.EphemeralText)
+	require.Equal(t, outcome, resp.Update.Message)
+	require.NotContains(t, updated, "post1")
+	require.Equal(t, outcome, updated["post2"].Message)
 	require.NotContains(t, store, kvApprovalPostsPrefix+testChannelRequestID)
 }
 
 func TestResolveApprovalCards(t *testing.T) {
 	t.Run("skips missing, foreign and failing posts", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubLogs(api)
+		stubLogLines(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		store := fakeKV(api)
-		store[kvApprovalPostsPrefix+"r1"] = recordJSON(t, []string{"gone", "foreign", "fails", "ok"})
+		store[kvApprovalPostsPrefix+"r1"] = recordJSON(t, []string{"gone", "foreign", "fails", "ok", "skip"})
 
 		api.On("GetPost", "gone").Return(nil, testAppErr("not found"))
 		api.On("GetPost", "foreign").Return(&model.Post{Id: "foreign", UserId: "someone"}, nil)
 		api.On("GetPost", "fails").Return(approvalCard("fails"), nil)
 		api.On("GetPost", "ok").Return(approvalCard("ok"), nil)
+		api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 		api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool { return post.Id == "fails" })).Return(nil, testAppErr("update failed"))
 		api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool { return post.Id == "ok" })).Return(&model.Post{}, nil)
 
-		p.resolveApprovalCards("r1", "done", "")
+		p.resolveApprovalCards("r1", "done", "skip")
 
 		api.AssertNumberOfCalls(t, "UpdatePost", 2)
+		api.AssertNotCalled(t, "GetPost", "skip")
 		api.AssertCalled(t, "LogWarn", "failed to resolve approval card", "request_id", "r1", "post_id", "fails", "error", mock.Anything)
 		api.AssertCalled(t, "LogWarn", "failed to load approval card", "request_id", "r1", "post_id", "gone", "error", mock.Anything)
 		require.NotContains(t, store, kvApprovalPostsPrefix+"r1")
@@ -298,6 +385,15 @@ func TestResolveApprovalCards(t *testing.T) {
 }
 
 func TestSaveApprovalPosts(t *testing.T) {
+	t.Run("nothing to save", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+
+		// No KV calls are mocked, so a write would have panicked.
+		p.saveApprovalPosts(pendingKindChannel, "r1", nil)
+	})
+
 	t.Run("saves the IDs while the request is pending", func(t *testing.T) {
 		api := &plugintest.API{}
 		defer api.AssertExpectations(t)
@@ -318,6 +414,7 @@ func TestSaveApprovalPosts(t *testing.T) {
 		p := newTestPlugin(api)
 		store := fakeKV(api)
 		api.On("GetPost", "a").Return(approvalCard("a"), nil)
+		api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 		api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool {
 			return post.Id == "a" && post.Message == alreadyHandledText
 		})).Return(&model.Post{}, nil)
@@ -354,68 +451,108 @@ func TestSaveApprovalPosts(t *testing.T) {
 	})
 }
 
-func TestSubmitRequest_RecordsApprovalPostsAndShowsTheID(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	stubPendingLists(api)
-	stubSubmittedRequestExists(api, kvRequestPrefix)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	p.setConfiguration(approvalConfig())
-	mockMemberRequester(api)
-	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
-	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
-	var requestKey string
-	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) { requestKey = args.String(0) }).Return(nil)
-	var card *model.Post
-	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) { card = args.Get(0).(*model.Post) }).Return(&model.Post{Id: "card1"}, nil)
+func TestSubmitRequest_ShowsTheIDAndRecordsSystemAdminCopies(t *testing.T) {
+	t.Run("approval channel", func(t *testing.T) {
+		api := &plugintest.API{}
+		stubLogs(api)
+		stubPendingLists(api)
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		p.setConfiguration(approvalConfig())
+		mockMemberRequester(api)
+		mockApprovalChannel(api)
+		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
+		var requestKey string
+		api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) { requestKey = args.String(0) }).Return(nil)
+		api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+		var card *model.Post
+		api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "appch" })).
+			Run(func(args mock.Arguments) { card = args.Get(0).(*model.Post) }).Return(&model.Post{Id: "card1"}, nil)
+		api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
+		api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+		_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
 
-	require.NoError(t, err)
-	id := requestKey[len(kvRequestPrefix):]
-	require.Equal(t, "Request ID: "+id, card.Attachments()[0].Footer)
-	api.AssertCalled(t, "KVSet", kvApprovalPostsPrefix+id, []byte(`["card1"]`))
+		require.NoError(t, err)
+		id := requestKey[len(kvRequestPrefix):]
+		require.Equal(t, "Request ID: "+id, card.Attachments()[0].Footer)
+		// The approval-channel card is on the record, so no copies are recorded.
+		api.AssertNotCalled(t, "KVSet", kvApprovalPostsPrefix+id, mock.Anything)
+	})
+
+	t.Run("System Admin direct messages", func(t *testing.T) {
+		api := &plugintest.API{}
+		stubLogs(api)
+		stubPendingLists(api)
+		stubSubmittedRequestExists(api, kvRequestPrefix)
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		config := approvalConfig()
+		config.ApprovalTeam = ""
+		p.setConfiguration(config)
+		mockMemberRequester(api)
+		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
+		var requestKey string
+		api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) { requestKey = args.String(0) }).Return(nil)
+		api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Roles: "system_admin"}, {Id: "sys2", Roles: "system_admin"}}, nil)
+		api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm-sys1"}, nil)
+		api.On("GetDirectChannel", "sys2", "bot-user-id").Return(&model.Channel{Id: "dm-sys2"}, nil)
+		api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+		api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm-sys1" })).Return(&model.Post{Id: "copy1"}, nil)
+		api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm-sys2" })).Return(&model.Post{Id: "copy2"}, nil)
+		api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
+		api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		_, err := p.submitRequest(requestInput{RequesterID: "u1", TeamID: "team1", DisplayName: "Marketing", Prefix: "team-"})
+
+		require.NoError(t, err)
+		id := requestKey[len(kvRequestPrefix):]
+		api.AssertCalled(t, "KVSet", kvApprovalPostsPrefix+id, []byte(`["copy1","copy2"]`))
+	})
 }
 
-func TestSubmitAdminRequest_RecordsApprovalPostsAndShowsTheID(t *testing.T) {
+func TestSubmitAdminRequest_ShowsTheIDAndRecordsSystemAdminCopies(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
 	stubSubmittedRequestExists(api, kvAdminRequestPrefix)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(approvalConfig())
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "req", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "ch1", mock.Anything).Return(&model.ChannelMember{}, nil)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
-	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
-	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
-	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil)
-	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil).Maybe()
+	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Roles: "system_admin"}}, nil)
+	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil).Maybe()
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
+	api.On("GetUser", "sys1").Return(&model.User{Id: "sys1", Username: "sys", Roles: "system_admin"}, nil).Maybe()
+	api.On("GetDirectChannel", "sys1", "bot-user-id").Return(&model.Channel{Id: "dm-sys1"}, nil)
+	api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 	var requestKey string
 	api.On("KVSet", mock.MatchedBy(func(key string) bool {
 		return len(key) > len(kvAdminRequestPrefix) && key[:len(kvAdminRequestPrefix)] == kvAdminRequestPrefix
 	}), mock.Anything).
 		Run(func(args mock.Arguments) { requestKey = args.String(0) }).Return(nil)
 	var card *model.Post
-	api.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) { card = args.Get(0).(*model.Post) }).Return(&model.Post{Id: "card1"}, nil)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm-sys1" })).
+		Run(func(args mock.Arguments) { card = args.Get(0).(*model.Post) }).Return(&model.Post{Id: "copy1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	_, err := p.submitAdminRequest("u1", "ch1", []string{"u_nom"})
+	_, err := p.submitAdminRequest("u1", "ch1", []string{"u_nom"}, false)
 
 	require.NoError(t, err)
 	id := requestKey[len(kvAdminRequestPrefix):]
 	require.Equal(t, "Request ID: "+id, card.Attachments()[0].Footer)
-	api.AssertCalled(t, "KVSet", kvApprovalPostsPrefix+id, []byte(`["card1"]`))
+	api.AssertCalled(t, "KVSet", kvApprovalPostsPrefix+id, []byte(`["copy1"]`))
 }
 
 func TestDecision_CreateFailureKeepsTheCards(t *testing.T) {
-	api, p, store := decisionFixture(t)
+	api, p, store := decisionFixture(t, "")
 	stubActiveTeamMember(api, "team1", "u_req")
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
 
-	resp := runCommandAs(p, "admin1", "/channel-request approve "+testChannelRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
 	require.Contains(t, resp.Text, "The request is still pending")
 	require.Contains(t, store, kvRequestPrefix+testChannelRequestID)
@@ -424,22 +561,37 @@ func TestDecision_CreateFailureKeepsTheCards(t *testing.T) {
 }
 
 func TestDecision_LostRequestResolvesTheCards(t *testing.T) {
-	api, p, store := decisionFixture(t)
+	api, p, store := decisionFixture(t, "")
 	stubActiveTeamMember(api, "team1", "u_req")
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
 	// The restore after the failed create fails too. fakeKV's KVSet was
 	// registered first, so move this one ahead of it.
 	restore := api.On("KVSet", kvRequestPrefix+testChannelRequestID, mock.Anything).Return(testAppErr("kv down")).Once()
 	api.ExpectedCalls = append([]*mock.Call{restore}, api.ExpectedCalls[:len(api.ExpectedCalls)-1]...)
-	api.On("GetPost", mock.Anything).Return(approvalCard("p"), nil)
-	api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool {
-		return post.Message == "⚠️ Approval by @admin failed and the request could not be kept. Ask the requester to submit it again."
-	})).Return(&model.Post{}, nil)
+	api.On("GetPost", "post1").Return(approvalCard("post1"), nil)
+	api.On("GetPost", "post2").Return(approvalCard("post2"), nil)
+	updated := updatedPosts(api)
 
-	resp := runCommandAs(p, "admin1", "/channel-request approve "+testChannelRequestID)
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
 	require.Contains(t, resp.Text, "could not be saved")
-	api.AssertNumberOfCalls(t, "UpdatePost", 2)
+	const lost = "⚠️ Approval by @admin failed and the request could not be kept. Ask the requester to submit it again."
+	require.Equal(t, lost, updated["post1"].Message)
+	require.Equal(t, lost, updated["post2"].Message)
 	require.NotContains(t, store, kvApprovalPostsPrefix+testChannelRequestID)
 	require.NotContains(t, store, pendingListKey(pendingKindChannel, "u_req"))
+}
+
+func TestExecuteDecision_CardUpdateFailureIsLogged(t *testing.T) {
+	api, p, store := decisionFixture(t, "card1")
+	api.On("GetPost", "card1").Return(approvalCard("card1"), nil)
+	api.On("UpdatePost", mock.MatchedBy(func(post *model.Post) bool { return post.Id == "card1" })).Return(nil, testAppErr("update failed"))
+	api.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	resp := runCommandAs(p, "admin1", "/mattermost-request-hub deny "+testChannelRequestID)
+
+	// The decision stands even though the card couldn't be updated.
+	require.Contains(t, resp.Text, "❌ Denied by @admin")
+	require.NotContains(t, store, kvRequestPrefix+testChannelRequestID)
+	api.AssertCalled(t, "LogWarn", "failed to resolve approval card", "request_id", testChannelRequestID, "post_id", "card1", "error", mock.Anything)
 }

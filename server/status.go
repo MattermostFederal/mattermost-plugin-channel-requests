@@ -17,6 +17,10 @@ import (
 // doesn't say which.
 var errNoVisibleRequest = errors.New("no pending request with that ID. It may have been approved, denied or closed; the bot sends the requester the outcome")
 
+// listRequestsDisabledMsg is the list reply when both request types the
+// list covers are turned off.
+const listRequestsDisabledMsg = "Channel and Channel Admin requests are currently disabled by an administrator."
+
 // maxListedRequests caps how many requests the list views load and show.
 const maxListedRequests = 50
 
@@ -48,6 +52,19 @@ func (r *pendingRecord) requesterID() string {
 	return r.channel.RequesterID
 }
 
+// enabledPendingKinds returns the request kinds the list and status views
+// cover, leaving out any type an administrator turned off.
+func enabledPendingKinds(config *configuration) []string {
+	var kinds []string
+	if config.RequestEnabled(requestTypeChannel) {
+		kinds = append(kinds, pendingKindChannel)
+	}
+	if config.RequestEnabled(requestTypeChannelAdmin) {
+		kinds = append(kinds, pendingKindAdmin)
+	}
+	return kinds
+}
+
 // loadPendingRecord loads a stored request of the given kind, or returns
 // nil when it isn't stored.
 func (p *Plugin) loadPendingRecord(kind, requestID string) (*pendingRecord, error) {
@@ -66,16 +83,18 @@ func (p *Plugin) loadPendingRecord(kind, requestID string) (*pendingRecord, erro
 }
 
 // listOwnRequests returns up to limit of the user's pending requests of
-// both kinds, oldest first, and how many more there are. It reads the
-// pending lists without changing them. Entries whose request no longer
+// both kinds, oldest first, and how many more there are. A kind whose
+// request type is turned off is left out. It reads the pending lists
+// without changing them. Entries whose request no longer
 // exists are skipped, and so are unreadable records, which are logged.
 func (p *Plugin) listOwnRequests(userID string, limit int) ([]requestSummary, int, error) {
 	type listed struct {
 		kind  string
 		entry pendingEntry
 	}
+	config := p.getConfiguration()
 	var entries []listed
-	for _, kind := range []string{pendingKindChannel, pendingKindAdmin} {
+	for _, kind := range enabledPendingKinds(config) {
 		raw, appErr := p.API.KVGet(pendingListKey(kind, userID))
 		if appErr != nil {
 			return nil, 0, errors.Wrap(appErr, "failed to load pending requests")
@@ -95,7 +114,6 @@ func (p *Plugin) listOwnRequests(userID string, limit int) ([]requestSummary, in
 		return cmp.Compare(a.entry.CreatedAt, b.entry.CreatedAt)
 	})
 
-	config := p.getConfiguration()
 	var out []requestSummary
 	for i, e := range entries {
 		if len(out) == limit {
@@ -128,12 +146,14 @@ func isUnmarshalError(err error) bool {
 }
 
 // requestStatus returns one pending request, if the user may see it: its
-// requester, or someone who can approve it.
+// requester, or someone who can approve it. A request whose type is turned
+// off reads as not found.
 func (p *Plugin) requestStatus(userID, requestID string) (*requestSummary, error) {
 	if !model.IsValidId(requestID) {
 		return nil, errNoVisibleRequest
 	}
-	for _, kind := range []string{pendingKindChannel, pendingKindAdmin} {
+	config := p.getConfiguration()
+	for _, kind := range enabledPendingKinds(config) {
 		rec, err := p.loadPendingRecord(kind, requestID)
 		if err != nil {
 			return nil, err
@@ -144,7 +164,7 @@ func (p *Plugin) requestStatus(userID, requestID string) (*requestSummary, error
 		if rec.requesterID() != userID && !p.canDecide(userID, rec) {
 			return nil, errNoVisibleRequest
 		}
-		summary := p.summarize(p.getConfiguration(), rec)
+		summary := p.summarize(config, rec)
 		return &summary, nil
 	}
 	return nil, errNoVisibleRequest
@@ -161,7 +181,7 @@ func (p *Plugin) canDecide(userID string, rec *pendingRecord) bool {
 	if rec.admin != nil {
 		return p.canApproveAdminRequest(user, rec.admin.ChannelID)
 	}
-	return p.canApprove(user)
+	return p.canApproveChannelRequest(user, rec.channel.TeamID)
 }
 
 // summarize describes a stored request for the list and status views.
@@ -173,7 +193,7 @@ func (p *Plugin) summarize(config *configuration, rec *pendingRecord) requestSum
 	} else {
 		req := rec.channel
 		s.ID, s.Kind, s.CreatedAt = req.ID, pendingKindChannel, req.CreatedAt
-		s.Summary = fmt.Sprintf("Channel **%s** (`%s`) in %s", escapeMarkdown(req.DisplayName), req.Name, p.teamLabel(req.TeamID))
+		s.Summary = fmt.Sprintf("Channel **%s** (`%s`) in %s", escapeMarkdown(req.DisplayName), req.Name, escapeMarkdown(p.teamDisplayName(req.TeamID)))
 	}
 	s.Expired = requestExpired(s.CreatedAt, config.ExpiryDays(), model.GetMillis())
 	if days := config.ExpiryDays(); days > 0 && s.CreatedAt > 0 {

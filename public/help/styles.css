@@ -118,6 +118,124 @@ body {
     width: 100%;
 }
 
+/*
+ * Screenshot sizing: dual max-width + max-height so tall retina modals don't
+ * dominate the page, while wide cards stay readable and thin chrome isn't
+ * left at a tiny intrinsic width.
+ */
+.content img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: min(100%, 520px);
+    max-height: min(65vh, 560px);
+    object-fit: contain;
+    margin: 16px 0 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* Request forms: width for field readability; height stops 2× tall crops */
+.content img[src*="-modal"] {
+    max-width: min(100%, 480px);
+    max-height: min(68vh, 600px);
+}
+
+/* Wide short: approval cards, DMs, banners, integration rows */
+.content img[src*="-approval-card"],
+.content img[src*="-dm."],
+.content img[src*="-welcome"],
+.content img[src*="-integrations"] {
+    max-width: min(100%, 720px);
+    max-height: min(35vh, 240px);
+}
+
+/* Request Hub dialogs */
+.content img[src*="-hub"] {
+    max-width: min(100%, 440px);
+    max-height: min(68vh, 580px);
+}
+
+/* Tall thread RHS */
+.content img[src*="-thread-approver"],
+.content img[src*="-thread-relay"] {
+    max-width: min(100%, 300px);
+    max-height: min(68vh, 520px);
+}
+
+/* Dropdown / + menu / native team menu crops */
+.content img[src*="-menu"],
+.content img[src*="-more-actions"],
+.content img[src*="-plus-menu"],
+.content img[src*="-native"] {
+    max-width: min(100%, 240px);
+    max-height: min(55vh, 380px);
+}
+
+/* Members-panel crop is wider than a menu */
+.content img[src*="-members-button"] {
+    max-width: min(100%, 380px);
+    max-height: min(55vh, 400px);
+}
+
+/* Thin App Bar strip (≈2× of a ~48–56px rail): keep near real chrome size */
+.content img[src*="plug-appbar"] {
+    width: auto;
+    max-width: min(100%, 56px);
+    max-height: min(45vh, 220px);
+    height: auto;
+}
+
+.content ul,
+.content ol {
+    margin: 0 0 16px 1.25em;
+}
+
+.content li {
+    margin-bottom: 6px;
+}
+
+/* Entry paths: one method per line in the list; screenshots in a single row */
+.content ul.entry-list {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+}
+
+.content ul.entry-list li {
+    margin: 0 0 8px;
+    padding: 8px 12px;
+    background: var(--surface-muted, rgba(0, 0, 0, 0.03));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    line-height: 1.45;
+}
+
+.content .entry-shots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 20px;
+    align-items: flex-start;
+    margin: 8px 0 28px;
+}
+
+.content .entry-shots figure {
+    margin: 0;
+    flex: 0 1 auto;
+    max-width: 100%;
+}
+
+.content .entry-shots img {
+    margin: 0 0 6px;
+}
+
+.content .entry-shots figcaption {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+}
+
 /* Breadcrumb */
 
 .breadcrumb {

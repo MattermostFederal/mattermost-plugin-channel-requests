@@ -16,6 +16,9 @@ import (
 // isPendingListKey matches the KV key of any user's pending list.
 var isPendingListKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvPendingPrefix) })
 
+// isNotPendingListKey matches every other KV key.
+var isNotPendingListKey = mock.MatchedBy(func(key string) bool { return !strings.HasPrefix(key, kvPendingPrefix) })
+
 // isApprovalPostsKey matches the KV key of any request's recorded
 // approval posts.
 var isApprovalPostsKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvApprovalPostsPrefix) })
@@ -39,6 +42,13 @@ func stubPendingLists(api *plugintest.API) {
 	api.On("KVCompareAndDelete", isPendingListKey, mock.Anything).Return(true, nil).Maybe()
 }
 
+// stubSubmittedRequestExists makes any request stored under prefix read
+// back as present, for the check submit makes after recording the
+// approval posts.
+func stubSubmittedRequestExists(api *plugintest.API, prefix string) {
+	api.On("KVGet", mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, prefix) })).Return([]byte("{}"), nil).Maybe()
+}
+
 // storedRequests makes the given request IDs exist (and only those) under
 // prefix.
 func storedRequests(api *plugintest.API, prefix string, ids ...string) {
@@ -52,21 +62,9 @@ func storedRequests(api *plugintest.API, prefix string, ids ...string) {
 	})
 }
 
-// stubSubmittedRequestExists makes any request stored under prefix read
-// back as present, for the check submit makes after recording the
-// approval posts.
-func stubSubmittedRequestExists(api *plugintest.API, prefix string) {
-	api.On("KVGet", mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, prefix) })).Return([]byte("{}"), nil).Maybe()
-}
-
 // stubPendingMigrated marks the stored-request migration as already done.
 func stubPendingMigrated(api *plugintest.API) {
 	api.On("KVGet", kvPendingMigrated).Return([]byte("1"), nil).Maybe()
-}
-
-// stubAuditChannel makes id resolve to a private channel.
-func stubAuditChannel(api *plugintest.API, id string) {
-	api.On("GetChannel", id).Return(&model.Channel{Id: id, Type: model.ChannelTypePrivate}, nil).Maybe()
 }
 
 // approvableConfig is a configuration whose prefix list allows the
@@ -402,7 +400,7 @@ func TestMigratePendingRequests(t *testing.T) {
 
 	t.Run("backfills stored requests and records the migration", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubLogs(api)
+		stubLogLines(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		store := fakeKV(api)
@@ -527,7 +525,7 @@ func TestMigratePendingRequests(t *testing.T) {
 
 	t.Run("an unreadable Channel Admin request is skipped", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubLogs(api)
+		stubLogLines(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		store := fakeKV(api)
@@ -539,7 +537,7 @@ func TestMigratePendingRequests(t *testing.T) {
 
 	t.Run("a claim that can't be cleared is logged", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubLogs(api)
+		stubLogLines(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		api.On("KVList", 0, 200).Return(nil, testAppErr("kv down"))
@@ -552,7 +550,7 @@ func TestMigratePendingRequests(t *testing.T) {
 
 	t.Run("failures leave the migration to run again", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubLogs(api)
+		stubLogLines(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		api.On("KVCompareAndSet", isPendingListKey, mock.Anything, mock.Anything).Return(false, testAppErr("kv down"))
@@ -592,7 +590,7 @@ func TestMigratePendingRequests(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				api := &plugintest.API{}
-				stubLogs(api)
+				stubLogLines(api)
 				defer api.AssertExpectations(t)
 				p := newTestPlugin(api)
 				tc.setup(api)

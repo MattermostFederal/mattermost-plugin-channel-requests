@@ -14,7 +14,7 @@ import (
 func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{}) // no prefixes configured
+	p.setConfiguration(&configuration{AllowChannelRequests: true}) // enabled, but no prefixes
 
 	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
 
@@ -28,7 +28,10 @@ func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 func TestExecuteCommand_OpensDialogWhenConfigured(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(&configuration{
+		AllowChannelRequests: true,
+		prefixes:             []channelPrefix{{Prefix: "team-"}},
+	})
 
 	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
 
@@ -44,7 +47,10 @@ func TestExecuteCommand_DialogFailureRepliesPrivately(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-", Description: "Teams"}}})
+	p.setConfiguration(&configuration{
+		AllowChannelRequests: true,
+		prefixes:             []channelPrefix{{Prefix: "team-", Description: "Teams"}},
+	})
 
 	api.On("OpenInteractiveDialog", mock.Anything).Return(testAppErr("expired trigger"))
 
@@ -55,6 +61,26 @@ func TestExecuteCommand_DialogFailureRepliesPrivately(t *testing.T) {
 	require.Contains(t, resp.Text, "Could not open")
 }
 
+func TestExecuteCommand_DocsOpensGuide(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{
+		Command:   "/mattermost-request-hub docs",
+		SiteURL:   "https://mm.example.com",
+		TriggerId: "trig",
+	})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
+	// GotoLocation must stay empty — SPA push of /plugins/... HTML is a Loading hang.
+	require.Empty(t, resp.GotoLocation)
+	require.Contains(t, resp.Text, "Documentation")
+	require.Contains(t, resp.Text, "https://mm.example.com/plugins/"+manifest.Id+"/public/help/docs.html")
+	require.Contains(t, resp.Text, "Open the full guide")
+}
+
 func runCommand(p *Plugin, command string) *model.CommandResponse {
 	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{
 		Command:   command,
@@ -62,6 +88,7 @@ func runCommand(p *Plugin, command string) *model.CommandResponse {
 		TeamId:    "team1",
 		ChannelId: "chX",
 		TriggerId: "trig",
+		SiteURL:   "https://mm.example.com",
 	})
 	if appErr != nil {
 		panic(appErr)
@@ -75,52 +102,65 @@ func TestExecuteCommand_HelpAndUnknownSubcommand(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{})
 
-	resp := runCommand(p, "/channel-request help")
+	resp := runCommand(p, "/mattermost-request-hub help")
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
-	require.Equal(t, commandUsage, resp.Text)
+	require.True(t, strings.HasPrefix(resp.Text, commandHelpText()))
+	require.Contains(t, resp.Text, "https://mm.example.com/plugins/"+manifest.Id+"/public/help/docs.html")
 
-	resp = runCommand(p, "/channel-request bogus")
+	resp = runCommand(p, "/mattermost-request-hub bogus")
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Contains(t, resp.Text, "Unknown subcommand `bogus`")
-	require.Contains(t, resp.Text, commandUsage)
+	require.Contains(t, resp.Text, commandHelpText())
 }
 
 func TestExecuteCommand_BareCommandWithTrailingSpaceOpensDialog(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(approvalConfig())
 
-	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil).Twice()
 
-	resp := runCommand(p, "/channel-request   ")
+	require.Empty(t, runCommand(p, "/mattermost-request-hub   ").Text)
+	require.Empty(t, runCommand(p, "/mattermost-request-hub channel  ").Text)
+}
 
-	require.Empty(t, resp.Text)
+func TestExecuteCommand_ChannelAdminWithoutArgumentsOpensDialog(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
+
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil).Once()
+
+	require.Empty(t, runCommand(p, "/mattermost-request-hub channel-admin").Text)
 }
 
 func TestExecuteCommand_Prefixes(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
 
-	p.setConfiguration(&configuration{})
-	resp := runCommand(p, "/channel-request prefixes")
-	require.Equal(t, notConfiguredMessage, resp.Text)
+	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	require.Equal(t, channelRequestsDisabledMsg, runCommand(p, "/mattermost-request-hub prefixes").Text)
 
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+	require.Equal(t, notConfiguredMessage, runCommand(p, "/mattermost-request-hub prefixes").Text)
+
+	p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{
 		{Prefix: "team-", Description: "Team *channels*"},
 		{Prefix: "proj-", SuffixPatternRaw: "^[0-9]{4}$"},
 	}})
-	resp = runCommand(p, "/channel-request prefixes")
+	resp := runCommand(p, "/mattermost-request-hub prefixes")
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Equal(t, "Channel prefixes you can use:\n"+
 		"- `team-` Team \\*channels\\*\n"+
 		"- `proj-` (suffix rule: `^[0-9]{4}$`)", resp.Text)
 }
 
-func TestParseCreateArgs(t *testing.T) {
-	in, err := parseCreateArgs(strings.Fields("team- Marketing Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol"))
+func TestParseChannelCreateArgs(t *testing.T) {
+	in, err := parseChannelCreateArgs(strings.Fields("team- Marketing Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol --category Launch Work"))
 	require.NoError(t, err)
-	require.Equal(t, createCommandInput{
+	require.Equal(t, channelCreateInput{
 		Prefix:      "team-",
 		DisplayName: "Marketing Team",
 		Suffix:      "mkt",
@@ -128,11 +168,12 @@ func TestParseCreateArgs(t *testing.T) {
 		Private:     true,
 		Members:     []string{"@alice", "bob"},
 		Admins:      []string{"@carol"},
+		Category:    "Launch Work",
 	}, in)
 
-	in, err = parseCreateArgs([]string{"team-", "Marketing"})
+	in, err = parseChannelCreateArgs([]string{"team-", "Marketing"})
 	require.NoError(t, err)
-	require.Equal(t, createCommandInput{Prefix: "team-", DisplayName: "Marketing"}, in)
+	require.Equal(t, channelCreateInput{Prefix: "team-", DisplayName: "Marketing"}, in)
 
 	for args, want := range map[string]string{
 		"":                                    "a prefix and a channel name are required",
@@ -142,40 +183,42 @@ func TestParseCreateArgs(t *testing.T) {
 		"team- Marketing --suffix":            "`--suffix` takes exactly one value",
 		"team- Marketing --suffix a b":        "`--suffix` takes exactly one value",
 		"team- Marketing --purpose":           "`--purpose` needs some text",
+		"team- Marketing --category":          "`--category` needs a name",
 		"team- Marketing --private yes":       "`--private` takes no value",
 		"team- Marketing --color blue":        "unknown option `--color`",
 		"team- Marketing --private --private": "`--private` is given more than once",
 	} {
-		_, err := parseCreateArgs(strings.Fields(args))
+		_, err := parseChannelCreateArgs(strings.Fields(args))
 		require.EqualError(t, err, want, args)
 	}
 }
 
-func TestExecuteCommand_CreateNotConfigured(t *testing.T) {
+func TestExecuteCommand_ChannelCreateRespectsToggleAndPrefixes(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
 
-	resp := runCommand(p, "/channel-request create team- Marketing")
+	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	require.Equal(t, channelRequestsDisabledMsg, runCommand(p, "/mattermost-request-hub channel team- Marketing").Text)
 
-	require.Equal(t, notConfiguredMessage, resp.Text)
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
+	require.Equal(t, notConfiguredMessage, runCommand(p, "/mattermost-request-hub channel team- Marketing").Text)
 }
 
-func TestExecuteCommand_CreateBadArguments(t *testing.T) {
+func TestExecuteCommand_ChannelCreateBadArguments(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
 
-	resp := runCommand(p, "/channel-request create team-")
+	resp := runCommand(p, "/mattermost-request-hub channel team-")
 
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Contains(t, resp.Text, "Could not read the request: a prefix and a channel name are required.")
-	require.Contains(t, resp.Text, commandUsage)
+	require.Contains(t, resp.Text, channelArgsHint)
 }
 
-func TestExecuteCommand_CreateUnknownUsers(t *testing.T) {
+func TestExecuteCommand_ChannelCreateUnknownUsers(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -184,58 +227,60 @@ func TestExecuteCommand_CreateUnknownUsers(t *testing.T) {
 	api.On("GetUserByUsername", "ghost").Return(nil, testAppErr("not found"))
 	api.On("GetUserByUsername", "alice").Return(&model.User{Id: "id_alice"}, nil)
 
-	resp := runCommand(p, "/channel-request create team- Marketing --members @ghost")
+	resp := runCommand(p, "/mattermost-request-hub channel team- Marketing --members @ghost")
 	require.Equal(t, "unknown user: ghost", resp.Text)
 
-	resp = runCommand(p, "/channel-request create team- Marketing --members @alice --admins @ghost")
+	resp = runCommand(p, "/mattermost-request-hub channel team- Marketing --members @alice --admins @ghost")
 	require.Equal(t, "unknown user: ghost", resp.Text)
 
 	api.AssertNotCalled(t, "GetUser", mock.Anything)
 }
 
-func TestExecuteCommand_CreateSubmitsForApproval(t *testing.T) {
+func TestExecuteCommand_ChannelCreateSubmitsForApproval(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
-	stubSubmittedRequestExists(api, kvRequestPrefix)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
 
-	mockMemberRequester(api)
+	// A System Admin's command still queues, like the form.
+	api.On("GetUser", "u1").Return(sysadmin("u1"), nil)
 	alice, bob, carol := model.NewId(), model.NewId(), model.NewId()
 	for id, name := range map[string]string{alice: "alice", bob: "bob", carol: "carol"} {
 		api.On("GetUserByUsername", name).Return(&model.User{Id: id, Username: name}, nil)
-		api.On("GetUser", id).Return(&model.User{Id: id, Username: name}, nil)
+		api.On("GetUser", id).Return(&model.User{Id: id, Username: name}, nil).Maybe()
 	}
 	var stored channelRequest
 	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
-	}).Return(nil)
+	}).Return(nil).Once()
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
-	api.On("GetChannel", "appch").Return(&model.Channel{Id: "appch", TeamId: "appteam"}, nil)
-	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	mockApprovalChannel(api)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", mock.Anything, mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil).Maybe()
+	api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "post1"}, nil)
 
-	resp := runCommand(p, "/channel-request create team- Marketing  Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol")
+	resp := runCommand(p, "/mattermost-request-hub channel team- Marketing  Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol --category Launch")
 
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Contains(t, resp.Text, "submitted for approval")
-	require.Equal(t, channelRequest{
-		ID:             stored.ID,
-		RequesterID:    "u1",
-		TeamID:         "team1",
-		Name:           "team-mkt",
-		DisplayName:    "Marketing Team",
-		Purpose:        "Plan the launch",
-		ChannelType:    channelTypePrivate,
-		MemberIDs:      []string{alice, bob},
-		AdminMemberIDs: []string{carol},
-		CreatedAt:      stored.CreatedAt,
-	}, stored)
+	require.Equal(t, "u1", stored.RequesterID)
+	require.Equal(t, "team1", stored.TeamID)
+	require.Equal(t, "team-mkt", stored.Name)
+	require.Equal(t, "Marketing Team", stored.DisplayName)
+	require.Equal(t, "Plan the launch", stored.Purpose)
+	require.Equal(t, channelTypePrivate, stored.ChannelType)
+	require.Equal(t, []string{alice, bob}, stored.MemberIDs)
+	require.Equal(t, []string{carol}, stored.AdminMemberIDs)
+	require.Equal(t, "Launch", stored.CategoryName)
 	require.NotZero(t, stored.CreatedAt)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
-func TestExecuteCommand_CreateRejectedBySubmit(t *testing.T) {
+func TestExecuteCommand_ChannelCreateRejectedBySubmit(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -244,86 +289,120 @@ func TestExecuteCommand_CreateRejectedBySubmit(t *testing.T) {
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "req", Roles: "system_user"}, nil)
 	api.On("GetTeamMember", "team1", "u1").Return(nil, testAppErr("not a member"))
 
-	resp := runCommand(p, "/channel-request create team- Marketing")
+	resp := runCommand(p, "/mattermost-request-hub channel team- Marketing")
 
 	require.Equal(t, "you must be a member of the team to request a channel in it", resp.Text)
 	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 }
 
-func TestExecuteCommand_AdminNeedsNominees(t *testing.T) {
+func TestExecuteCommand_ChannelAdminRespectsToggle(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true})
 
-	resp := runCommand(p, "/channel-request admin")
+	require.Equal(t, channelAdminRequestsDisabledMsg, runCommand(p, "/mattermost-request-hub channel-admin @nommy").Text)
+	require.Equal(t, channelAdminRequestsDisabledMsg, runCommand(p, "/mattermost-request-hub channel-admin").Text)
+}
+
+func TestExecuteCommand_ChannelAdminNeedsNominees(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
+
+	resp := runCommand(p, "/mattermost-request-hub channel-admin @")
 
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Contains(t, resp.Text, "Name at least one channel member")
 }
 
-func TestExecuteCommand_AdminUnknownUser(t *testing.T) {
+func TestExecuteCommand_ChannelAdminUnknownUser(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
 
 	api.On("GetUserByUsername", "ghost").Return(nil, testAppErr("not found"))
 
-	resp := runCommand(p, "/channel-request admin @ghost")
+	resp := runCommand(p, "/mattermost-request-hub channel-admin @ghost")
 
 	require.Equal(t, "unknown user: ghost", resp.Text)
 }
 
-func TestExecuteCommand_AdminRejectedBySubmit(t *testing.T) {
+func TestExecuteCommand_ChannelAdminRejectedBySubmit(t *testing.T) {
 	api := &plugintest.API{}
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
 
 	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom"}, nil)
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "req", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "chX", "u1").Return(nil, testAppErr("not a member"))
 
-	resp := runCommand(p, "/channel-request admin @nommy")
+	resp := runCommand(p, "/mattermost-request-hub channel-admin @nommy")
 
 	require.Equal(t, "channel not found, or you are not a member of it", resp.Text)
 }
 
-func TestExecuteCommand_AdminPromotesInCurrentChannel(t *testing.T) {
+func TestExecuteCommand_ChannelAdminQueuesForCurrentChannel(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true, ApprovalTeam: "appteam"})
 
+	// Even a System Admin's command queues for approval, like the dialog.
 	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom"}, nil)
 	api.On("GetUser", "u1").Return(sysadmin("u1"), nil)
-	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", Type: model.ChannelTypeOpen}, nil)
+	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
 	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
-	api.On("UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
-	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	mockApprovalChannel(api)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil).Maybe()
+	var approval *model.Post
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "appch" })).
+		Run(func(args mock.Arguments) { approval = args.Get(0).(*model.Post) }).Return(&model.Post{Id: "card1"}, nil)
+	api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
 
-	resp := runCommand(p, "/channel-request admin @nommy")
+	resp := runCommand(p, "/mattermost-request-hub channel-admin @nommy")
 
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
-	require.Contains(t, resp.Text, "Channel Admin in ~marketing")
-	api.AssertCalled(t, "UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles)
+	require.Contains(t, resp.Text, "submitted for approval")
+	require.NotNil(t, approval)
+	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func TestGetAutocompleteData_ListsEverySubcommand(t *testing.T) {
+func TestGetAutocompleteData_MatchesDispatcherAndHelp(t *testing.T) {
 	data := getAutocompleteData()
+	require.NoError(t, data.IsValid())
 
 	names := make([]string, 0, len(data.SubCommands))
 	for _, sub := range data.SubCommands {
 		names = append(names, sub.Trigger)
 		require.NotEmpty(t, sub.HelpText, sub.Trigger)
-		require.Contains(t, commandUsage, "/channel-request "+sub.Trigger, sub.Trigger)
+		require.Contains(t, commandHelpText(), "`/"+commandTrigger+" "+sub.Trigger, sub.Trigger)
+		require.Contains(t, getCommand().AutoCompleteHint, sub.Trigger, sub.Trigger)
 	}
-	require.Equal(t, []string{subcommandCreate, subcommandAdmin, subcommandPrefixes, subcommandList, subcommandApprove, subcommandDeny, subcommandHelp}, names)
-	require.NoError(t, data.IsValid())
-	// The hint names every subcommand, in the same order.
-	require.Equal(t, "["+strings.Join(names, "|")+"]", subcommandHint)
-	require.Equal(t, subcommandHint, getCommand().AutoCompleteHint)
+	require.Contains(t, names, subcommandPrefixes)
+	require.Contains(t, names, "help")
+	require.Contains(t, names, subcommandList)
+	require.Contains(t, names, subcommandApprove)
+	require.Contains(t, names, subcommandDeny)
+
+	// Every listed subcommand is handled, none falls through to the
+	// unknown-subcommand reply.
+	api := &plugintest.API{}
+	stubLogs(api)
+	api.On("OpenInteractiveDialog", mock.Anything).Return(nil).Maybe()
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+	for _, name := range names {
+		require.NotContains(t, runCommand(p, "/"+commandTrigger+" "+name).Text, "Unknown subcommand", name)
+	}
 }

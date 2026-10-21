@@ -22,10 +22,19 @@ const helpDir = "../public/help"
 // helpPages is every page in the bundle. The sidebar on each one links to
 // all of them, so adding a page means adding it here and to every sidebar.
 var helpPages = []string{
-	"help.html",
-	"approvals.html",
-	"admin.html",
-	"commands.html",
+	"docs.html",
+	"open.html",
+	"messaging.html",
+	"channel.html",
+	"channel-admin.html",
+	"team.html",
+	"team-member.html",
+	"team-guest.html",
+	"bot.html",
+	"webhook.html",
+	"approving.html",
+	"slash.html",
+	"agents.html",
 	"troubleshooting.html",
 }
 
@@ -126,46 +135,48 @@ func TestEveryHelpAnchorResolves(t *testing.T) {
 
 // Subcommands come from the autocomplete data, the same list
 // TestGetAutocompleteData_ListsEverySubcommand checks against the usage text.
-func TestCommandsPageDocumentsEverySubcommand(t *testing.T) {
-	page := readHelpFile(t, "commands.html")
+func TestSlashPageDocumentsEverySubcommand(t *testing.T) {
+	page := readHelpFile(t, "slash.html")
 	for _, sub := range getAutocompleteData().SubCommands {
-		require.Contains(t, page, "/"+commandTrigger+" "+sub.Trigger, "commands.html does not document %s", sub.Trigger)
-		require.Contains(t, page, ` id="`+sub.Trigger+`"`, "commands.html has no section for %s", sub.Trigger)
+		require.Contains(t, page, "/"+commandTrigger+" "+sub.Trigger, "slash.html does not document %s", sub.Trigger)
+		require.Contains(t, page, ` id="`+sub.Trigger+`"`, "slash.html has no section for %s", sub.Trigger)
 	}
 }
 
-// The overview links each subcommand to its section on commands.html, and
-// TestEveryHelpAnchorResolves checks the section exists.
-func TestOverviewLinksEverySubcommand(t *testing.T) {
-	page := readHelpFile(t, "help.html")
+// The summary table at the top of slash.html links each subcommand to its
+// section, and TestEveryHelpAnchorResolves checks the section exists. The
+// overview links to slash.html.
+func TestSlashSummaryLinksEverySubcommand(t *testing.T) {
+	page := readHelpFile(t, "slash.html")
 	for _, sub := range getAutocompleteData().SubCommands {
-		require.Contains(t, page, `href="commands.html#`+sub.Trigger+`"`, "help.html does not link to %s", sub.Trigger)
+		require.Contains(t, page, `href="#`+sub.Trigger+`"`, "slash.html's summary does not link to %s", sub.Trigger)
 	}
+	require.Contains(t, readHelpFile(t, "docs.html"), `href="slash.html"`)
 }
 
 // The tools come from the running MCP server, so a tool added to
 // registerMCPTools fails here until it's documented.
-func TestCommandsPageDocumentsEveryAgentsTool(t *testing.T) {
+func TestAgentsPageDocumentsEveryAgentsTool(t *testing.T) {
 	stubMCP(t)
 	p := newMCPTestPlugin(t, &plugintest.API{}, &configuration{})
 	listed, err := mcpSession(t, p, "u1").ListTools(context.Background(), nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, listed.Tools)
 
-	commands := readHelpFile(t, "commands.html")
+	agents := readHelpFile(t, "agents.html")
 	troubleshooting := readHelpFile(t, "troubleshooting.html")
 	for _, tool := range listed.Tools {
 		require.True(t, strings.HasPrefix(tool.Name, mcpToolPrefix), tool.Name)
 		short := strings.TrimPrefix(tool.Name, mcpToolPrefix)
-		require.Contains(t, commands, "<code>"+short+"</code>", "commands.html does not document %s", short)
+		require.Contains(t, agents, "<code>"+short+"</code>", "agents.html does not document %s", short)
 		require.Contains(t, troubleshooting, tool.Name, "troubleshooting.html does not list %s", tool.Name)
 	}
 }
 
 // The System Console header is the one place every admin sees a link to
-// the docs.
+// the docs. It opens the overview, as the docs subcommand does.
 func TestSettingsHeaderLinksToTheDocs(t *testing.T) {
-	want := fmt.Sprintf("/plugins/%s/public/help/help.html", manifest.Id)
+	want := fmt.Sprintf("/plugins/%s/public/help/docs.html", manifest.Id)
 	require.NotNil(t, manifest.SettingsSchema)
 	require.Contains(t, manifest.SettingsSchema.Header, want)
 }

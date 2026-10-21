@@ -30,7 +30,7 @@ func newStatusFixture(t *testing.T, expiryDays int, channelCreated, adminCreated
 	stubLogs(api)
 	t.Cleanup(func() { api.AssertExpectations(t) })
 	p := newTestPlugin(api)
-	config := approvableConfig()
+	config := listConfig()
 	config.expiryDays = expiryDays
 	p.setConfiguration(config)
 	store := fakeKV(api)
@@ -45,6 +45,14 @@ func newStatusFixture(t *testing.T, expiryDays int, channelCreated, adminCreated
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town", TeamId: "team1"}, nil).Maybe()
 	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil).Maybe()
 	return f
+}
+
+// listConfig turns on both request types the list covers.
+func listConfig() *configuration {
+	config := approvableConfig()
+	config.AllowChannelRequests = true
+	config.AllowChannelAdminRequests = true
+	return config
 }
 
 const (
@@ -64,7 +72,7 @@ func TestListOwnRequests(t *testing.T) {
 		require.Equal(t, pendingKindAdmin, got[0].Kind)
 		require.Equal(t, "Channel Admin for @nom in ~town", got[0].Summary)
 		require.Equal(t, f.channelID, got[1].ID)
-		require.Equal(t, `Channel **X \*bold\*** (`+"`team-x`"+`) in Eng \(eng\)`, got[1].Summary)
+		require.Equal(t, `Channel **X \*bold\*** (`+"`team-x`"+`) in Eng`, got[1].Summary)
 		require.Equal(t, oct5+7*millisPerDay, got[1].ExpiresAt)
 		// Both are past 7 days.
 		require.True(t, got[0].Expired)
@@ -127,6 +135,20 @@ func TestListOwnRequests(t *testing.T) {
 		f.api.AssertNotCalled(t, "GetTeam", mock.Anything)
 	})
 
+	t.Run("a type that is turned off is left out", func(t *testing.T) {
+		f := newStatusFixture(t, 0, oct5, oct3)
+		config := listConfig()
+		config.AllowChannelRequests = false
+		f.p.setConfiguration(config)
+
+		got, _, err := f.p.listOwnRequests("u1", maxListedRequests)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, f.adminID, got[0].ID)
+		f.api.AssertNotCalled(t, "KVGet", pendingListKey(pendingKindChannel, "u1"))
+	})
+
 	t.Run("another user's request in the list is left out", func(t *testing.T) {
 		f := newStatusFixture(t, 0, oct5, oct3)
 		f.store[pendingListKey(pendingKindChannel, "u2")] = f.store[pendingListKey(pendingKindChannel, "u1")]
@@ -154,7 +176,7 @@ func TestListOwnRequests(t *testing.T) {
 			api := &plugintest.API{}
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{})
+			p.setConfiguration(listConfig())
 			kv(api)
 
 			_, _, err := p.listOwnRequests("u1", maxListedRequests)
@@ -186,16 +208,38 @@ func TestRequestStatus(t *testing.T) {
 		require.Equal(t, f.channelID, got.ID)
 	})
 
-	t.Run("a Team Admin of the channel's team sees the Channel Admin request", func(t *testing.T) {
+	t.Run("a Team Admin of the request's team sees both kinds", func(t *testing.T) {
 		f := newStatusFixture(t, 0, oct5, oct3)
 		f.api.On("GetUser", "ta").Return(&model.User{Id: "ta", Roles: "system_user"}, nil)
 		f.api.On("GetTeamMember", "team1", "ta").Return(&model.TeamMember{TeamId: "team1", UserId: "ta", SchemeAdmin: true}, nil)
 
 		_, err := f.p.requestStatus("ta", f.adminID)
 		require.NoError(t, err)
-		// The channel request isn't theirs to approve.
+		_, err = f.p.requestStatus("ta", f.channelID)
+		require.NoError(t, err)
+	})
+
+	t.Run("a Team Admin of another team sees neither", func(t *testing.T) {
+		f := newStatusFixture(t, 0, oct5, oct3)
+		f.api.On("GetUser", "ta").Return(&model.User{Id: "ta", Roles: "system_user"}, nil)
+		f.api.On("GetTeamMember", "team1", "ta").Return(nil, testAppErr("not found"))
+
+		_, err := f.p.requestStatus("ta", f.adminID)
+		require.ErrorIs(t, err, errNoVisibleRequest)
 		_, err = f.p.requestStatus("ta", f.channelID)
 		require.ErrorIs(t, err, errNoVisibleRequest)
+	})
+
+	t.Run("a type that is turned off reads as not found", func(t *testing.T) {
+		f := newStatusFixture(t, 0, oct5, oct3)
+		config := listConfig()
+		config.AllowChannelAdminRequests = false
+		f.p.setConfiguration(config)
+
+		_, err := f.p.requestStatus("u1", f.adminID)
+		require.ErrorIs(t, err, errNoVisibleRequest)
+		_, err = f.p.requestStatus("u1", f.channelID)
+		require.NoError(t, err)
 	})
 
 	t.Run("a request the user can't see is not looked up further", func(t *testing.T) {
@@ -212,6 +256,7 @@ func TestRequestStatus(t *testing.T) {
 	t.Run("anyone else gets the same answer as for a missing request", func(t *testing.T) {
 		f := newStatusFixture(t, 0, oct5, oct3)
 		f.api.On("GetUser", "u2").Return(&model.User{Id: "u2", Roles: "system_user"}, nil)
+		f.api.On("GetTeamMember", "team1", "u2").Return(&model.TeamMember{TeamId: "team1", UserId: "u2"}, nil)
 		f.api.On("GetUser", "ghost").Return(nil, testAppErr("not found"))
 
 		for _, call := range []struct{ user, id string }{
@@ -229,7 +274,7 @@ func TestRequestStatus(t *testing.T) {
 		api := &plugintest.API{}
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(listConfig())
 		id := model.NewId()
 		api.On("KVGet", kvRequestPrefix+id).Return(nil, testAppErr("kv down"))
 
@@ -270,7 +315,7 @@ func TestExecuteCommand_List(t *testing.T) {
 	t.Run("lists the user's requests", func(t *testing.T) {
 		f := newStatusFixture(t, 0, oct5, oct3)
 
-		resp := runCommand(f.p, "/channel-request list")
+		resp := runCommand(f.p, "/mattermost-request-hub list")
 
 		require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 		lines := strings.Split(resp.Text, "\n")
@@ -284,17 +329,27 @@ func TestExecuteCommand_List(t *testing.T) {
 		api := &plugintest.API{}
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(listConfig())
 		fakeKV(api)
 
-		require.Equal(t, "You have no pending requests.", runCommand(p, "/channel-request list").Text)
+		require.Equal(t, "You have no pending channel or Channel Admin requests.", runCommand(p, "/mattermost-request-hub list").Text)
+	})
+
+	t.Run("both types turned off", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		p.setConfiguration(&configuration{})
+
+		// No KV calls are mocked, so a read would have panicked.
+		require.Equal(t, listRequestsDisabledMsg, runCommand(p, "/mattermost-request-hub list").Text)
 	})
 
 	t.Run("long lists are capped", func(t *testing.T) {
 		api := &plugintest.API{}
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(listConfig())
 		store := fakeKV(api)
 		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng"}, nil)
 		var entries []pendingEntry
@@ -305,7 +360,7 @@ func TestExecuteCommand_List(t *testing.T) {
 		}
 		store[pendingListKey(pendingKindChannel, "u1")] = recordJSON(t, entries)
 
-		lines := strings.Split(runCommand(p, "/channel-request list").Text, "\n")
+		lines := strings.Split(runCommand(p, "/mattermost-request-hub list").Text, "\n")
 
 		require.Len(t, lines, maxListedRequests+2)
 		require.Equal(t, "- ...and 3 more", lines[len(lines)-1])
@@ -316,10 +371,10 @@ func TestExecuteCommand_List(t *testing.T) {
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(listConfig())
 		api.On("KVGet", mock.Anything).Return(nil, testAppErr("kv down"))
 
-		require.Equal(t, "Could not load your requests. Please try again.", runCommand(p, "/channel-request list").Text)
+		require.Equal(t, "Could not load your requests. Please try again.", runCommand(p, "/mattermost-request-hub list").Text)
 	})
 }
 
@@ -340,9 +395,17 @@ func TestListMyRequestsTool(t *testing.T) {
 
 		require.Equal(t, []MCPRequest{
 			{ID: f.adminID, Kind: "channel_admin", Summary: "Channel Admin for @nom in ~town", State: "expired", CreatedAt: "2026-10-03T00:00:00Z", ExpiresAt: "2026-10-10T00:00:00Z"},
-			{ID: f.channelID, Kind: "channel", Summary: `Channel **X \*bold\*** (` + "`team-x`" + `) in Eng \(eng\)`, State: "expired", CreatedAt: "2026-10-05T00:00:00Z", ExpiresAt: "2026-10-12T00:00:00Z"},
+			{ID: f.channelID, Kind: "channel", Summary: `Channel **X \*bold\*** (` + "`team-x`" + `) in Eng`, State: "expired", CreatedAt: "2026-10-05T00:00:00Z", ExpiresAt: "2026-10-12T00:00:00Z"},
 		}, out.Requests)
 		require.Zero(t, out.More)
+	})
+
+	t.Run("both types turned off", func(t *testing.T) {
+		stubMCP(t)
+		p := newMCPTestPlugin(t, &plugintest.API{}, &configuration{})
+		p.setConfiguration(&configuration{EnableMCP: true})
+
+		require.Equal(t, listRequestsDisabledMsg, mcpToolError(t, callMCPTool(t, p, "u1", "list_my_requests", nil)))
 	})
 
 	t.Run("a load failure", func(t *testing.T) {

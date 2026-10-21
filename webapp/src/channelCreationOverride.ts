@@ -224,7 +224,7 @@ function processDocument(store: Store): void {
 //   2. Throttled document-scan on any body mutation.
 //   3. Capture-phase click listener that routes both the relabeled
 //      native item AND our injected item to the request modal.
-export function installChannelCreationOverride(store: Store): void {
+export function installChannelCreationOverride(store: Store): () => void {
     debug('installing channel-creation override');
 
     // Initial pass — covers the case where the menu was already open
@@ -241,8 +241,10 @@ export function installChannelCreationOverride(store: Store): void {
     // scan; this keeps the observer from running querySelectorAll over
     // the whole document on essentially every frame.
     let scheduled = false;
+    let rafId = 0;
+    let disposed = false;
     const observer = new MutationObserver((mutations) => {
-        if (scheduled) {
+        if (scheduled || disposed) {
             return;
         }
         const addedElements = mutations.some((m) =>
@@ -252,9 +254,12 @@ export function installChannelCreationOverride(store: Store): void {
             return;
         }
         scheduled = true;
-        requestAnimationFrame(() => {
+        rafId = requestAnimationFrame(() => {
+            rafId = 0;
             scheduled = false;
-            processDocument(store);
+            if (!disposed) {
+                processDocument(store);
+            }
         });
     });
     observer.observe(document.body, {childList: true, subtree: true});
@@ -262,47 +267,60 @@ export function installChannelCreationOverride(store: Store): void {
     // Capture-phase click routing. Matches:
     //   - Our injected item (by data attribute)
     //   - The relabeled native item (by id or REQUEST_LABEL text)
-    document.addEventListener(
-        'click',
-        (event) => {
-            if (isCurrentUserAdmin(store)) {
-                return;
-            }
-            const target = event.target as HTMLElement | null;
-            if (!target) {
-                return;
-            }
+    const onClick = (event: MouseEvent) => {
+        if (isCurrentUserAdmin(store)) {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (!target) {
+            return;
+        }
 
-            const injected = target.closest<HTMLElement>(`[${INJECTED_MARK}]`);
-            let match: HTMLElement | null = injected;
+        const injected = target.closest<HTMLElement>(`[${INJECTED_MARK}]`);
+        let match: HTMLElement | null = injected;
 
-            if (!match) {
-                const byId = target.closest<HTMLElement>(`#${NATIVE_ITEM_ID}`);
-                if (byId) {
-                    match = byId;
-                } else {
-                    // Text-match fallback for a relabeled native item that
-                    // lacks a stable id. Scope it to the "+" menu (via
-                    // findMenuRoot) so we don't hijack an unrelated element
-                    // elsewhere in the UI that happens to read
-                    // "Request new channel".
-                    const nearest = target.closest<HTMLElement>(ITEM_SELECTOR);
-                    if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL && findMenuRoot(nearest)) {
-                        match = nearest;
-                    }
+        if (!match) {
+            const byId = target.closest<HTMLElement>(`#${NATIVE_ITEM_ID}`);
+            if (byId) {
+                match = byId;
+            } else {
+                // Text-match fallback for a relabeled native item that
+                // lacks a stable id. Scope it to the "+" menu (via
+                // findMenuRoot) so we don't hijack an unrelated element
+                // elsewhere in the UI that happens to read
+                // "Request new channel".
+                const nearest = target.closest<HTMLElement>(ITEM_SELECTOR);
+                if (nearest && (nearest.textContent ?? '').trim() === REQUEST_LABEL && findMenuRoot(nearest)) {
+                    match = nearest;
                 }
             }
+        }
 
-            if (!match) {
-                return;
-            }
+        if (!match) {
+            return;
+        }
 
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-            store.dispatch(openRequestModal());
-            debug('routed click to Request modal', {viaInjected: Boolean(injected)});
-        },
-        true,
-    );
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+        store.dispatch(openRequestModal());
+        debug('routed click to Request modal', {viaInjected: Boolean(injected)});
+    };
+    document.addEventListener('click', onClick, true);
+
+    return () => {
+        disposed = true;
+        document.removeEventListener('click', onClick, true);
+        observer.disconnect();
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+        }
+
+        // Remove injected menu items (and their click listeners) so a disabled
+        // plugin cannot leave a stale "Request new channel" entry that still
+        // dispatches into an unmounted modal.
+        document.querySelectorAll(`[${INJECTED_MARK}]`).forEach((el) => el.remove());
+        debug('removed channel-creation override');
+    };
 }
