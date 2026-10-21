@@ -44,15 +44,20 @@ func (s twoStepState) withApproval(step approverStep, userID string, atMillis in
 // which pools the clicking user qualifies for. It returns the step the click
 // fills (when fill is true), or a user-facing reason it can't (when fill is
 // false). Rules:
+//   - The requester cannot approve any step of their own request.
 //   - Security must be filled before system (ordered two-step review).
 //   - A user may fill only a step they qualify for that isn't already done.
 //   - The two approvals must come from two DISTINCT users, so a user who already
 //     approved one step can't fill the other.
 //   - Dual-role users (security + system): first click fills security; a
 //     different dual-role (or system-only) user fills system next.
-func planApproval(state twoStepState, canSecurity, canSystem bool, userID string) (step approverStep, fill bool, reason string) {
+func planApproval(state twoStepState, canSecurity, canSystem bool, userID, requesterID string) (step approverStep, fill bool, reason string) {
 	if state.complete() {
 		return 0, false, "This request has already been fully approved."
+	}
+
+	if requesterID != "" && userID == requesterID {
+		return 0, false, "You can't approve your own request. Another approver needs to review it."
 	}
 
 	// Same person cannot fill both steps.

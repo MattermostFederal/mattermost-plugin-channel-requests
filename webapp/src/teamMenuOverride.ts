@@ -427,6 +427,16 @@ function injectRequestTeamAddButton(store: Store): void {
 export function installTeamSidebarAddOverride(store: Store): () => void {
     debug('installing team-sidebar + override');
 
+    // Cache AllowTeamRequests so the native Create Team + is not cancelled
+    // before we know whether the request flow should intercept it.
+    let teamRequestsEnabled: boolean | null = null;
+    const refreshTeamEnabled = () => {
+        fetchEnabledRequestTypes().then((enabled) => {
+            teamRequestsEnabled = enabled.team;
+        });
+    };
+    refreshTeamEnabled();
+
     // Always restore a + when Mattermost hid Create Team (no CREATE_TEAM).
     // AllowTeamRequests only gates the modal on click — not button visibility —
     // so an older saved "off" config can't leave the rail empty.
@@ -465,17 +475,19 @@ export function installTeamSidebarAddOverride(store: Store): () => void {
             }
         }
 
+        // When team requests are disabled, leave the native Create Team click alone.
+        if (teamRequestsEnabled === false) {
+            return;
+        }
+        if (teamRequestsEnabled === null) {
+            refreshTeamEnabled();
+            return;
+        }
+
         event.preventDefault();
         event.stopImmediatePropagation();
-
-        fetchEnabledRequestTypes().then((enabled) => {
-            if (!enabled.team) {
-                debug('team requests disabled — ignoring team-sidebar + click');
-                return;
-            }
-            store.dispatch(openTeamCreationModal());
-            debug('routed team-sidebar + (create_team) to Request Team modal');
-        });
+        store.dispatch(openTeamCreationModal());
+        debug('routed team-sidebar + (create_team) to Request Team modal');
     };
     document.addEventListener('click', onClick, true);
 

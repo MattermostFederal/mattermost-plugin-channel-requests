@@ -132,7 +132,7 @@ func TestPlanAndApply_UserGroupDualRoleEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canSys, "system admin must qualify for system")
 
-	step, fill, reason := planApproval(twoStepState{}, canSec, canSys, dual.Id)
+	step, fill, reason := planApproval(twoStepState{}, canSec, canSys, dual.Id, "u_req")
 	require.True(t, fill, reason)
 	require.Equal(t, stepSecurity, step)
 
@@ -148,7 +148,7 @@ func TestPlanAndApply_UserGroupDualRoleEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	canSys2, err := p.canApproveStep(dual2, stepSystem)
 	require.NoError(t, err)
-	step2, fill2, reason2 := planApproval(state, canSec2, canSys2, dual2.Id)
+	step2, fill2, reason2 := planApproval(state, canSec2, canSys2, dual2.Id, "u_req")
 	require.True(t, fill2, reason2)
 	require.Equal(t, stepSystem, step2)
 	final := p.applyTwoStepApproval(state, step2, dual2, 200)

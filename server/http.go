@@ -1630,7 +1630,7 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		return
 	}
 
-	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID)
+	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
 	if !fill {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: reason})
 		return
@@ -1973,7 +1973,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		return
 	}
 
-	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID)
+	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
 	if !fill {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: reason})
 		return
