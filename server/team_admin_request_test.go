@@ -136,6 +136,40 @@ func TestPromoteTeamAdmins_AddsMemberAndRole(t *testing.T) {
 	api.AssertCalled(t, "UpdateTeamMemberRoles", "team1", "u2", teamAdminRoles)
 }
 
+func TestPromoteTeamAdmins_ReseedsPerTeamApprovalChannel(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{PerTeamApprovalChannels: true})
+
+	api.On("CreateTeamMember", "team1", "u1").Return(&model.TeamMember{}, nil)
+	api.On("UpdateTeamMemberRoles", "team1", "u1", teamAdminRoles).Return(&model.TeamMember{}, nil)
+
+	// hasActiveTeamApprovers → true via new Team Admin
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{
+		{TeamId: "team1", UserId: "u1", Roles: "team_user team_admin", SchemeAdmin: true},
+	}, nil)
+
+	existing := &model.Channel{Id: "ch-req", TeamId: "team1", Name: "mattermost-channel-requests"}
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).Return(existing, nil)
+	api.On("AddChannelMember", "ch-req", "u1").Return(&model.ChannelMember{}, nil)
+	api.On("GetChannelSidebarCategories", "u1", "team1").Return(&model.OrderedSidebarCategories{
+		Categories: []*model.SidebarCategoryWithChannels{{
+			SidebarCategory: model.SidebarCategory{DisplayName: "Mattermost: Request Hub"},
+			Channels:        []string{"ch-req"},
+		}},
+	}, nil)
+	api.On("GetUsersInChannel", "ch-req", "username", 0, 200).Return([]*model.User{{Id: "u1"}}, nil).Maybe()
+	api.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	p.promoteTeamAdmins(&teamAdminRequest{TeamID: "team1", NomineeIDs: []string{"u1"}})
+
+	api.AssertCalled(t, "AddChannelMember", "ch-req", "u1")
+}
+
 func TestPromoteTeamAdmins_MemberAddFailureStillAttemptsRoleGrant(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)

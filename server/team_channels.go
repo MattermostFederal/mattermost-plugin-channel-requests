@@ -615,10 +615,35 @@ func (p *Plugin) placeChannelMembersInManagedCategory(ch *model.Channel) int {
 	return count
 }
 
+// syncTeamApprovalChannelAfterAdminChange creates (if needed) and reseeds the
+// per-team channel-requests channel when PerTeamApprovalChannels is on and the
+// team has at least one local approver. Used after team create and after Team
+// Admin promotion — both paths where membership/roles change without a join hook.
+func (p *Plugin) syncTeamApprovalChannelAfterAdminChange(teamID string) {
+	if teamID == "" || !p.getConfiguration().PerTeamApprovalChannels {
+		return
+	}
+	if !p.hasActiveTeamApprovers(teamID) {
+		return
+	}
+	ch, err := p.ensureTeamApprovalChannel(teamID)
+	if err != nil {
+		p.API.LogWarn("failed to ensure per-team approval channel after admin change",
+			"team_id", teamID, "error", err.Error())
+		return
+	}
+	if ch == nil {
+		return
+	}
+	p.addTeamApproversToChannel(teamID, ch.Id)
+	p.placeChannelMembersInManagedCategory(ch)
+}
+
 // UserHasJoinedTeam ensures that a Team Admin or System Admin who joins (or is
 // added to) a team is automatically added to the team's approval channel. This
-// handles new team creation and explicit admin additions. It does NOT handle
-// promotion of an existing member to team admin.
+// handles new team creation and explicit admin additions. Promotion of an
+// existing member to Team Admin is handled by syncTeamApprovalChannelAfterAdminChange
+// (called from promoteTeamAdmins / createTeamForRequest).
 func (p *Plugin) UserHasJoinedTeam(_ *plugin.Context, teamMember *model.TeamMember, actor *model.User) {
 	if !p.getConfiguration().PerTeamApprovalChannels {
 		return

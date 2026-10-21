@@ -32,7 +32,7 @@ func TestPlanApproval(t *testing.T) {
 	t.Run("fresh request, system-only must wait for security first", func(t *testing.T) {
 		_, fill, reason := planApproval(twoStepState{}, false, true, "u1", "u_req")
 		require.False(t, fill)
-		require.Contains(t, reason, "security approver first")
+		require.Contains(t, reason, "Security review must happen first")
 	})
 
 	t.Run("dual-role on a fresh request fills security first", func(t *testing.T) {
@@ -67,14 +67,14 @@ func TestPlanApproval(t *testing.T) {
 	t.Run("requester cannot approve their own request", func(t *testing.T) {
 		_, fill, reason := planApproval(twoStepState{}, true, true, "u_req", "u_req")
 		require.False(t, fill)
-		require.Contains(t, reason, "own request")
+		require.Contains(t, reason, "cannot approve it")
 	})
 
 	t.Run("requester cannot approve system step either", func(t *testing.T) {
 		state := twoStepState{SecurityApproverID: "u_sec", SecurityApprovedAt: 1}
 		_, fill, reason := planApproval(state, true, true, "u_req", "u_req")
 		require.False(t, fill)
-		require.Contains(t, reason, "own request")
+		require.Contains(t, reason, "cannot approve it")
 	})
 
 	t.Run("non-approver is rejected", func(t *testing.T) {
@@ -102,4 +102,28 @@ func TestApproveButtonLabel(t *testing.T) {
 	// The Approve button is always just "Approve" — the per-step status lives
 	// in the card's Approvals field, and the button is shared by all viewers.
 	require.Equal(t, "Approve", approveButtonLabel)
+}
+
+func TestTwoStepApproveBlock(t *testing.T) {
+	t.Run("self-approve paints card and system ephemeral", func(t *testing.T) {
+		title, card, eph, paint := twoStepApproveBlock("alice", "You created this request — you cannot approve it. Another security or system approver must review this ticket.")
+		require.True(t, paint)
+		require.Contains(t, title, "Requester cannot approve")
+		require.Contains(t, card, "@alice")
+		require.Contains(t, eph, "You created this request — you cannot approve it")
+		require.Contains(t, eph, "ticket card now shows that reminder")
+	})
+	t.Run("security first paints card and system ephemeral", func(t *testing.T) {
+		title, card, eph, paint := twoStepApproveBlock("bob", "Security review must happen first. A security approver has to click Approve before a system approver can finish this ticket.")
+		require.True(t, paint)
+		require.Contains(t, title, "Security review required first")
+		require.Contains(t, card, "@bob")
+		require.Contains(t, eph, "Security review required first")
+		require.Contains(t, eph, "ticket card now shows that reminder")
+	})
+	t.Run("other reasons do not paint card", func(t *testing.T) {
+		_, _, eph, paint := twoStepApproveBlock("bob", "You don't have permission to approve this request.")
+		require.False(t, paint)
+		require.Contains(t, eph, "permission")
+	})
 }

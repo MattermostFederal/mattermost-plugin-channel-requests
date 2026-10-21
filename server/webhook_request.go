@@ -365,10 +365,17 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 }
 
 func (p *Plugin) webhookApprovalAttachmentWithNotice(req *webhookRequest, requester *model.User, channel *model.Channel, notice string) *model.MessageAttachment {
+	return p.webhookApprovalAttachmentWithTitledNotice(req, requester, channel, "⚠️ Action needed", notice)
+}
+
+func (p *Plugin) webhookApprovalAttachmentWithTitledNotice(req *webhookRequest, requester *model.User, channel *model.Channel, title, notice string) *model.MessageAttachment {
 	att := p.webhookApprovalAttachment(req, requester, channel)
 	att.Color = "#D24B4E"
+	if title == "" {
+		title = "⚠️ Action needed"
+	}
 	att.Fields = append([]*model.MessageAttachmentField{
-		{Title: "⚠️ Action needed", Value: notice, Short: false},
+		{Title: title, Value: notice, Short: false},
 	}, att.Fields...)
 	return att
 }

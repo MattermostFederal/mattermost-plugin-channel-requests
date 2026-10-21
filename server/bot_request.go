@@ -259,10 +259,17 @@ func (p *Plugin) botApprovalAttachment(req *botRequest, requester *model.User) *
 }
 
 func (p *Plugin) botApprovalAttachmentWithNotice(req *botRequest, requester *model.User, notice string) *model.MessageAttachment {
+	return p.botApprovalAttachmentWithTitledNotice(req, requester, "⚠️ Action needed", notice)
+}
+
+func (p *Plugin) botApprovalAttachmentWithTitledNotice(req *botRequest, requester *model.User, title, notice string) *model.MessageAttachment {
 	att := p.botApprovalAttachment(req, requester)
 	att.Color = "#D24B4E"
+	if title == "" {
+		title = "⚠️ Action needed"
+	}
 	att.Fields = append([]*model.MessageAttachmentField{
-		{Title: "⚠️ Action needed", Value: notice, Short: false},
+		{Title: title, Value: notice, Short: false},
 	}, att.Fields...)
 	return att
 }

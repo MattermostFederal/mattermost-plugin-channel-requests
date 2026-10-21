@@ -57,7 +57,7 @@ func planApproval(state twoStepState, canSecurity, canSystem bool, userID, reque
 	}
 
 	if requesterID != "" && userID == requesterID {
-		return 0, false, "You can't approve your own request. Another approver needs to review it."
+		return 0, false, "You created this request — you cannot approve it. Another security or system approver must review this ticket."
 	}
 
 	// Same person cannot fill both steps.
@@ -70,7 +70,7 @@ func planApproval(state twoStepState, canSecurity, canSystem bool, userID, reque
 			return stepSecurity, true, ""
 		}
 		if canSystem {
-			return 0, false, "This request needs a security approver first. After security signs off, a system approver can complete it."
+			return 0, false, "Security review must happen first. A security approver has to click Approve before a system approver can finish this ticket."
 		}
 		return 0, false, "You don't have permission to approve this request."
 	}

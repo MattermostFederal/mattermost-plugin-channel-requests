@@ -169,19 +169,11 @@ func (p *Plugin) createTeamForRequest(req *teamCreationRequest) (*model.Team, er
 			p.API.LogWarn("failed to promote requester to team admin in new team", "team_id", team.Id, "user_id", req.RequesterID, "error", appErr.Error())
 		}
 	}
-	// Always stand up the per-team channel-requests channel when the feature is
-	// on — a newly created team with a Team Admin (or System Admin requester)
-	// should receive channel requests locally, and that channel must land in
-	// the managed "Mattermost: Request Hub" category like every other ticket channel.
-	if p.getConfiguration().PerTeamApprovalChannels {
-		if ch, err := p.ensureTeamApprovalChannel(team.Id); err != nil {
-			p.API.LogWarn("failed to create per-team approval channel after team creation",
-				"team_id", team.Id, "error", err.Error())
-		} else if ch != nil {
-			p.addTeamApproversToChannel(team.Id, ch.Id)
-			p.placeChannelMembersInManagedCategory(ch)
-		}
-	}
+	// Stand up the per-team channel-requests channel only when someone can
+	// monitor it (Team Admin or System Admin on the team). Creating it with no
+	// local approvers leaves an empty private channel; promoteTeamAdmins /
+	// UserHasJoinedTeam create and seed it once the first approver exists.
+	p.syncTeamApprovalChannelAfterAdminChange(team.Id)
 	return team, nil
 }
 

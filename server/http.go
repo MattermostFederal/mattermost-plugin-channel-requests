@@ -1566,7 +1566,13 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		return
 	}
 
-	requestID, _ := request.Context[actionContextRequestID].(string)
+	requestID := p.actionRequestID(&request)
+	if requestID == "" {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			EphemeralText: "Could not identify that request. Refresh the channel and try Approve again.",
+		})
+		return
+	}
 	key := kvBotRequestPrefix + requestID
 	req, rawReq, err := p.loadBotRequest(requestID)
 	if err != nil {
@@ -1632,7 +1638,16 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 
 	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
 	if !fill {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: reason})
+		cardRequester := requester
+		if cardRequester == nil {
+			cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
+		}
+		title, cardNotice, ephemeral, paintCard := twoStepApproveBlock(actingUser.Username, reason)
+		var att *model.MessageAttachment
+		if paintCard {
+			att = p.botApprovalAttachmentWithTitledNotice(req, cardRequester, title, cardNotice)
+		}
+		p.respondTwoStepApproveBlocked(w, userID, request.PostId, ephemeral, p.botApprovalHeader(), att)
 		return
 	}
 
@@ -1908,7 +1923,13 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		return
 	}
 
-	requestID, _ := request.Context[actionContextRequestID].(string)
+	requestID := p.actionRequestID(&request)
+	if requestID == "" {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			EphemeralText: "Could not identify that request. Refresh the channel and try Approve again.",
+		})
+		return
+	}
 	key := kvWebhookRequestPrefix + requestID
 	req, rawReq, err := p.loadWebhookRequest(requestID)
 	if err != nil {
@@ -1975,7 +1996,20 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 
 	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
 	if !fill {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: reason})
+		cardRequester := requester
+		if cardRequester == nil {
+			cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
+		}
+		cardChannel := channel
+		if cardChannel == nil {
+			cardChannel = &model.Channel{DisplayName: "unknown channel"}
+		}
+		title, cardNotice, ephemeral, paintCard := twoStepApproveBlock(actingUser.Username, reason)
+		var att *model.MessageAttachment
+		if paintCard {
+			att = p.webhookApprovalAttachmentWithTitledNotice(req, cardRequester, cardChannel, title, cardNotice)
+		}
+		p.respondTwoStepApproveBlocked(w, userID, request.PostId, ephemeral, p.webhookApprovalHeader(), att)
 		return
 	}
 
@@ -2155,6 +2189,53 @@ func (p *Plugin) handleConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// actionRequestID reads the pending request id from the button click context,
+// falling back to the Approve/Deny integration context stored on the post.
+// Some interactive Updates stripped click Context and left "Invalid action id"
+// / no-op Approves on the system step — the post fallback recovers those.
+func (p *Plugin) actionRequestID(request *model.PostActionIntegrationRequest) string {
+	if request == nil {
+		return ""
+	}
+	if id := contextString(request.Context, actionContextRequestID); id != "" {
+		return id
+	}
+	if request.PostId == "" {
+		return ""
+	}
+	post, appErr := p.API.GetPost(request.PostId)
+	if appErr != nil || post == nil {
+		return ""
+	}
+	att := extractFirstAttachment(post)
+	if att == nil {
+		return ""
+	}
+	for _, a := range att.Actions {
+		if a == nil || a.Integration == nil {
+			continue
+		}
+		if id := contextString(a.Integration.Context, actionContextRequestID); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func contextString(ctx map[string]any, key string) string {
+	if ctx == nil {
+		return ""
+	}
+	switch v := ctx[key].(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
 // repaintedApprovalPost replaces the approval card's message and attachment
 // while keeping the post identity (used after a partial two-step approval).
 func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model.MessageAttachment) *model.Post {
@@ -2166,6 +2247,65 @@ func (p *Plugin) repaintedApprovalPost(postID, message string, attachment *model
 	post.DelProp("attachments")
 	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
 	return post
+}
+
+// twoStepApproveBlock returns the card banner (only for self-approve /
+// security-first), the System "(Only visible to you)" channel message, and
+// whether to paint the card. Other reject reasons stay ephemeral-only.
+func twoStepApproveBlock(actingUsername, reason string) (cardTitle, cardNotice, ephemeral string, paintCard bool) {
+	if actingUsername == "" {
+		actingUsername = "someone"
+	}
+	switch {
+	case strings.Contains(reason, "cannot approve it"):
+		return "🚫 Requester cannot approve:",
+			fmt.Sprintf("**@%s** (who created this ticket) clicked **Approve**. Requesters cannot approve their own request — another security or system approver must review it.", actingUsername),
+			"🚫 You created this request — you cannot approve it. The ticket card now shows that reminder for everyone. Ask another approver to review it.",
+			true
+	case strings.Contains(reason, "Security review must happen first"),
+		strings.Contains(reason, "security approver first"):
+		return "🔒 Security review required first:",
+			fmt.Sprintf("**@%s** clicked **Approve**. A **security approver** must sign off first — after security approves, a system approver can complete this ticket.", actingUsername),
+			"🔒 Security review required first. A security approver has to click Approve before a system approver can finish this ticket. The ticket card now shows that reminder for everyone.",
+			true
+	default:
+		return "", "", "⚠️ " + reason, false
+	}
+}
+
+// respondTwoStepApproveBlocked paints the card banner when attachment is set,
+// and always posts a System "(Only visible to you)" message in the approval
+// channel for the clicker (same style for self-approve and security-first).
+//
+// Important: do NOT call UpdatePost here. Returning Update in the action
+// response is how Mattermost persists the card; an extra UpdatePost double-
+// writes the post and has broken Approve/Deny action IDs so later clicks
+// (especially the system step) no longer apply.
+func (p *Plugin) respondTwoStepApproveBlocked(w http.ResponseWriter, userID, postID, ephemeral, header string, attachment *model.MessageAttachment) {
+	var update *model.Post
+	if attachment != nil {
+		update = p.repaintedApprovalPost(postID, header, attachment)
+		if update != nil && update.Id == "" {
+			// Never return an Update without a post id — Mattermost surfaces
+			// that as "Invalid action id" and the buttons stop working.
+			update = nil
+		}
+	}
+
+	// Channel-level System ephemeral (no RootId / no bot UserId) so it appears
+	// under the ticket in the channel as "System (Only visible to you)".
+	if post, appErr := p.API.GetPost(postID); appErr == nil && post != nil && post.ChannelId != "" {
+		p.API.SendEphemeralPost(userID, &model.Post{
+			ChannelId: post.ChannelId,
+			Message:   ephemeral,
+		})
+	}
+
+	resp := model.PostActionIntegrationResponse{EphemeralText: ephemeral}
+	if update != nil {
+		resp.Update = update
+	}
+	writeJSON(w, resp)
 }
 
 // respondClaimConflict writes a retry ephemeral when the pending record still

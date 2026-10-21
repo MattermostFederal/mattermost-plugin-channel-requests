@@ -122,7 +122,10 @@ func (p *Plugin) sendTeamAdminTicketCreatedDM(req *teamAdminRequest, requester *
 }
 
 // promoteTeamAdmins adds each nominee to the team (ensuring membership) then
-// grants the team_admin scheme role.
+// grants the team_admin scheme role. After promotion it reseeds the per-team
+// channel-requests channel: UserHasJoinedTeam only runs on join, not when an
+// existing member is promoted, so newly minted Team Admins would otherwise
+// never see that channel.
 func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) {
 	for _, userID := range req.NomineeIDs {
 		if userID == "" {
@@ -135,6 +138,7 @@ func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) {
 			p.API.LogWarn("failed to promote nominee to team admin", "team_id", req.TeamID, "user_id", userID, "error", appErr.Error())
 		}
 	}
+	p.syncTeamApprovalChannelAfterAdminChange(req.TeamID)
 }
 
 // postTeamAdminApprovalRequest posts to the team requests approval channel.
