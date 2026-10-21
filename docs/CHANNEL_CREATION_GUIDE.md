@@ -1,17 +1,22 @@
 # Channel Requests — User Guide
 
-The Channel Requests plugin lets members **request** a new channel instead of
+Mattermost Request Hub lets members **request** a new channel instead of
 creating one directly. The request goes to an approver; on approval the channel
-is created, the requested members and Channel Admins are added, and everyone
-added gets an @-mention welcome message.
+is created, the requested members and Channel Admins are added, optionally placed
+in a sidebar category, and everyone added gets an @-mention welcome message.
 
-> This is the companion to the [Channel Admin Requests guide](CHANNEL_ADMIN_GUIDE.md).
-> *That* guide is about requesting **admin rights on an existing** channel; *this*
-> one is about requesting a **brand-new** channel.
+> Companion guides: [Channel Admin](CHANNEL_ADMIN_GUIDE.md) ·
+> [teams](TEAM_REQUEST_GUIDE.md) · [bots](BOT_REQUEST_GUIDE.md) ·
+> [webhooks](WEBHOOK_REQUEST_GUIDE.md) · [Admin Guide](admin-guide.md).
+>
+> In Mattermost, open the full in-app guide anytime with
+> **`/mattermost-request-hub docs`**.
 
-This guide covers three roles:
+This guide covers:
 
 - [Requesting a channel](#requesting-a-channel) — any member
+- [Requesting from the command line](#requesting-from-the-command-line): skip the form
+- [Messaging while a request is pending](#messaging-while-a-request-is-pending) — two-way threads
 - [Approving requests](#approving-requests) — approvers
 - [Admin setup](#admin-setup) — system admins
 
@@ -19,41 +24,39 @@ This guide covers three roles:
 
 ## Requesting a channel
 
-There are a few ways to open the request form, and they all open the same
-window.
+Same form from every entry point.
 
-### 1. From the "+" in the sidebar
+### How to open
 
-Click the **+** at the top of the channel sidebar and choose **Request new
-channel**. For members who can't create channels directly, Mattermost's native
-"Create new channel" action is automatically relabeled to this.
+- **+ menu:** channel sidebar **+** → **Request new channel** (native “Create new channel” is relabeled when members can’t create channels directly)
+- **Hub:** right App Bar **plug** → Requests → **Request a Channel** (if several plugins share the strip, pick **Requests** first; with App Bar off, the same control is a channel-header plugin button)
+- **Dropdown:** channel name → More actions → **Request a Channel**
+- **Slash:** `/mattermost-request-hub channel` (or skip the form, see
+  [Requesting from the command line](#requesting-from-the-command-line))
 
-![Request new channel in the + menu](images/mattermost-creation-plus-menu.png)
+<p>
+<img src="images/channel-request/mattermost-creation-plus-menu.png" alt="+ menu" width="240">
+<img src="images/shared/mattermost-requests-plug-appbar.png" alt="Right App Bar (plug)" width="56">
+<img src="images/shared/mattermost-request-hub.png" alt="Request Hub" width="440">
+</p>
 
-### 2. From the channel header
+> Tip: **`/mattermost-request-hub docs`** opens this documentation in a simple
+> browser page (all request types in one place).
 
-Click the **Request Channel** icon in the channel header toolbar — same form as
-the + menu.
+### Form
 
-### 3. From the slash command
-
-Type `/channel-request` in any channel to open the request dialog. To request a
-channel without the form, see
-[Requesting from the command line](#requesting-from-the-command-line) below.
-
-### Filling out the request
-
-![The Request a Channel form](images/mattermost-creation-modal.png)
+<img src="images/channel-request/mattermost-creation-modal.png" alt="Request a Channel form" width="480">
 
 | Field | What it does |
 |-------|--------------|
-| **Domain prefix** | Required. Pick the category your admin configured — the final URL is `<prefix><suffix>`. |
+| **Domain prefix** | Required. Pick the category your admin configured; the final URL is `<prefix><suffix>`. |
 | **Channel name** | The display name people see (e.g. *SRE Team*). Required. |
 | **URL suffix / URL name** | Optional. Leave blank to auto-generate from the channel name. A live **Preview** shows the final URL (e.g. `ops-sre-team`). |
 | **Purpose** | Optional short description of the channel. |
 | **Visibility** | **Public** (anyone can join) or **Private** (invite only). |
 | **Members to add** | Search and add users who become regular members on approval. |
 | **Channel Admins to add** | Search and add users who become Channel Admins on approval. |
+| **Sidebar category** | Optional. Pick an existing category or type a new name. On approval the channel is placed there for you and listed members; a missing category is created automatically. |
 
 **Members vs Channel Admins:** a user can be in only one of the two lists. If you
 add someone to Channel Admins who's already a Member (or vice versa), they
@@ -66,23 +69,24 @@ message when an approver responds.
 Requests need at least one domain prefix. Until a System Admin defines one, the
 form and the slash command show: *Channel requests aren't configured yet. Ask a
 System Admin to define at least one channel prefix in System Console → Plugins →
-Channel Requests.*
+Mattermost Request Hub.*
 
 ### Requesting from the command line
 
-`/channel-request` on its own opens the request form. Add a subcommand to do the
-same things from the message box. Replies are only visible to you.
+`/mattermost-request-hub channel` (or `/mattermost-request-hub` on its own) opens
+the request form. Add a prefix, a channel name and options to request a channel
+in the current team without the form. Replies are only visible to you.
 
 | Command | What it does |
 |---------|--------------|
-| `/channel-request` | Opens the channel request form. |
-| `/channel-request create <prefix> <Channel name> [options]` | Requests a channel in the current team without the form. Options are listed below. |
-| `/channel-request admin @user [@user ...]` | Asks for those channel members to be made Channel Admins of the channel you run it in. See the [Channel Admin Requests guide](CHANNEL_ADMIN_GUIDE.md#3-from-the-slash-command). |
-| `/channel-request prefixes` | Lists the channel prefixes you can use, with each one's description and suffix rule. |
-| `/channel-request help` | Shows the usage message. |
+| `/mattermost-request-hub channel` | Opens the channel request form. |
+| `/mattermost-request-hub channel <prefix> <Channel name> [options]` | Requests a channel in the current team without the form. Options are listed below. |
+| `/mattermost-request-hub channel-admin @user [@user ...]` | Asks for those channel members to be made Channel Admins of the channel you run it in. See the [Channel Admin guide](CHANNEL_ADMIN_GUIDE.md#from-the-slash-command). |
+| `/mattermost-request-hub prefixes` | Lists the channel prefixes you can use, with each one's description and suffix rule. |
+| `/mattermost-request-hub help` | Lists every subcommand and its arguments. |
 
-For `create`, the prefix comes first, typed exactly as `/channel-request prefixes`
-lists it (for example `team-`). Then comes the channel name, which can be several
+The prefix comes first, typed exactly as `/mattermost-request-hub prefixes` lists
+it (for example `team-`). Then comes the channel name, which can be several
 words, then any options in any order. Each option takes the words up to the next
 `--`.
 
@@ -93,60 +97,85 @@ words, then any options in any order. Each option takes the words up to the next
 | `--private` | Makes the channel private. Without it the channel is public. |
 | `--members @user ...` | Users who become regular members on approval. |
 | `--admins @user ...` | Users who become Channel Admins on approval. |
+| `--category <name>` | Sidebar category to place the channel in on approval. It can be several words; a missing category is created. |
 
 For example:
 
 ```
-/channel-request create team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
-/channel-request create ops- SRE On-call --suffix sre-oncall --private
+/mattermost-request-hub channel team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
+/mattermost-request-hub channel ops- SRE On-call --suffix sre-oncall --private --category Operations
 ```
 
-The request goes through the same approval as the form, and you get the same
-confirmation. If something is wrong, such as an unknown prefix, an unknown
-`@user` or a suffix that breaks the prefix's rule, the reply says what, and
-nothing is submitted.
+The request goes through the same checks and approval as the form, and you get
+the same confirmation. If something is wrong, such as an unknown prefix, an
+unknown `@user` or a suffix that breaks the prefix's rule, the reply says what,
+and nothing is submitted. If channel requests are turned off, the command says
+so.
 
-A channel name or purpose can't contain a word that starts with `--`, and extra
-spaces or line breaks in the purpose become single spaces. Use the form if you
-need either.
+A channel name, purpose or category can't contain a word that starts with `--`,
+and extra spaces or line breaks in them become single spaces. Use the form if
+you need either.
+
+---
+
+## Messaging while a request is pending
+
+Every request opens a **linked pair of threads**: one on the approval card and
+one in a DM from the bot. Replies are relayed both ways.
+
+Use the **Thread** right-hand sidebar (open **Reply** on the card) — not a new
+top-level channel or DM message.
+
+- **Approver:** ask in the approval Thread (e.g. *Why do you need this channel?*)
+- **Requester:** see `Message from @admin:` in your DM Thread with the bot
+- **Reply:** answer in that DM Thread; the approval Thread shows `Reply from @you:`
+
+<p>
+<img src="images/shared/mattermost-thread-approver-ask.png" alt="Approval Thread" width="300">
+<img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM" width="720">
+<img src="images/shared/mattermost-thread-relay-back.png" alt="Relay back" width="300">
+</p>
+
+Threads stay usable after approve/deny for follow-ups. Messaging the bot outside
+a ticket thread gets a nudge to reply inside the specific request instead.
 
 ---
 
 ## Approving requests
 
-Approvers (System Admins, plus Team Admins of the approval team if your admin
-enabled it) receive each request in the **approval channel** with **Approve**
-and **Deny** buttons. Only a System Admin can approve a request they made
+Approvers (System Admins, the Team Admins of the team the channel is requested
+in, plus Team Admins of the approval team if your admin enabled it) receive each
+request in the **approval channel** with **Approve** and **Deny** buttons. Only a System Admin can approve a request they made
 themselves. The card names the team the channel will be created in.
 
-![A channel creation request card with Approve/Deny buttons](images/mattermost-creation-approval-card.png)
+<img src="images/channel-request/mattermost-creation-approval-card.png" alt="Channel creation approval card" width="720">
 
 - **Approve** — creates the channel, adds the requested members, promotes the
-  Channel Admins, and posts a welcome message that @-mentions everyone added.
+  Channel Admins, places the channel in the requested sidebar category (if any),
+  and posts a welcome message that @-mentions everyone added.
 - **Deny** — the request is closed and the requester is notified by DM.
 
-![The welcome message the bot posts in the new channel](images/mattermost-creation-welcome.png)
+<img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel" width="720">
 
-Requests from users on the **auto-approve list** (and from System Admins) skip
-this step — the channel is created immediately.
+Requests from **System Admins** who submit via the webapp Request Hub or modal
+skip this step, and the channel is created immediately. Requests made with the
+slash command, from its form or with arguments, always go to the approvers.
 
 ---
 
 ## Admin setup
 
-Configure the plugin in **System Console → Plugins → Channel Requests** (search
-"Channel Requests" to jump straight to it).
+Configure the plugin in **System Console → Plugins → Mattermost Request Hub**.
 
-![Finding Channel Requests in the System Console](images/mattermost-admin-settings.png)
+<img src="images/admin/mattermost-admin-settings.png" alt="System Console plugin settings" width="280">
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team whose channel receives requests. Required. |
-| **Approval channel** | The channel where Approve/Deny cards are posted. Required. |
-| **Channel domain prefixes** | The prefix list requesters pick from (see below). **At least one is required** — until one exists, requesters are told the plugin isn't configured and can't submit. |
+| **Approval team** | The team that owns plugin-managed approval channels. Required. |
+| **Allow channel requests** | Enables channel-creation entry points. |
+| **Channel domain prefixes** | **Required.** The prefix list requesters pick from (see below). An empty list rejects every channel request. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
-| **Auto-approve requests from these users** | Requests from these users skip approval. |
-| **Audit channel ID** | Optional. Posts an audit line for every approve/deny. |
+| **Per-team approval channels** | Default on. Creates `mattermost-channel-requests` in teams with a Team Admin or System Admin; those teams' channel requests go there (not the primary approval team). Ticket channels (including team-creation) live under sidebar category **Mattermost: Request Hub**. |
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Public/Private Channel** permission from the System User role (System
@@ -156,10 +185,10 @@ Configure the plugin in **System Console → Plugins → Channel Requests** (sea
 ### Domain prefixes
 
 Each prefix is one row with a **prefix**, a **description**, and a **max suffix
-length** (2–32 characters, capping the suffix only — not the prefix). A fresh
+length** (2–48 characters, capping the suffix only — not the prefix). A fresh
 install starts empty:
 
-![The domain-prefix editor, empty state](images/mattermost-admin-prefixes.png)
+<img src="images/admin/mattermost-admin-prefixes.png" alt="Domain-prefix editor, empty state" width="520">
 
 Use **Load preset** to populate the table with a starter pack — **SRE / Ops**,
 **Product org**, **Support / Success**, or **General org**. Loading a preset
@@ -167,4 +196,7 @@ updates prefixes you already have (description + max length) and appends any tha
 are missing. The **Live preview** at the bottom shows exactly what URL a request
 will produce for a given prefix and typed suffix.
 
-![Load preset open with the General org pack loaded, plus the live preview](images/mattermost-admin-prefix-preview.png)
+<img src="images/admin/mattermost-admin-prefix-preview.png" alt="Load preset and live preview" width="520">
+
+See also the [Admin Guide](admin-guide.md) and open **`/mattermost-request-hub docs`**
+in Mattermost for the bundled HTML guide.

@@ -6,7 +6,7 @@ Only the latest minor release is supported. Older releases do not receive securi
 
 ## Reporting a vulnerability
 
-**Do not report security issues via public GitHub issues.** Open a private security advisory at https://github.com/MattermostFederal/mattermost-plugin-channel-requests/security/advisories/new and one of the maintainers listed in [CODEOWNERS](./CODEOWNERS) will respond within five business days.
+**Do not report security issues via public GitHub issues.** Open a private security advisory at https://github.com/MattermostFederal/mattermost-plugin-request-hub/security/advisories/new and one of the maintainers listed in [CODEOWNERS](./CODEOWNERS) will respond within five business days.
 
 If the reporting form is unavailable, email the primary maintainer (see `git log` for the current active contact). Please include:
 
