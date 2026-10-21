@@ -13,14 +13,14 @@ const (
 	exerciseStatus   = "status"
 )
 
-const exerciseUsage = "Usage: `/channel-request exercise populate|teardown|status`"
+const exerciseUsage = "Usage: `/mattermost-request-hub exercise populate|teardown|status`"
 
-// executeExercise routes `/channel-request exercise`. The setting is
+// executeExercise routes `/mattermost-request-hub exercise`. The setting is
 // checked first, then that the caller is a System Admin, so nobody learns
 // more than that exercise mode is off.
 func (p *Plugin) executeExercise(args *model.CommandArgs, params []string) *model.CommandResponse {
 	if !p.getConfiguration().EnableExercise {
-		return ephemeralResponse("Exercise mode is off. A System Admin can turn on **Enable exercise mode** in System Console → Plugins → Channel Requests.")
+		return ephemeralResponse("Exercise mode is off. A System Admin can turn on **Enable exercise mode** in System Console → Plugins → Mattermost Request Hub.")
 	}
 	user, appErr := p.API.GetUser(args.UserId)
 	if appErr != nil && !isNotFound(appErr) {
@@ -28,10 +28,10 @@ func (p *Plugin) executeExercise(args *model.CommandArgs, params []string) *mode
 		return ephemeralResponse("Could not check your account. Please try again.")
 	}
 	if appErr != nil || !user.IsSystemAdmin() {
-		return ephemeralResponse("Only System Admins can run `/channel-request exercise`.")
+		return ephemeralResponse("Only System Admins can run `/mattermost-request-hub exercise`.")
 	}
 	if args.TeamId == "" {
-		return ephemeralResponse("Run `/channel-request exercise` from a channel in the team to seed.")
+		return ephemeralResponse("Run `/mattermost-request-hub exercise` from a channel in the team to seed.")
 	}
 	if len(params) != 1 {
 		return ephemeralResponse(exerciseUsage)

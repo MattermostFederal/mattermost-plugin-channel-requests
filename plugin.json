@@ -1,11 +1,11 @@
 {
-    "id": "com.mattermostfederal.channel-requests",
-    "name": "Channel Requests",
-    "description": "Lets non-admins request new channels for admin approval, with configurable naming rules and automatic member add.",
-    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests",
-    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-channel-requests/issues",
+    "id": "com.mattermostfederal.mattermost-plugin-request-hub",
+    "name": "Mattermost Request Hub",
+    "description": "Request Hub: gated requests for channel creation, Channel Admin, team creation/membership/guests, Team Admin, bots, and webhooks, routed to approvers with two-way messaging.",
+    "homepage_url": "https://github.com/MattermostFederal/mattermost-plugin-request-hub",
+    "support_url": "https://github.com/MattermostFederal/mattermost-plugin-request-hub/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.3.0",
+    "version": "0.5.2",
     "min_server_version": "11.3.0",
     "server": {
         "executables": {
@@ -19,72 +19,166 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "## Channel Requests\n\nLets non-admins **request** channels instead of creating them directly. Requests are posted to the approval channel below (or, if none is set, sent by direct message to every System Admin); System Admins (and optionally Team Admins) can approve or deny.\n\nPick the approval team + channel via the dropdowns, then configure domain prefixes so channels follow your naming convention automatically. Requesters see a form with a prefix picker + tab-complete member + Channel Admin selectors.\n\n[View the documentation](/plugins/com.mattermostfederal.channel-requests/public/help/help.html)",
-        "footer": "---\n*Plugin version: __PLUGIN_VERSION__ ([release notes](__PLUGIN_RELEASE_URL__))*",
+        "header": "## Mattermost Request Hub\n\nGovernance plugin: non-admins request channel creation, Channel Admin promotion, Team Admin promotion, team creation, team membership, guest invites, bot accounts, and incoming/outgoing webhooks, all via /mattermost-request-hub or the sidebar UI. Requests route to the appropriate approval channel; System Admins (and optionally Team Admins) approve or deny with full two-way messaging.\n\n**Bot and webhook requests use two-step approval**: one security approver and one system approver, identified by the User Attributes configured below.\n\n**Breaking change:** plugin ID changed in 0.5.0. Uninstall the previous Mattermost Request Hub / channel-requests bundle before installing this one (settings and pending KV tickets do not migrate).\n\n### Approval channel routing\n\nThe plugin auto-creates these private channels in the approval team on first use:\n\n| Request type | Auto-created channel |\n|---|---|\n| Channel creation, Channel Admin | Mattermost: Channel Requests (root or per-team) |\n| Bot account creation | mattermost-bot-requests |\n| Incoming / outgoing webhooks | mattermost-webhook-requests |\n| Team creation, Team Admin, team member, guest | mattermost-team-requests |\n| Audit log | mattermost-audit-requests |\n\nAll channels are seeded with System Admins automatically. Configure the root approval team below, then set up channel domain prefixes.\n\n[View the documentation](/plugins/com.mattermostfederal.mattermost-plugin-request-hub/public/help/docs.html)",
         "settings": [
+            {
+                "key": "AllowChannelRequests",
+                "display_name": "Allow channel requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new channels. Turn this off to hide channel-request entry points and reject submissions."
+            },
+            {
+                "key": "AllowChannelAdminRequests",
+                "display_name": "Allow channel admin requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, members can request Channel Admin promotion on an existing channel."
+            },
+            {
+                "key": "AllowTeamRequests",
+                "display_name": "Allow team requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request the creation of new teams for admin approval. Also shows a + on the team rail for non–System Admins when native Create Team is hidden."
+            },
+            {
+                "key": "AllowTeamAdminRequests",
+                "display_name": "Allow team admin requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request Team Admin promotion on a team they belong to."
+            },
+            {
+                "key": "AllowTeamMemberRequests",
+                "display_name": "Allow team member requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request that existing Mattermost users be added to a team. Routed to mattermost-team-requests for System Admin approval."
+            },
+            {
+                "key": "AllowTeamGuestRequests",
+                "display_name": "Allow team guest requests",
+                "type": "bool",
+                "default": false,
+                "help_text": "When enabled, users can request a guest invite to a team. Email is required. On approval, Mattermost emails a channel-scoped guest invitation (InviteGuestsToTeam), not a regular team signup link. Requires Guest Accounts enabled. Routed to mattermost-team-requests."
+            },
+            {
+                "key": "AllowBotTokenRequests",
+                "display_name": "Allow bot account requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request a bot account (optional token and webhooks). Bot requests require two-step approval (security + system)."
+            },
+            {
+                "key": "AllowWebhookRequests",
+                "display_name": "Allow webhook requests",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled, users can request incoming or outgoing webhooks. Webhook requests require two-step approval (security + system)."
+            },
+            {
+                "key": "TwoStepApproverMode",
+                "display_name": "Bot/webhook two-step approver mode",
+                "type": "dropdown",
+                "default": "attribute",
+                "help_text": "Bot/webhook requests require two distinct approvers: (1) a security review from the security pool, then (2) a System Admin or member of the system pool. Use User Attributes when ABAC/CPA is configured; User Groups when you manage approvers via Mattermost groups; System Admins only as a setup backup (one System Admin can complete both steps).",
+                "options": [
+                    {
+                        "display_name": "User Attributes (ABAC / CPA)",
+                        "value": "attribute"
+                    },
+                    {
+                        "display_name": "User Groups",
+                        "value": "usergroup"
+                    },
+                    {
+                        "display_name": "System Admins only (no ABAC)",
+                        "value": "system_admin"
+                    }
+                ]
+            },
+            {
+                "key": "SecurityApproverAttribute",
+                "display_name": "Security approver attribute name",
+                "type": "text",
+                "default": "security_approver",
+                "help_text": "Used when mode is User Attributes. Exact CPA / User Attribute name for the forced security review. System Admins do not auto-qualify for this step while this name is set. Manage attributes in System Console → User Management → Attributes (admin-managed or LDAP/SAML-synced)."
+            },
+            {
+                "key": "SystemApproverAttribute",
+                "display_name": "System approver attribute name",
+                "type": "text",
+                "default": "system_approver",
+                "help_text": "Used when mode is User Attributes. Exact CPA / User Attribute name for the system step. System Admins OR holders of this attribute can approve (must be a different person than the security reviewer)."
+            },
+            {
+                "key": "SecurityApproverGroup",
+                "display_name": "Security approver user group",
+                "type": "text",
+                "default": "security-approvers",
+                "placeholder": "security-approvers",
+                "help_text": "Used when mode is User Groups. Members of this group must complete the security review (System Admins do not auto-qualify for this step). Default is security-approvers. Change it freely. Clear the field only if you intentionally want System Admins to cover security during setup."
+            },
+            {
+                "key": "SystemApproverGroup",
+                "display_name": "System approver user group",
+                "type": "text",
+                "default": "system-approvers",
+                "placeholder": "system-approvers",
+                "help_text": "Used when mode is User Groups. Members of this group OR any System Admin can complete the system step (must be a different person than the security reviewer). Default is system-approvers. Change it freely. Clear the field to use System Admins only for that step."
+            },
             {
                 "key": "ApprovalTeam",
                 "display_name": "Approval team",
-                "type": "custom",
-                "help_text": "Dropdown of teams you're a member of. Pick the team containing your approval channel. Saved as the team ID, so renaming the team doesn't change where requests go."
+                "type": "custom"
             },
             {
-                "key": "ApprovalChannel",
-                "display_name": "Approval channel",
-                "type": "custom",
-                "help_text": "Dropdown of channels in the selected team. Pick the channel where new channel requests get posted for approval. Saved as the channel ID. If it isn't set, or the channel is missing or archived, requests are sent by direct message to every System Admin instead."
-            },
-            {
-                "key": "ChannelNamePrefixes",
-                "display_name": "Channel domain prefixes",
-                "type": "custom",
-                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix. Includes preset packs for common org shapes and a live preview."
+                "key": "PerTeamApprovalChannels",
+                "display_name": "Per-team approval channels",
+                "type": "bool",
+                "default": true,
+                "help_text": "When enabled (default), the plugin auto-creates a dedicated approval channel (mattermost-channel-requests) in each team that has at least one Team Admin or System Admin member. Channel and Channel Admin requests from that team route there instead of the primary approval team's root channel. All ticket channels (including Mattermost: Team Requests) are kept in a managed sidebar category named Mattermost: Request Hub."
             },
             {
                 "key": "AllowTeamAdminApprovers",
                 "display_name": "Team Admins can approve requests",
                 "type": "bool",
-                "help_text": "When enabled, Team Admins of the approval team can approve or deny channel-creation requests in addition to System Admins. Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team, whatever this is set to. Nobody but a System Admin can approve their own request."
+                "help_text": "When enabled, Team Admins of the approval team can approve or deny channel-creation requests in addition to System Admins. Team Admins of the team a channel is requested in can always act on that request. Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team, whatever this is set to. Nobody but a System Admin can approve their own request."
             },
             {
-                "key": "AutoApproveUserIDs",
-                "display_name": "Auto-approve requests from these users",
+                "key": "ChannelNamePrefixes",
+                "display_name": "Channel domain prefixes",
                 "type": "custom",
-                "help_text": "Tab-complete picker: pick users whose channel requests bypass approval and create the channel immediately. Useful for delegated managers. Saved as user IDs, so renaming an account doesn't change who is on the list."
-            },
-            {
-                "key": "AuditChannelID",
-                "display_name": "Audit channel ID (optional)",
-                "type": "text",
-                "help_text": "When set, every approve/deny action logs a message to this channel. Useful for compliance. It must be a private channel the bot can post in."
-            },
-            {
-                "key": "MaxPendingRequestsPerUser",
-                "display_name": "Pending requests per user",
-                "type": "text",
-                "default": "5",
-                "help_text": "How many requests of each kind (new channel, Channel Admin) one user can have waiting for review, up to 1000. 0 means no limit."
-            },
-            {
-                "key": "RequestExpiryDays",
-                "display_name": "Request expiry (days)",
-                "type": "text",
-                "default": "30",
-                "help_text": "Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most 3650. 0 means requests never expire. Applies to existing requests too."
+                "help_text": "Structured editor: define allowed channel prefixes (team-, project-, etc.) with descriptions and suffix rules. Requesters pick from a dropdown; the resulting channel URL is prefix+suffix."
             },
             {
                 "key": "EnableMCP",
                 "display_name": "Offer tools to Agents",
                 "type": "bool",
                 "default": false,
-                "help_text": "When true, the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests on a user's behalf, under the same rules as the slash command. Requests from System Admins and auto-approve users take effect at once. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
+                "help_text": "When true, the Mattermost Agents plugin can list prefixes, file channel and Channel Admin requests on a user's behalf and look up pending ones, under the same rules and per-type settings as the request forms. Requests from System Admins take effect at once, as they do from the webapp form. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
+            },
+            {
+                "key": "MaxPendingRequestsPerUser",
+                "display_name": "Pending requests per user",
+                "type": "text",
+                "default": "5",
+                "help_text": "How many channel requests and how many Channel Admin requests one user can have waiting for review, up to 1000. 0 means no limit. Other request types are not limited."
+            },
+            {
+                "key": "RequestExpiryDays",
+                "display_name": "Request expiry (days)",
+                "type": "text",
+                "default": "30",
+                "help_text": "Channel and Channel Admin requests older than this can no longer be approved, and stop counting toward the per-user limit. At most 3650. 0 means requests never expire. Applies to existing requests too."
             },
             {
                 "key": "EnableExercise",
                 "display_name": "Enable exercise mode",
                 "type": "bool",
                 "default": false,
-                "help_text": "Do not enable in production. When true, System Admins can run /channel-request exercise populate, teardown and status to seed marked EXERCISE data into a team: persona accounts nobody can sign in as, a channel, and pending requests on the approval cards. Approving a seeded request creates a real channel marked EXERCISE. Teardown closes the requests, archives the channels and deactivates the personas."
+                "help_text": "Do not enable in production. When true, System Admins can run /mattermost-request-hub exercise populate, teardown and status to seed marked EXERCISE data into a team: persona accounts nobody can sign in as, a channel, and pending channel and Channel Admin requests on the approval cards. Needs channel requests allowed and a channel prefix. Approving a seeded request creates a real channel marked EXERCISE. Teardown closes the requests, archives the channels and deactivates the personas."
             },
             {
                 "key": "ExerciseScenarioJSON",

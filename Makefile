@@ -40,7 +40,7 @@ BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 #      if the upstream repo is permanently moved.
 # ====================================================================================
 
-PLUGIN_REPO_URL_DEFAULT := https://github.com/MattermostFederal/mattermost-plugin-channel-requests
+PLUGIN_REPO_URL_DEFAULT := https://github.com/MattermostFederal/mattermost-plugin-request-hub
 
 ifneq ($(GITHUB_REPOSITORY),)
 PLUGIN_REPO_URL := $(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)
@@ -236,6 +236,9 @@ ifneq ($(wildcard $(ASSETS_DIR)/.),)
 endif
 ifneq ($(HAS_PUBLIC),)
 	cp -r public dist/$(PLUGIN_ID)/
+	# Bundle doc screenshots for /mattermost-request-hub docs (public/help/docs.html).
+	mkdir -p dist/$(PLUGIN_ID)/public/help/images
+	if [ -d docs/images ]; then cp -R docs/images/. dist/$(PLUGIN_ID)/public/help/images/; fi
 endif
 ifneq ($(HAS_SERVER),)
 	mkdir -p dist/$(PLUGIN_ID)/server

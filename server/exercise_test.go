@@ -212,13 +212,16 @@ func notFoundErr() *model.AppError {
 func newExerciseFake(t *testing.T) *exerciseFake {
 	t.Helper()
 	api := &plugintest.API{}
-	stubLogs(api)
+	stubLogLines(api)
 	serverConfig := &model.Config{}
 	serverConfig.SetDefaults()
 	f := &exerciseFake{
 		api: api, p: newTestPlugin(api),
-		users:          map[string]*model.User{"admin1": sysadmin("admin1")},
-		channels:       map[string]*model.Channel{"appch": {Id: "appch", TeamId: "appteam", Name: "approvals", Type: model.ChannelTypePrivate}},
+		users: map[string]*model.User{"admin1": sysadmin("admin1")},
+		channels: map[string]*model.Channel{
+			"appch":   {Id: "appch", TeamId: "appteam", Name: "mattermost-channel-requests", Type: model.ChannelTypePrivate},
+			"auditch": {Id: "auditch", TeamId: "appteam", Name: "mattermost-audit-requests", Type: model.ChannelTypePrivate},
+		},
 		posts:          map[string]*model.Post{},
 		teamMembers:    map[string]bool{},
 		channelMembers: map[string]map[string]string{},
@@ -236,6 +239,7 @@ func newExerciseFake(t *testing.T) *exerciseFake {
 // by change.
 func (f *exerciseFake) setConfig(change func(*configuration)) {
 	config := approvalConfig()
+	config.AllowChannelAdminRequests = true
 	config.EnableExercise = true
 	change(config)
 	f.p.setConfiguration(config)
@@ -268,6 +272,27 @@ func (f *exerciseFake) mockServer() {
 			return nil, e
 		}
 		return f.team, nil
+	}).Maybe()
+	// The approval team is "appteam"; its channels are found and
+	// auto-created like any other.
+	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam", Name: "appteam", DisplayName: "Approvals"}, nil).Maybe()
+	api.On("GetChannelByNameForTeamName", "appteam", mock.Anything, mock.Anything).Return(func(_, name string, includeDeleted bool) (*model.Channel, *model.AppError) {
+		for _, c := range f.channels {
+			if c.TeamId == "appteam" && c.Name == name && (includeDeleted || c.DeleteAt == 0) {
+				cp := *c
+				return &cp, nil
+			}
+		}
+		return nil, notFoundErr()
+	}).Maybe()
+	api.On("GetUsers", mock.Anything).Return(func(*model.UserGetOptions) ([]*model.User, *model.AppError) {
+		var admins []*model.User
+		for _, u := range f.users {
+			if u.IsSystemAdmin() {
+				admins = append(admins, u)
+			}
+		}
+		return admins, nil
 	}).Maybe()
 	api.On("GetUserByUsername", mock.Anything).Return(func(name string) (*model.User, *model.AppError) {
 		if e := f.err("GetUserByUsername"); e != nil {
@@ -422,7 +447,7 @@ func (f *exerciseFake) run(userID, command string) string {
 
 func (f *exerciseFake) populate(t *testing.T) *exerciseManifest {
 	t.Helper()
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "Seeded")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "Seeded")
 	return f.manifest(t)
 }
 
@@ -477,12 +502,29 @@ func (f *exerciseFake) activeExerciseChannels() int {
 	return n
 }
 
+// postsIn returns the messages of the root posts in a channel.
 func (f *exerciseFake) postsIn(channelID string) []string {
 	var out []string
 	for _, post := range f.posts {
-		if post.ChannelId == channelID {
+		if post.ChannelId == channelID && post.RootId == "" {
 			out = append(out, post.Message)
 		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// auditLines returns the audit card lines, title first, from the
+// auto-created audit channel.
+func (f *exerciseFake) auditLines() []string {
+	var out []string
+	for _, post := range f.posts {
+		ch := f.channels[post.ChannelId]
+		if ch == nil || ch.Name != "mattermost-audit-requests" {
+			continue
+		}
+		att := post.Attachments()[0]
+		out = append(out, att.Title+" "+att.Text)
 	}
 	slices.Sort(out)
 	return out
@@ -497,24 +539,24 @@ func TestExerciseCommand_Gate(t *testing.T) {
 	f.users["u1"] = &model.User{Id: "u1", Username: "u1", Roles: model.SystemUserRoleId}
 
 	f.setConfig(func(c *configuration) { c.EnableExercise = false })
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "Exercise mode is off")
-	require.Contains(t, f.run("u1", "/channel-request exercise status"), "Exercise mode is off")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "Exercise mode is off")
+	require.Contains(t, f.run("u1", "/mattermost-request-hub exercise status"), "Exercise mode is off")
 	require.Nil(t, f.manifest(t))
 
 	f.setConfig(func(*configuration) {})
-	require.Equal(t, "Only System Admins can run `/channel-request exercise`.", f.run("u1", "/channel-request exercise populate"))
+	require.Equal(t, "Only System Admins can run `/mattermost-request-hub exercise`.", f.run("u1", "/mattermost-request-hub exercise populate"))
 	require.Nil(t, f.manifest(t))
 
 	f.populate(t)
-	require.Contains(t, f.run("u1", "/channel-request exercise teardown"), "Only System Admins")
-	require.Contains(t, f.run("ghost", "/channel-request exercise teardown"), "Only System Admins")
-	require.Equal(t, exerciseUsage, f.run("admin1", "/channel-request exercise"))
-	require.Equal(t, exerciseUsage, f.run("admin1", "/channel-request exercise populate now"))
-	require.Contains(t, f.run("admin1", "/channel-request exercise reset"), "Unknown exercise subcommand `reset`")
-	require.Contains(t, f.runIn("", "admin1", "/channel-request exercise status"), "from a channel in the team")
+	require.Contains(t, f.run("u1", "/mattermost-request-hub exercise teardown"), "Only System Admins")
+	require.Contains(t, f.run("ghost", "/mattermost-request-hub exercise teardown"), "Only System Admins")
+	require.Equal(t, exerciseUsage, f.run("admin1", "/mattermost-request-hub exercise"))
+	require.Equal(t, exerciseUsage, f.run("admin1", "/mattermost-request-hub exercise populate now"))
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise reset"), "Unknown exercise subcommand `reset`")
+	require.Contains(t, f.runIn("", "admin1", "/mattermost-request-hub exercise status"), "from a channel in the team")
 
 	f.override("GetUser", "flaky").Return(nil, testAppErr("down"))
-	require.Equal(t, "Could not check your account. Please try again.", f.run("flaky", "/channel-request exercise status"))
+	require.Equal(t, "Could not check your account. Please try again.", f.run("flaky", "/mattermost-request-hub exercise status"))
 
 	// Nothing the refused calls ran touched the seeded data.
 	require.Len(t, f.personas(), 6)
@@ -527,8 +569,8 @@ func TestExerciseCommand_Gate(t *testing.T) {
 func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 	f := newExerciseFake(t)
 
-	reply := f.run("admin1", "/channel-request exercise populate")
-	require.Equal(t, "Seeded the **Silver Harbor** exercise into this team: 6 personas, 1 channels, 3 channel requests and 1 Channel Admin requests. The requests are waiting in the approval channel. Run `/channel-request exercise teardown` to remove it all.", reply)
+	reply := f.run("admin1", "/mattermost-request-hub exercise populate")
+	require.Equal(t, "Seeded the **Silver Harbor** exercise into this team: 6 personas, 1 channels, 3 channel requests and 1 Channel Admin requests. The approval cards are waiting for review. Run `/mattermost-request-hub exercise teardown` to remove it all.", reply)
 
 	m := f.manifest(t)
 	require.Equal(t, exerciseStateReady, m.State)
@@ -556,14 +598,20 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 		f.persona("bomberac").Id: "channel_user",
 	}, f.channelMembers[ops.Id])
 
-	// Four cards in the approval channel, all marked, none mentioning anyone.
-	require.Len(t, f.posts, 4)
+	// Four cards in the approval channel, all marked, none mentioning
+	// anyone, and a ticket for each in its persona's direct messages.
+	require.Len(t, f.posts, 8)
 	for _, post := range f.posts {
+		require.True(t, strings.HasPrefix(post.Attachments()[0].Title, "EXERCISE "))
+		if post.ChannelId == "dm" {
+			require.Contains(t, post.Message, "has been submitted for approval")
+			continue
+		}
 		require.Equal(t, "appch", post.ChannelId)
 		require.True(t, strings.HasPrefix(post.Message, "EXERCISE: "), post.Message)
 		require.NotContains(t, post.Message, "@")
-		require.True(t, strings.HasPrefix(post.Attachments()[0].Title, "EXERCISE "))
 	}
+	require.Len(t, m.KVKeys, 12)
 
 	// Seeded requests are listed for their persona, not the admin.
 	plan := m.Plan
@@ -572,6 +620,10 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, req.Exercise)
 	require.Equal(t, "team-tanker-fallout", req.Name)
+	require.NotEmpty(t, req.ApprovalPostID)
+	require.NotEmpty(t, req.DMRootPostID)
+	require.NotNil(t, f.kv[kvApprovalPostPrefix+req.ApprovalPostID])
+	require.NotNil(t, f.kv[kvDMRootPrefix+req.DMRootPostID])
 	own, _, err := f.p.listOwnRequests(req.RequesterID, maxListedRequests)
 	require.NoError(t, err)
 	require.Len(t, own, 1)
@@ -579,9 +631,9 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, admins)
 
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "already exists for this team")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "already exists for this team")
 
-	status := f.run("admin1", "/channel-request exercise status")
+	status := f.run("admin1", "/mattermost-request-hub exercise status")
 	require.Contains(t, status, "is **ready**")
 	require.Contains(t, status, "| Personas (active) | 6 | 6 |")
 	require.Contains(t, status, "| Channels (not archived) | 1 | 1 |")
@@ -590,18 +642,18 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 
 	// Approving a seeded request goes through the normal path and makes a
 	// real, marked channel that the manifest records.
-	require.Contains(t, f.run("admin1", "/channel-request approve "+planner.ID), "Channel ~team-tanker-fallout created")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+planner.ID), "Channel ~team-tanker-fallout created")
 	m = f.manifest(t)
 	require.Len(t, m.ChannelIDs, 2)
 	approved := f.channels[m.ChannelIDs[1]]
 	require.Equal(t, exerciseBanner, approved.Header)
 	require.Equal(t, "EXERCISE Tanker Fallout", approved.DisplayName)
 	require.Equal(t, 2, f.activeExerciseChannels())
-	status = f.run("admin1", "/channel-request exercise status")
+	status = f.run("admin1", "/mattermost-request-hub exercise status")
 	require.Contains(t, status, "| Channels (not archived) | 2 | 2 |")
 	require.Contains(t, status, "| Channel requests (pending) | 3 | 2 |")
 
-	reply = f.run("admin1", "/channel-request exercise teardown")
+	reply = f.run("admin1", "/mattermost-request-hub exercise teardown")
 	require.Equal(t, "Removed the exercise data from this team: 3 pending requests closed, 2 channels archived and 6 personas deactivated.", reply)
 	require.Nil(t, f.manifest(t))
 	require.Equal(t, 0, f.activeExerciseChannels())
@@ -616,16 +668,27 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, exists)
 	}
-	removedCards := 0
+	// The pending cards and tickets are closed; the approved one keeps
+	// its outcome.
+	removedCards, removedTickets := 0, 0
 	for _, post := range f.posts {
-		if post.Message == exerciseRemovedText {
+		switch {
+		case post.ChannelId == "appch" && post.RootId == "" && post.Message == exerciseRemovedText:
 			removedCards++
-			require.Empty(t, post.Attachments()[0].Actions)
+			require.Empty(t, post.Attachments())
+		case post.ChannelId == "dm" && post.RootId == "" && post.Attachments()[0].Title == "EXERCISE Request Removed":
+			removedTickets++
 		}
 	}
 	require.Equal(t, 3, removedCards)
-	require.Contains(t, f.run("admin1", "/channel-request exercise status"), "No exercise data is recorded")
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "nothing to tear down")
+	require.Equal(t, 3, removedTickets)
+	require.Equal(t, "EXERCISE Channel Request Approved", f.posts[req.DMRootPostID].Attachments()[0].Title)
+	// Nothing but the persona records is left in the KV store.
+	for key := range f.kv {
+		require.True(t, strings.HasPrefix(key, kvExercisePersonaPrefix), key)
+	}
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "No exercise data is recorded")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "nothing to tear down")
 
 	// Populating again reuses the deactivated personas and the freed names.
 	created := len(f.users)
@@ -651,7 +714,7 @@ func TestExercise_TeardownLeavesRealDataAlone(t *testing.T) {
 	// The seeded channel lost its record, so only the name scan finds it.
 	f.setManifest(t, func(m *exerciseManifest) { m.ChannelIDs = nil })
 
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "1 channels archived")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "1 channels archived")
 
 	require.NotZero(t, f.channels[m.ChannelIDs[0]].DeleteAt, "the seeded channel is archived")
 	require.Zero(t, f.channels["realch"].DeleteAt)
@@ -673,7 +736,7 @@ func TestExercise_TeardownRefusesARequestThatIsntExerciseData(t *testing.T) {
 	id := m.Plan.ChannelRequests[0].ID
 	f.kv[kvRequestPrefix+id] = recordJSON(t, &channelRequest{ID: id, RequesterID: "real"})
 
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "1 exercise items could not be removed")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "1 exercise items could not be removed")
 	require.NotNil(t, f.kv[kvRequestPrefix+id])
 	require.NotNil(t, f.manifest(t))
 }
@@ -685,8 +748,14 @@ func TestExercise_PopulateRefusesBeforeWriting(t *testing.T) {
 		want  string
 	}{
 		{"no prefixes", func(f *exerciseFake) {
+			f.setConfig(func(c *configuration) { c.prefixes = nil })
+		}, "Exercise populate failed: Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Mattermost Request Hub."},
+		{"channel requests turned off", func(f *exerciseFake) {
 			f.p.setConfiguration(&configuration{EnableExercise: true})
-		}, "Exercise populate failed: Channel requests aren't configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests."},
+		}, "Exercise populate failed: exercise mode seeds channel requests, which are turned off. Turn on **Allow channel requests** in System Console → Plugins → Mattermost Request Hub, then run populate again."},
+		{"Channel Admin requests turned off", func(f *exerciseFake) {
+			f.setConfig(func(c *configuration) { c.AllowChannelAdminRequests = false })
+		}, "Exercise populate failed: this scenario seeds Channel Admin requests, which are turned off. Turn on **Allow channel admin requests** in System Console → Plugins → Mattermost Request Hub, or use a scenario without them."},
 		{"bad scenario setting", func(f *exerciseFake) {
 			f.setConfig(func(c *configuration) { c.ExerciseScenarioJSON = "{" })
 		}, "Exercise populate failed: the exercise scenario in the plugin settings is not valid JSON."},
@@ -737,7 +806,7 @@ func TestExercise_PopulateRefusesBeforeWriting(t *testing.T) {
 			f := newExerciseFake(t)
 			tt.setup(f)
 			before := len(f.kv)
-			reply := f.run("admin1", "/channel-request exercise populate")
+			reply := f.run("admin1", "/mattermost-request-hub exercise populate")
 			require.Contains(t, reply, "Exercise populate failed")
 			require.Contains(t, reply, tt.want)
 			require.NotContains(t, reply, "..")
@@ -768,7 +837,7 @@ func TestExercise_PopulateUsesTheScenarioSetting(t *testing.T) {
 		}`
 	})
 
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), `Seeded the **Custom\_Name** exercise into this team: 2 personas, 0 channels, 1 channel requests`)
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), `Seeded the **Custom\_Name** exercise into this team: 2 personas, 0 channels, 1 channel requests`)
 	m := f.manifest(t)
 	require.Equal(t, "custom", m.Plan.Scenario)
 	require.Contains(t, m.Done, "custom/2/plans")
@@ -792,19 +861,19 @@ func TestExercise_PopulateFailurePartway(t *testing.T) {
 				f.kv[kvExercisePersonaPrefix+"old"] = []byte(exerciseTeamID)
 			}
 			f.fail[method] = true
-			reply := f.run("admin1", "/channel-request exercise populate")
+			reply := f.run("admin1", "/mattermost-request-hub exercise populate")
 			require.Contains(t, reply, "could not finish seeding: "+want)
 			require.Contains(t, reply, "teardown")
 			require.NotContains(t, reply, "..")
 			require.Equal(t, exerciseStatePopulating, f.manifest(t).State)
-			require.Contains(t, f.run("admin1", "/channel-request exercise status"), "stopped partway")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "stopped partway")
 
 			// A populate that just stopped looks like a running one.
-			require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "a populate is still running")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "a populate is still running")
 
 			delete(f.fail, method)
 			f.setManifest(t, func(m *exerciseManifest) { m.UpdatedAt -= exerciseStaleMillis })
-			require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "Removed the exercise data")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "Removed the exercise data")
 			require.Nil(t, f.manifest(t))
 			require.Equal(t, 0, f.activeExerciseChannels())
 			for _, u := range f.personas() {
@@ -840,7 +909,7 @@ func TestExercise_PopulateRecordFailures(t *testing.T) {
 		}, "could not save the exercise record"},
 		{"admin request card", func(f *exerciseFake) {
 			f.override("CreatePost", mock.MatchedBy(func(post *model.Post) bool {
-				return len(post.Attachments()) > 0 && post.Attachments()[0].Title == "EXERCISE Channel Admin request"
+				return post.ChannelId == "appch" && len(post.Attachments()) > 0 && strings.HasPrefix(post.Attachments()[0].Title, "EXERCISE Channel Admin request")
 			})).Return(nil, testAppErr("down"))
 		}, "could not post a Channel Admin request's approval card"},
 		{"persona lookup fails after the check", func(f *exerciseFake) {
@@ -858,27 +927,27 @@ func TestExercise_PopulateRecordFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newExerciseFake(t)
 			tt.setup(f)
-			require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding: "+tt.want)
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding: "+tt.want)
 		})
 	}
 
 	t.Run("an unrecorded persona isn't left active", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.override("KVSet", keyPrefix(kvExercisePersonaPrefix), mock.Anything).Return(testAppErr("down"))
-		require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding")
 		require.NotZero(t, f.persona("chiefops").DeleteAt)
 	})
 
 	t.Run("claim fails", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.override("KVSetWithOptions", exerciseManifestKey(exerciseTeamID), mock.Anything, mock.Anything).Return(false, testAppErr("down"))
-		require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not start the exercise")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not start the exercise")
 	})
 
 	t.Run("another populate claims first", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.override("KVSetWithOptions", exerciseManifestKey(exerciseTeamID), mock.Anything, mock.Anything).Return(false, nil)
-		require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "already exists for this team")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "already exists for this team")
 		require.Empty(t, f.personas())
 	})
 
@@ -887,7 +956,7 @@ func TestExercise_PopulateRecordFailures(t *testing.T) {
 		f.override("KVCompareAndSet", exerciseManifestKey(exerciseTeamID), mock.Anything, mock.MatchedBy(func(v []byte) bool {
 			return strings.Contains(string(v), `"state":"ready"`)
 		})).Return(false, testAppErr("down"))
-		require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "seeded the exercise but could not mark it finished. Run `/channel-request exercise status`")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "seeded the exercise but could not mark it finished. Run `/mattermost-request-hub exercise status`")
 	})
 
 	t.Run("teardown starts before it is marked finished", func(t *testing.T) {
@@ -900,7 +969,7 @@ func TestExercise_PopulateRecordFailures(t *testing.T) {
 			}
 			return true, nil
 		})
-		require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not mark it finished")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not mark it finished")
 		require.Equal(t, exerciseStateTearingDown, f.manifest(t).State)
 	})
 
@@ -913,7 +982,7 @@ func TestExercise_PopulateRecordFailures(t *testing.T) {
 				var m exerciseManifest
 				return json.Unmarshal(v, &m) == nil && len(m.Done) == failAt
 			})).Return(false, testAppErr("down"))
-			require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding")
 			require.Len(t, f.manifest(t).Done, failAt-1)
 		})
 	}
@@ -927,12 +996,12 @@ func TestExercise_TeardownStopsARunningPopulate(t *testing.T) {
 		f.setManifest(t, func(m *exerciseManifest) { m.State = exerciseStateTearingDown })
 		return f.createChannel(c), nil
 	})
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding: teardown started while seeding")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding: teardown started while seeding")
 	require.Len(t, f.manifest(t).ChannelIDs, 1)
 	require.Empty(t, f.posts, "no request was seeded after teardown began")
-	require.Contains(t, f.run("admin1", "/channel-request exercise status"), "A teardown started but didn't finish")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "A teardown started but didn't finish")
 
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "0 pending requests closed, 1 channels archived and 6 personas deactivated")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "0 pending requests closed, 1 channels archived and 6 personas deactivated")
 }
 
 func TestExercise_PopulateUndoesWhatTeardownMissed(t *testing.T) {
@@ -994,7 +1063,7 @@ func TestExercise_PopulateUndoesWhatTeardownMissed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newExerciseFake(t)
 			tt.setup(f, func() { delete(f.kv, exerciseManifestKey(exerciseTeamID)) })
-			require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding: no exercise data recorded")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding: no exercise data recorded")
 			tt.check(t, f)
 		})
 	}
@@ -1018,16 +1087,16 @@ func TestUpdateExerciseManifest(t *testing.T) {
 	t.Run("unreadable manifest", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.kv[exerciseManifestKey(exerciseTeamID)] = []byte("{")
-		require.Contains(t, f.run("admin1", "/channel-request exercise status"), "the exercise record for this team is unreadable")
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "the exercise record for this team is unreadable")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "the exercise record for this team is unreadable")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "the exercise record for this team is unreadable")
 	})
 }
 
 func TestExercise_ManifestWithoutAPlan(t *testing.T) {
 	f := newExerciseFake(t)
 	f.kv[exerciseManifestKey(exerciseTeamID)] = []byte(`{"state":"ready"}`)
-	require.Contains(t, f.run("admin1", "/channel-request exercise status"), "| Personas (active) | 0 | 0 |")
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "Removed the exercise data")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "| Personas (active) | 0 | 0 |")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "Removed the exercise data")
 	require.Nil(t, f.manifest(t))
 }
 
@@ -1074,7 +1143,7 @@ func TestExercise_ApprovalRacingTeardown(t *testing.T) {
 		delete(f.kv, key)
 		return true, nil
 	})
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "2 channels archived")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "2 channels archived")
 	require.NotZero(t, f.channels["late"].DeleteAt)
 	require.Nil(t, f.manifest(t))
 }
@@ -1085,11 +1154,11 @@ func TestExercise_TeardownKeepsTheManifestOnFailure(t *testing.T) {
 			f := newExerciseFake(t)
 			f.populate(t)
 			f.fail[method] = true
-			require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "could not be removed")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not be removed")
 			require.NotNil(t, f.manifest(t))
 
 			delete(f.fail, method)
-			require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "Removed the exercise data")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "Removed the exercise data")
 			require.Nil(t, f.manifest(t))
 		})
 	}
@@ -1109,13 +1178,19 @@ func TestExercise_TeardownRequestFailures(t *testing.T) {
 		"persona record": func(f *exerciseFake) {
 			f.override("KVGet", keyPrefix(kvExercisePersonaPrefix)).Return(nil, testAppErr("down"))
 		},
+		"reply lookup": func(f *exerciseFake) {
+			f.override("KVDelete", keyPrefix(kvApprovalPostPrefix)).Return(testAppErr("down"))
+		},
+		"persona pending list": func(f *exerciseFake) {
+			f.override("KVDelete", keyPrefix(kvPendingPrefix)).Return(testAppErr("down"))
+		},
 	}
 	for name, setup := range tests {
 		t.Run(name, func(t *testing.T) {
 			f := newExerciseFake(t)
 			f.populate(t)
 			setup(f)
-			require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "could not be removed")
+			require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not be removed")
 			require.NotNil(t, f.manifest(t))
 		})
 	}
@@ -1124,14 +1199,14 @@ func TestExercise_TeardownRequestFailures(t *testing.T) {
 		f := newExerciseFake(t)
 		f.populate(t)
 		f.override("KVCompareAndDelete", keyPrefix(kvRequestPrefix), mock.Anything).Return(false, nil)
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "1 pending requests closed")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "1 pending requests closed")
 	})
 
 	t.Run("marking it torn down fails", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.populate(t)
 		f.override("KVCompareAndSet", exerciseManifestKey(exerciseTeamID), mock.Anything, mock.Anything).Return(false, testAppErr("down"))
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "could not save the exercise record")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not save the exercise record")
 	})
 
 	t.Run("re-reading the manifest fails", func(t *testing.T) {
@@ -1143,21 +1218,21 @@ func TestExercise_TeardownRequestFailures(t *testing.T) {
 			}
 			return f.kv[key], nil
 		})
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "could not load the exercise record")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not load the exercise record")
 	})
 
 	t.Run("clearing the manifest fails", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.populate(t)
 		f.override("KVCompareAndDelete", exerciseManifestKey(exerciseTeamID), mock.Anything).Return(false, testAppErr("down"))
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "could not clear its record")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not clear its record")
 	})
 
 	t.Run("the manifest keeps changing", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.populate(t)
 		f.override("KVCompareAndDelete", exerciseManifestKey(exerciseTeamID), mock.Anything).Return(false, nil)
-		require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "kept changing while it was removed")
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "kept changing while it was removed")
 	})
 }
 
@@ -1166,16 +1241,16 @@ func TestExercise_TeardownSkipsANameTakenByARealAccount(t *testing.T) {
 	// recorded as a persona: teardown leaves it alone.
 	f := newExerciseFake(t)
 	f.fail["CreateChannel"] = true
-	require.Contains(t, f.run("admin1", "/channel-request exercise populate"), "could not finish seeding")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise populate"), "could not finish seeding")
 	delete(f.fail, "CreateChannel")
 	planner := f.persona("planner")
 	delete(f.kv, kvExercisePersonaPrefix+planner.Id)
 	f.setManifest(t, func(m *exerciseManifest) { m.UpdatedAt -= exerciseStaleMillis })
 
-	status := f.run("admin1", "/channel-request exercise status")
+	status := f.run("admin1", "/mattermost-request-hub exercise status")
 	require.Contains(t, status, "| Personas (active) | 6 | 5 |")
 	require.NotContains(t, status, "could not be checked")
-	require.Contains(t, f.run("admin1", "/channel-request exercise teardown"), "5 personas deactivated")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "5 personas deactivated")
 	require.Zero(t, planner.DeleteAt)
 }
 
@@ -1185,7 +1260,7 @@ func TestExercise_StatusReportsWhatItCouldNotCheck(t *testing.T) {
 	f.fail["GetUserByUsername"] = true
 	f.fail["GetChannel"] = true
 	f.override("KVGet", keyPrefix(kvRequestPrefix)).Return(nil, testAppErr("down"))
-	require.Contains(t, f.run("admin1", "/channel-request exercise status"), "10 items could not be checked")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "10 items could not be checked")
 	f.api.AssertCalled(t, "LogWarn", "exercise status could not check some items", "team_id", exerciseTeamID, "count", 10)
 }
 
@@ -1225,11 +1300,11 @@ func TestApprovalCardMarkers(t *testing.T) {
 	requester := &model.User{Id: "u1", Username: "u1"}
 
 	for _, exercise := range []bool{false, true} {
-		_, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), Name: "team-x", DisplayName: "X", Exercise: exercise}, requester)
+		_, _, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: exercise}, requester)
 		require.NoError(t, err)
 	}
 	channel := &model.Channel{Id: "c1", TeamId: exerciseTeamID, Name: "x", DisplayName: "X"}
-	_, err := f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
+	_, _, _, err := f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
 	require.NoError(t, err)
 
 	type card struct{ header, title string }
@@ -1238,17 +1313,36 @@ func TestApprovalCardMarkers(t *testing.T) {
 		cards = append(cards, card{post.Message, post.Attachments()[0].Title})
 	}
 	require.ElementsMatch(t, []card{
-		{"@channel — a new channel request needs your review.", "Channel creation request"},
-		{"EXERCISE: a new channel request needs your review.", "EXERCISE Channel creation request"},
-		{"EXERCISE: a Channel Admin request needs your review.", "EXERCISE Channel Admin request"},
+		{"@channel — a new channel request needs your review.", "Channel creation request — Ops"},
+		{"EXERCISE: a new channel request needs your review.", "EXERCISE Channel creation request — Ops"},
+		{"EXERCISE: a Channel Admin request needs your review.", "EXERCISE Channel Admin request — Ops"},
 	}, cards)
-	require.Equal(t, "Channel Admin request", f.p.adminApprovalAttachment(&adminRequest{}, requester, channel).Title)
+	require.Equal(t, "Channel Admin request — Ops", f.p.adminApprovalAttachment(&adminRequest{}, requester, channel).Title)
+}
+
+// A team without its own approvers sends its cards to the root approval
+// channel with a team label; exercise cards keep it in front of the marker.
+func TestApprovalCardMarkers_KeepTheTeamLabel(t *testing.T) {
+	f := newExerciseFake(t)
+	f.setConfig(func(c *configuration) { c.PerTeamApprovalChannels = true })
+	f.api.On("GetTeamMembers", exerciseTeamID, mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil)
+	requester := &model.User{Id: "u1", Username: "u1"}
+
+	_, _, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: true}, requester)
+	require.NoError(t, err)
+	channel := &model.Channel{Id: "c1", TeamId: exerciseTeamID, Name: "x", DisplayName: "X"}
+	_, _, _, err = f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
+	require.NoError(t, err)
+
+	require.ElementsMatch(t, []string{
+		"For Team: Ops — EXERCISE: a Channel Admin request needs your review.",
+		"For Team: Ops — EXERCISE: a new channel request needs your review.",
+	}, f.postsIn("appch"))
 }
 
 func TestExercise_DecisionsAreMarkedInTheAudit(t *testing.T) {
 	f := newExerciseFake(t)
 	f.setConfig(func(c *configuration) {
-		c.AuditChannelID = "audit"
 		c.expiryDays = 30
 		c.ExerciseScenarioJSON = `{
 			"id": "audit", "name": "Audit",
@@ -1265,28 +1359,27 @@ func TestExercise_DecisionsAreMarkedInTheAudit(t *testing.T) {
 			]
 		}`
 	})
-	f.channels["audit"] = &model.Channel{Id: "audit", Type: model.ChannelTypePrivate}
 	m := f.populate(t)
 	cr, ar := m.Plan.ChannelRequests, m.Plan.AdminRequests
 
-	require.Contains(t, f.run("admin1", "/channel-request approve "+cr[0].ID), "created")
-	require.Contains(t, f.run("admin1", "/channel-request deny "+cr[1].ID), "Denied")
-	require.Equal(t, expiredText, f.run("admin1", "/channel-request approve "+cr[2].ID))
-	require.Contains(t, f.run("admin1", "/channel-request approve "+ar[0].ID), "promoted to Channel Admin")
-	require.Contains(t, f.run("admin1", "/channel-request deny "+ar[1].ID), "Denied")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+cr[0].ID), "created")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub deny "+cr[1].ID), "Denied")
+	require.Equal(t, expiredText, f.run("admin1", "/mattermost-request-hub approve "+cr[2].ID))
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+ar[0].ID), "promoted to Channel Admin")
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub deny "+ar[1].ID), "Denied")
 	delete(f.channelMembers[m.ChannelIDs[0]], f.persona("crew").Id)
-	require.Contains(t, f.run("admin1", "/channel-request approve "+ar[2].ID), "nobody was promoted")
-	require.Equal(t, expiredText, f.run("admin1", "/channel-request approve "+ar[3].ID))
+	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+ar[2].ID), "nobody was promoted")
+	require.Equal(t, expiredText, f.run("admin1", "/mattermost-request-hub approve "+ar[3].ID))
 
 	lead := "@exercise-lead" + personaSuffix
 	crew := "@exercise-crew" + personaSuffix
 	require.Equal(t, []string{
-		fmt.Sprintf(`EXERCISE APPROVED: @admin approved channel request "EXERCISE Approved" (~team-approved) from %s`, lead),
-		fmt.Sprintf("EXERCISE CHANNEL ADMIN APPROVED (NO CHANGE): @admin approved %s for ~team-ops, but none were still members (requested by %s)", crew, lead),
-		fmt.Sprintf("EXERCISE CHANNEL ADMIN APPROVED: @admin promoted %s to Channel Admin in ~team-ops (requested by %s)", crew, lead),
-		fmt.Sprintf("EXERCISE CHANNEL ADMIN DENIED: @admin denied a Channel Admin request for %s in ~team-ops", crew),
-		fmt.Sprintf("EXERCISE CHANNEL ADMIN EXPIRED: @admin closed the request for %s in ~team-ops from %s, which was not reviewed within 30 days", crew, lead),
-		fmt.Sprintf(`EXERCISE DENIED: @admin denied channel request "EXERCISE Denied" from %s`, lead),
-		fmt.Sprintf(`EXERCISE EXPIRED: @admin closed channel request "EXERCISE Old" from %s, which was not reviewed within 30 days`, lead),
-	}, f.postsIn("audit"))
+		fmt.Sprintf(`⌛ Expired EXERCISE @admin closed channel request "EXERCISE Old" from %s, which was not reviewed within 30 days`, lead),
+		fmt.Sprintf("⌛ Expired EXERCISE @admin closed the Channel Admin request for %s in ~team-ops from %s, which was not reviewed within 30 days", crew, lead),
+		fmt.Sprintf("✅ Approved EXERCISE @admin approved %s for Channel Admin in ~team-ops, but none were still members (requested by %s)", crew, lead),
+		fmt.Sprintf(`✅ Approved EXERCISE @admin approved channel request "EXERCISE Approved" (~team-approved) from %s`, lead),
+		fmt.Sprintf("✅ Approved EXERCISE @admin promoted %s to Channel Admin in ~team-ops (requested by %s)", crew, lead),
+		fmt.Sprintf("❌ Denied EXERCISE @admin denied a Channel Admin request for %s in ~team-ops", crew),
+		fmt.Sprintf(`❌ Denied EXERCISE @admin denied channel request "EXERCISE Denied" from %s`, lead),
+	}, f.auditLines())
 }

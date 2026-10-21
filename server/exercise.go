@@ -42,9 +42,13 @@ const (
 	exercisePositionPrefix = exerciseMarker + ": "
 
 	// exerciseBanner is the header of every exercise channel.
-	exerciseBanner = "**EXERCISE EXERCISE EXERCISE**: this channel is exercise data from Channel Requests. Teardown archives it."
+	exerciseBanner = "**EXERCISE EXERCISE EXERCISE**: this channel is exercise data from Mattermost Request Hub. Teardown archives it."
 
 	exerciseRemovedText = exerciseMarker + ": removed by teardown."
+
+	// The populate refusals when the request types it seeds are turned off.
+	exerciseChannelRequestsOffText = "exercise mode seeds channel requests, which are turned off. Turn on **Allow channel requests** in System Console → Plugins → Mattermost Request Hub, then run populate again"
+	exerciseAdminRequestsOffText   = "this scenario seeds Channel Admin requests, which are turned off. Turn on **Allow channel admin requests** in System Console → Plugins → Mattermost Request Hub, or use a scenario without them"
 
 	// exerciseEmailDomain is a reserved domain (RFC 2606), so mail to a
 	// persona goes nowhere.
@@ -78,7 +82,7 @@ var builtInExerciseScenario []byte
 var (
 	// errNoExerciseManifest means the team has no exercise data recorded.
 	errNoExerciseManifest = errors.New("no exercise data recorded for this team")
-	errExerciseExists     = errors.New("exercise data already exists for this team, or a populate is running. Run `/channel-request exercise status` to see it, or `/channel-request exercise teardown` to remove it")
+	errExerciseExists     = errors.New("exercise data already exists for this team, or a populate is running. Run `/mattermost-request-hub exercise status` to see it, or `/mattermost-request-hub exercise teardown` to remove it")
 	// errExerciseStopped stops a populate once teardown has started.
 	errExerciseStopped = errors.New("teardown started while seeding")
 )
@@ -197,6 +201,10 @@ type exerciseManifest struct {
 	// ChannelIDs lists every exercise channel, seeded or created by an
 	// approval, for teardown to archive.
 	ChannelIDs []string `json:"channel_ids"`
+	// KVKeys lists the reply-forwarding lookups and approval card records
+	// of the seeded requests, which outlive a decision, for teardown to
+	// delete.
+	KVKeys []string `json:"kv_keys,omitempty"`
 }
 
 func exerciseManifestKey(teamID string) string {
@@ -548,7 +556,7 @@ func (p *Plugin) checkExerciseEmailDomain(teamID string) error {
 }
 
 // populateExercise seeds the scenario into a team for actorID. It is the
-// shared operation behind `/channel-request exercise populate`.
+// shared operation behind `/mattermost-request-hub exercise populate`.
 func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 	// The claim below is what makes populate run once; this check only
 	// gives a second populate the right answer instead of a name clash.
@@ -559,6 +567,9 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 		return "", errExerciseExists
 	}
 	config := p.getConfiguration()
+	if !config.AllowChannelRequests {
+		return "", errors.New(exerciseChannelRequestsOffText)
+	}
 	if !config.UsesPrefixList() {
 		return "", errors.New(notConfiguredMessage)
 	}
@@ -570,6 +581,9 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 	plan, err := buildExercisePlan(sc, teamID, config.Prefixes(), now, model.NewId)
 	if err != nil {
 		return "", errors.Wrap(err, "the exercise scenario doesn't fit this server's settings")
+	}
+	if len(plan.AdminRequests) > 0 && !config.AllowChannelAdminRequests {
+		return "", errors.New(exerciseAdminRequestsOffText)
 	}
 	if err = p.checkExercisePreconditions(plan); err != nil {
 		return "", err
@@ -592,7 +606,7 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 
 	if err := p.seedExercise(plan); err != nil {
 		p.API.LogError("failed to populate exercise data", "team_id", teamID, "error", err.Error())
-		return "", errors.Errorf("could not finish seeding: %s. Run `/channel-request exercise teardown` to remove what was created, then try again", err.Error())
+		return "", errors.Errorf("could not finish seeding: %s. Run `/mattermost-request-hub exercise teardown` to remove what was created, then try again", err.Error())
 	}
 	if err := p.updateExerciseManifest(teamID, func(m *exerciseManifest) error {
 		if m.State != exerciseStatePopulating {
@@ -602,9 +616,9 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 		return nil
 	}); err != nil {
 		p.API.LogError("failed to mark exercise data ready", "team_id", teamID, "error", err.Error())
-		return "", errors.New("seeded the exercise but could not mark it finished. Run `/channel-request exercise status` to check it, or `/channel-request exercise teardown` to remove it")
+		return "", errors.New("seeded the exercise but could not mark it finished. Run `/mattermost-request-hub exercise status` to check it, or `/mattermost-request-hub exercise teardown` to remove it")
 	}
-	return fmt.Sprintf("Seeded the **%s** exercise into this team: %d personas, %d channels, %d channel requests and %d Channel Admin requests. The requests are waiting in the approval channel. Run `/channel-request exercise teardown` to remove it all.",
+	return fmt.Sprintf("Seeded the **%s** exercise into this team: %d personas, %d channels, %d channel requests and %d Channel Admin requests. The approval cards are waiting for review. Run `/mattermost-request-hub exercise teardown` to remove it all.",
 		escapeMarkdown(sc.Name), len(plan.Personas), len(plan.Channels), len(plan.ChannelRequests), len(plan.AdminRequests)), nil
 }
 
@@ -710,12 +724,28 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 		if err := p.addPendingEntry(pendingKindChannel, req.RequesterID, entry); err != nil {
 			return errors.New("could not list a channel request as pending")
 		}
-		postIDs, err := p.postApprovalRequest(req, users[spec.Requester])
+		rawBefore, _ := json.Marshal(req) // the bytes storeRequest wrote
+		approvalPostID, approvalChannelID, dmPostIDs, err := p.postApprovalRequest(req, users[spec.Requester])
 		if err != nil {
 			return errors.New("could not post a channel request's approval card")
 		}
-		p.saveApprovalPosts(pendingKindChannel, req.ID, postIDs)
-		if err := made(func(m *exerciseManifest) { m.Done[spec.OpKey] = req.ID }, undo); err != nil {
+		p.saveApprovalPosts(pendingKindChannel, req.ID, dmPostIDs)
+		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
+		req.DMRootPostID, req.DMChannelID = p.sendTicketCreatedDM(req, users[spec.Requester])
+		p.persistTicketPosts(ticketPersist{
+			KVKey: kvRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+			RequestID: req.ID, Label: "exercise channel request",
+			Thread: ticketThread{
+				ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+				DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
+				Kind: requestTypeChannel, ScopeID: req.TeamID,
+			},
+		})
+		keys := exerciseRequestKeys(req.ID, approvalPostID, req.DMRootPostID)
+		if err := made(func(m *exerciseManifest) {
+			m.Done[spec.OpKey] = req.ID
+			m.KVKeys = append(m.KVKeys, keys...)
+		}, undo); err != nil {
 			return err
 		}
 	}
@@ -734,12 +764,28 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 		if err := p.addPendingEntry(pendingKindAdmin, req.RequesterID, entry); err != nil {
 			return errors.New("could not list a Channel Admin request as pending")
 		}
-		postIDs, err := p.postAdminApprovalRequest(req, users[spec.Requester], channel)
+		rawBefore, _ := json.Marshal(req) // the bytes storeAdminRequest wrote
+		approvalPostID, approvalChannelID, dmPostIDs, err := p.postAdminApprovalRequest(req, users[spec.Requester], channel)
 		if err != nil {
 			return errors.New("could not post a Channel Admin request's approval card")
 		}
-		p.saveApprovalPosts(pendingKindAdmin, req.ID, postIDs)
-		if err := made(func(m *exerciseManifest) { m.Done[spec.OpKey] = req.ID }, undo); err != nil {
+		p.saveApprovalPosts(pendingKindAdmin, req.ID, dmPostIDs)
+		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
+		req.DMRootPostID, req.DMChannelID = p.sendAdminTicketCreatedDM(req, users[spec.Requester], channel)
+		p.persistTicketPosts(ticketPersist{
+			KVKey: kvAdminRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+			RequestID: req.ID, Label: "exercise Channel Admin request",
+			Thread: ticketThread{
+				ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+				DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
+				Kind: requestTypeChannelAdmin, ScopeID: req.ChannelID,
+			},
+		})
+		keys := exerciseRequestKeys(req.ID, approvalPostID, req.DMRootPostID)
+		if err := made(func(m *exerciseManifest) {
+			m.Done[spec.OpKey] = req.ID
+			m.KVKeys = append(m.KVKeys, keys...)
+		}, undo); err != nil {
 			return err
 		}
 	}
@@ -830,19 +876,19 @@ func (p *Plugin) teardownExercise(teamID string) (string, error) {
 		counts.failed = 0
 		p.teardownPass(teamID, latest, &counts)
 		if counts.failed > 0 {
-			return "", errors.Errorf("%d exercise items could not be removed; see the server logs, then run `/channel-request exercise teardown` again", counts.failed)
+			return "", errors.Errorf("%d exercise items could not be removed; see the server logs, then run `/mattermost-request-hub exercise teardown` again", counts.failed)
 		}
 		deleted, appErr := p.API.KVCompareAndDelete(exerciseManifestKey(teamID), raw)
 		if appErr != nil {
 			p.API.LogWarn("failed to clear exercise record", "team_id", teamID, "error", appErr.Error())
-			return "", errors.New("removed the exercise data but could not clear its record. Run `/channel-request exercise teardown` again")
+			return "", errors.New("removed the exercise data but could not clear its record. Run `/mattermost-request-hub exercise teardown` again")
 		}
 		if deleted {
 			return fmt.Sprintf("Removed the exercise data from this team: %d pending requests closed, %d channels archived and %d personas deactivated.",
 				counts.removed, counts.archived, counts.deactivated), nil
 		}
 	}
-	return "", errors.New("the exercise record kept changing while it was removed. Run `/channel-request exercise teardown` again")
+	return "", errors.New("the exercise record kept changing while it was removed. Run `/mattermost-request-hub exercise teardown` again")
 }
 
 // teardownPass removes the requests, channels and personas the manifest
@@ -864,6 +910,12 @@ func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerci
 	}
 	for _, spec := range plan.AdminRequests {
 		removeRequest(pendingKindAdmin, spec.ID)
+	}
+	for _, key := range m.KVKeys {
+		if appErr := p.API.KVDelete(key); appErr != nil {
+			p.API.LogWarn("failed to delete exercise record", "key", key, "error", appErr.Error())
+			counts.failed++
+		}
 	}
 
 	// A crash right after creating a channel leaves it unrecorded. Its
@@ -918,7 +970,17 @@ func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerci
 			counts.failed++
 			continue
 		}
-		if user == nil || user.DeleteAt != 0 {
+		if user == nil {
+			continue
+		}
+		// A persona's pending lists only ever name exercise requests.
+		for _, kind := range []string{pendingKindChannel, pendingKindAdmin} {
+			if appErr := p.API.KVDelete(pendingListKey(kind, user.Id)); appErr != nil {
+				p.API.LogWarn("failed to delete exercise persona's pending list", "user_id", user.Id, "error", appErr.Error())
+				counts.failed++
+			}
+		}
+		if user.DeleteAt != 0 {
 			continue
 		}
 		if appErr := p.API.UpdateUserActive(user.Id, false); appErr != nil {
@@ -943,8 +1005,11 @@ func (p *Plugin) removeExerciseRequest(kind, requestID string) (bool, error) {
 		return false, nil
 	}
 	var rec struct {
-		RequesterID string `json:"requester_id"`
-		Exercise    bool   `json:"exercise"`
+		RequesterID    string `json:"requester_id"`
+		Exercise       bool   `json:"exercise"`
+		ApprovalPostID string `json:"approval_post_id"`
+		DMRootPostID   string `json:"dm_root_post_id"`
+		DMChannelID    string `json:"dm_channel_id"`
 	}
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return false, errors.Wrap(err, "failed to read the request")
@@ -961,8 +1026,36 @@ func (p *Plugin) removeExerciseRequest(kind, requestID string) (bool, error) {
 		return false, nil
 	}
 	p.releasePending(kind, rec.RequesterID, requestID)
-	p.resolveApprovalCards(requestID, exerciseRemovedText, "")
+	// Close the persona's ticket and every approval card the way an
+	// expiry would: no decision was made.
+	p.finish(newDecisionCards(requestID, "", rec.ApprovalPostID), "", exerciseRemovedText, p.closeTicket(ticketClose{
+		RequesterID: rec.RequesterID, DMRootPostID: rec.DMRootPostID, DMChannelID: rec.DMChannelID,
+		ApprovalPostID: rec.ApprovalPostID, Expired: true,
+		CardTitle:   exerciseDisplayPrefix + "Request Removed",
+		CardText:    "Teardown removed this exercise request.",
+		ThreadReply: exerciseRemovedText,
+		StatusLine:  exerciseRemovedText,
+	}))
+	for _, key := range exerciseRequestKeys(requestID, rec.ApprovalPostID, rec.DMRootPostID) {
+		if appErr := p.API.KVDelete(key); appErr != nil {
+			p.API.LogWarn("failed to delete exercise record", "key", key, "error", appErr.Error())
+		}
+	}
 	return true, nil
+}
+
+// exerciseRequestKeys names the records a request leaves besides itself:
+// its approval card copies and the two reply-forwarding lookups, which
+// outlive a decision.
+func exerciseRequestKeys(requestID, approvalPostID, dmRootPostID string) []string {
+	keys := []string{kvApprovalPostsPrefix + requestID}
+	if approvalPostID != "" {
+		keys = append(keys, kvApprovalPostPrefix+approvalPostID)
+	}
+	if dmRootPostID != "" {
+		keys = append(keys, kvDMRootPrefix+dmRootPostID)
+	}
+	return keys
 }
 
 // archiveExerciseChannel renames a channel so its name can be used again,
@@ -1000,7 +1093,7 @@ func (p *Plugin) archiveExerciseChannel(channelID string) (bool, error) {
 func (p *Plugin) exerciseStatus(teamID string) (string, error) {
 	m, _, err := p.loadExerciseManifest(teamID)
 	if errors.Is(err, errNoExerciseManifest) {
-		return "No exercise data is recorded for this team. Run `/channel-request exercise populate` to seed it.", nil
+		return "No exercise data is recorded for this team. Run `/mattermost-request-hub exercise populate` to seed it.", nil
 	}
 	if err != nil {
 		return "", err
@@ -1059,9 +1152,9 @@ func (p *Plugin) exerciseStatus(teamID string) (string, error) {
 	}
 	switch m.State {
 	case exerciseStatePopulating:
-		b.WriteString("\n\nIf no populate is running, it stopped partway. Run `/channel-request exercise teardown` to remove what it created.")
+		b.WriteString("\n\nIf no populate is running, it stopped partway. Run `/mattermost-request-hub exercise teardown` to remove what it created.")
 	case exerciseStateTearingDown:
-		b.WriteString("\n\nA teardown started but didn't finish. Run `/channel-request exercise teardown` again.")
+		b.WriteString("\n\nA teardown started but didn't finish. Run `/mattermost-request-hub exercise teardown` again.")
 	}
 	return b.String(), nil
 }
