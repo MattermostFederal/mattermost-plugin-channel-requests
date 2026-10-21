@@ -6,7 +6,7 @@ import type {HarnessRecord} from './DomInjectorHarness';
 
 import {expect, test} from '../playwright/ct-coverage';
 
-const OPEN_REQUEST_MODAL = 'com.mattermostfederal.channel-requests_open_request_modal';
+const OPEN_REQUEST_MODAL = 'com.mattermostfederal.mattermost-plugin-request-hub_open_request_modal';
 
 const member = {entities: {users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}}}};
 const admin = {entities: {users: {currentUserId: 'me', profiles: {me: {roles: 'system_user system_admin'}}}}};

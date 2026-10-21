@@ -24,7 +24,11 @@ type Props = {
 };
 
 const defaultEntities: GlobalState['entities'] = {
-    teams: {currentTeamId: 'team1'},
+    teams: {
+        currentTeamId: 'team1',
+        teams: {team1: {id: 'team1', display_name: 'Team One', name: 'team-one'}},
+        myMembers: {},
+    },
     channels: {
         currentChannelId: 'chan1',
         channels: {chan1: {display_name: 'Town Square', type: 'O'}},
@@ -42,7 +46,11 @@ export const StoreHarness = ({entities, requestOpen = false, adminChannelId = nu
             rootReducer,
             {
                 entities: allEntities,
-                [`plugins-${manifest.id}`]: {modalOpen: requestOpen, adminModalChannelId: adminChannelId},
+                [`plugins-${manifest.id}`]: {
+                    ...reducer(undefined, {type: '@@INIT'}),
+                    modalOpen: requestOpen,
+                    adminModalChannelId: adminChannelId,
+                },
             },
         );
     });

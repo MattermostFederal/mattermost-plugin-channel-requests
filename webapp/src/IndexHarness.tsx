@@ -6,9 +6,22 @@ import React, {useEffect, useState} from 'react';
  * The entry point calls `window.registerPlugin(...)` at import time, so the
  * stub has to be in place before the module is pulled in: hence a dynamic
  * import. A Proxy registry records every method `initialize` calls. The
- * harness then runs the registered header actions and the menu item's
- * shouldRender, and serializes everything into a text node for the test.
+ * harness then runs the registered header button and every channel header
+ * menu item (and its shouldRender, when it has one), and serializes
+ * everything into a text node for the test.
  */
+
+export type RecordedMenu = {
+    text: string;
+
+    // dispatch is the action the item dispatched, or null when it did not
+    // dispatch (for example because the request type is turned off).
+    dispatch: unknown;
+
+    // shouldRender maps a channel type to the item's shouldRender result.
+    // Absent when the item is always shown.
+    shouldRender?: Record<string, boolean>;
+};
 
 export type Recorded = {
     registeredId: string;
@@ -17,10 +30,9 @@ export type Recorded = {
     rootComponents: string[];
     headerButtonText: string;
     headerDispatch: unknown;
-    menuText: string;
-    menuDispatch: unknown;
-    shouldRender: Record<string, boolean>;
+    menus: RecordedMenu[];
     errors: string[];
+    infos: string[];
 };
 
 type Props = {
@@ -42,13 +54,20 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
         const run = async () => {
             const calls: Array<{name: string; args: unknown[]}> = [];
             const errors: string[] = [];
+            const infos: string[] = [];
             const dispatched: unknown[] = [];
 
             // eslint-disable-next-line no-console
             const originalError = console.error;
             // eslint-disable-next-line no-console
+            const originalInfo = console.info;
+            // eslint-disable-next-line no-console
             console.error = (...args: unknown[]) => {
                 errors.push(String(args[0]));
+            };
+            // eslint-disable-next-line no-console
+            console.info = (...args: unknown[]) => {
+                infos.push(String(args[0]));
             };
 
             const registry = new Proxy({}, {
@@ -64,8 +83,15 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                     };
                 },
             });
+            const stateFor = (channelType: string) => ({
+                entities: {
+                    teams: {currentTeamId: 't1', teams: {}, myMembers: {}},
+                    users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
+                    channels: {currentChannelId: 'c', channels: {c: {type: channelType}}},
+                },
+            });
             const store = {
-                getState: () => ({entities: {teams: {currentTeamId: 't1'}, users: {currentUserId: 'me', profiles: {}}}}),
+                getState: () => stateFor('O'),
                 dispatch: (action: unknown) => {
                     dispatched.push(action);
                     return action;
@@ -81,12 +107,9 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
             };
             await import('./index');
             await plugin!.initialize(registry, store);
-            // eslint-disable-next-line no-console
-            console.error = originalError;
 
             const find = (name: string) => calls.find((c) => c.name === name);
             const header = find('registerChannelHeaderButtonAction');
-            const menu = find('registerChannelHeaderMenuAction');
 
             let headerDispatch: unknown = null;
             if (header) {
@@ -94,16 +117,29 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                 headerDispatch = dispatched.at(-1);
             }
 
-            let menuDispatch: unknown = null;
-            const shouldRender: Record<string, boolean> = {};
-            if (menu) {
-                (menu.args[1] as Fn)('chan1');
-                menuDispatch = dispatched.at(-1);
-                for (const type of ['O', 'P', 'D', 'G', '']) {
-                    const state = {entities: {teams: {currentTeamId: 't1'}, channels: {currentChannelId: 'c', channels: {c: {type}}}}};
-                    shouldRender[type || 'unknown'] = (menu.args[2] as Fn)(state) as boolean;
+            const menus: RecordedMenu[] = [];
+            for (const menu of calls.filter((c) => c.name === 'registerChannelHeaderMenuAction')) {
+                const before = dispatched.length;
+                // eslint-disable-next-line no-await-in-loop
+                await (menu.args[1] as Fn)('chan1');
+                const entry: RecordedMenu = {
+                    text: String(menu.args[0]),
+                    dispatch: dispatched.length > before ? dispatched.at(-1) : null,
+                };
+                const shouldRender = menu.args[2] as Fn | undefined;
+                if (shouldRender) {
+                    entry.shouldRender = {};
+                    for (const type of ['O', 'P', 'D', 'G', '']) {
+                        entry.shouldRender[type || 'unknown'] = shouldRender(stateFor(type)) as boolean;
+                    }
                 }
+                menus.push(entry);
             }
+
+            // eslint-disable-next-line no-console
+            console.error = originalError;
+            // eslint-disable-next-line no-console
+            console.info = originalInfo;
 
             const recorded: Recorded = {
                 registeredId,
@@ -112,10 +148,9 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                 rootComponents: calls.filter((c) => c.name === 'registerRootComponent').map((c) => (c.args[0] as {name: string}).name),
                 headerButtonText: header ? String(header.args[2]) : '',
                 headerDispatch,
-                menuText: menu ? String(menu.args[0]) : '',
-                menuDispatch,
-                shouldRender,
+                menus,
                 errors,
+                infos,
             };
             setResult(JSON.stringify(recorded));
         };

@@ -6,7 +6,7 @@ import {StoreHarness} from './StoreHarness';
 
 import {expect, test} from '../playwright/ct-coverage';
 
-const API = '**/plugins/com.mattermostfederal.channel-requests/api/v1';
+const API = '**/plugins/com.mattermostfederal.mattermost-plugin-request-hub/api/v1';
 
 async function routeUsers(page: Page) {
     await page.route(`${API}/user_autocomplete**`, (route) => route.fulfill({

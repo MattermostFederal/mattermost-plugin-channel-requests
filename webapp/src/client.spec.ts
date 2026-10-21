@@ -2,10 +2,7 @@ import {expect, test} from '@playwright/test';
 import manifest from 'manifest';
 
 import {
-    autocompleteUsers,
     fetchPrefixes,
-    fetchUsersByIDs,
-    getCSRFToken,
     submitAdminRequest,
     submitChannelRequest,
 } from './client';
@@ -69,19 +66,26 @@ test.afterEach(() => {
     }
 });
 
-test.describe('getCSRFToken', () => {
-    test('is empty without a document', () => {
-        expect(getCSRFToken()).toBe('');
+// The CSRF token is read from the MMCSRF cookie and sent on every POST.
+test.describe('CSRF token header', () => {
+    const tokenSent = async () => {
+        mockFetch(200, {});
+        await submitChannelRequest(payload);
+        return headersOf(calls[0])['X-CSRF-Token'];
+    };
+
+    test('is empty without a document', async () => {
+        expect(await tokenSent()).toBe('');
     });
 
-    test('reads the MMCSRF cookie', () => {
+    test('reads the MMCSRF cookie', async () => {
         setCookie('MMUSERID=u1; MMCSRF=token123; other=x');
-        expect(getCSRFToken()).toBe('token123');
+        expect(await tokenSent()).toBe('token123');
     });
 
-    test('is empty when the cookie is missing', () => {
+    test('is empty when the cookie is missing', async () => {
         setCookie('MMUSERID=u1');
-        expect(getCSRFToken()).toBe('');
+        expect(await tokenSent()).toBe('');
     });
 });
 
@@ -134,50 +138,5 @@ test.describe('fetchPrefixes', () => {
             mockFetch(200);
             expect(await submit()).toEqual({});
         });
-    });
-});
-
-test.describe('fetchUsersByIDs', () => {
-    test('skips the request for no ids', async () => {
-        mockFetch(200, []);
-        expect(await fetchUsersByIDs([])).toEqual([]);
-        expect(calls).toHaveLength(0);
-    });
-
-    test('posts the ids and returns the users', async () => {
-        const users = [{id: 'u1', username: 'alice'}];
-        mockFetch(200, users);
-        expect(await fetchUsersByIDs(['u1'])).toEqual(users);
-        expect(calls[0].url).toBe('/api/v4/users/ids');
-        expect(calls[0].init?.body).toBe(JSON.stringify(['u1']));
-    });
-
-    test('returns an empty list for a non-array body', async () => {
-        mockFetch(200, {});
-        expect(await fetchUsersByIDs(['u1'])).toEqual([]);
-    });
-
-    test('throws on a non-OK status', async () => {
-        mockFetch(403, {});
-        await expect(fetchUsersByIDs(['u1'])).rejects.toThrow('Failed to load users (403)');
-    });
-});
-
-test.describe('autocompleteUsers', () => {
-    test('searches by name and returns the users', async () => {
-        const users = [{id: 'u1', username: 'alice'}];
-        mockFetch(200, {users});
-        expect(await autocompleteUsers('ali')).toEqual(users);
-        expect(calls[0].url).toBe('/api/v4/users/autocomplete?name=ali&limit=20');
-    });
-
-    test('returns an empty list when users is missing', async () => {
-        mockFetch(200, {});
-        expect(await autocompleteUsers('ali')).toEqual([]);
-    });
-
-    test('throws on a non-OK status', async () => {
-        mockFetch(500, {});
-        await expect(autocompleteUsers('ali')).rejects.toThrow('User search failed (500)');
     });
 });

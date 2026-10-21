@@ -25,7 +25,7 @@ const pluginKey = `plugins-${manifest.id}`;
 function stateWith(overrides: Partial<GlobalState['entities']> = {}, plugin?: unknown): GlobalState {
     return {
         entities: {
-            teams: {currentTeamId: 'team1'},
+            teams: {currentTeamId: 'team1', teams: {}, myMembers: {}},
             ...overrides,
         },
         ...(plugin === undefined ? {} : {[pluginKey]: plugin}),
@@ -48,8 +48,15 @@ test.describe('action creators', () => {
 });
 
 test.describe('reducer', () => {
-    test('starts with both modals closed', () => {
-        expect(reducer(undefined, {type: '@@INIT'})).toEqual({modalOpen: false, adminModalChannelId: null});
+    test('starts with every modal closed', () => {
+        const state = reducer(undefined, {type: '@@INIT'});
+        expect(state.modalOpen).toBe(false);
+        expect(state.adminModalChannelId).toBeNull();
+        for (const [key, value] of Object.entries(state)) {
+            if (key !== 'adminModalChannelId') {
+                expect(value, key).toBe(false);
+            }
+        }
     });
 
     test('opens and closes the request modal', () => {
@@ -66,11 +73,11 @@ test.describe('reducer', () => {
 
     test('keeps the other modal state when one changes', () => {
         const both = reducer(reducer(undefined, openRequestModal()), openAdminRequestModal('chan1'));
-        expect(both).toEqual({modalOpen: true, adminModalChannelId: 'chan1'});
+        expect(both).toMatchObject({modalOpen: true, adminModalChannelId: 'chan1'});
     });
 
     test('returns the same state for unknown actions', () => {
-        const state = {modalOpen: true, adminModalChannelId: 'chan1'};
+        const state = {...reducer(undefined, openRequestModal()), adminModalChannelId: 'chan1'};
         expect(reducer(state, {type: 'something_else'})).toBe(state);
     });
 });

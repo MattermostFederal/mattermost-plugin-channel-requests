@@ -43,7 +43,7 @@ test.describe('PrefixEditor', () => {
             await expect(descriptionInputs(page).nth(0)).toHaveValue('Team channels');
             await expect(lengthInputs(page).nth(0)).toHaveValue('16');
             await expect(prefixInputs(page).nth(1)).toHaveValue('ops-');
-            await expect(lengthInputs(page).nth(1)).toHaveValue('24');
+            await expect(lengthInputs(page).nth(1)).toHaveValue('48');
         });
 
         test('reads the upper bound from a regex and clamps lengths', async ({mount, page}) => {
@@ -60,7 +60,7 @@ test.describe('PrefixEditor', () => {
                         />);
             await expect(lengthInputs(page)).toHaveCount(4);
             const values = await lengthInputs(page).evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
-            expect(values).toEqual(['10', '24', '32', '2']);
+            expect(values).toEqual(['10', '48', '48', '2']);
         });
 
         test('re-reads rows when the value changes', async ({mount, page}) => {
@@ -120,8 +120,8 @@ test.describe('PrefixEditor', () => {
                 value='ops-||12'
                 onChange={(id, v) => changes.push([id, v])}
                         />);
-            await lengthInputs(page).first().fill('40');
-            expect(changes.at(-1)?.[1]).toBe('ops-||32');
+            await lengthInputs(page).first().fill('99');
+            expect(changes.at(-1)?.[1]).toBe('ops-||48');
             await lengthInputs(page).first().fill('');
             expect(changes.at(-1)?.[1]).toBe('ops-||2');
         });
@@ -171,9 +171,9 @@ test.describe('PrefixEditor', () => {
                         />);
             await presetSelect(page).selectOption('Support / Success');
             expect(changes.at(-1)?.[1]).toBe([
-                'help-|Customer help channels|24',
-                'onboard-|Customer onboarding|24',
-                'vip-|Enterprise account channels|24',
+                'help-|Customer help channels|48',
+                'onboard-|Customer onboarding|48',
+                'vip-|Enterprise account channels|48',
             ].join('\n'));
             await expect(presetSelect(page)).toHaveValue('');
         });
@@ -188,10 +188,10 @@ test.describe('PrefixEditor', () => {
             await presetSelect(page).selectOption('SRE / Ops');
             expect(changes.at(-1)?.[1]).toBe([
                 'mine-|Custom|8',
-                'OPS-|Operational channels|24',
-                'incident-|Incident response|24',
-                'post-|Post-mortem channels|24',
-                'runbook-|Runbook discussion|24',
+                'OPS-|Operational channels|48',
+                'incident-|Incident response|48',
+                'post-|Post-mortem channels|48',
+                'runbook-|Runbook discussion|48',
             ].join('\n'));
 
             await presetSelect(page).selectOption('SRE / Ops');

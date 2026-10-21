@@ -5,7 +5,7 @@ import {DomInjectorHarness} from './DomInjectorHarness';
 
 import {expect, test} from '../playwright/ct-coverage';
 
-const OPEN_ADMIN_MODAL = 'com.mattermostfederal.channel-requests_open_admin_modal';
+const OPEN_ADMIN_MODAL = 'com.mattermostfederal.mattermost-plugin-request-hub_open_admin_modal';
 
 type ChannelState = {type?: string; roles?: string; systemRoles?: string; channelId?: string};
 

@@ -6,7 +6,7 @@ import {StoreHarness} from './StoreHarness';
 
 import {expect, test} from '../playwright/ct-coverage';
 
-const API = '**/plugins/com.mattermostfederal.channel-requests/api/v1';
+const API = '**/plugins/com.mattermostfederal.mattermost-plugin-request-hub/api/v1';
 
 const prefixes = [
     {prefix: 'team-', description: 'Team channels', suffix_regex: ''},
@@ -52,13 +52,13 @@ test.describe('RequestChannelModal', () => {
             const prefix = page.getByLabel('Domain prefix');
             await expect(prefix).toHaveValue('team-');
             await expect(prefix.locator('option')).toHaveText(['team-  (Team channels)', 'ops-']);
-            await expect(page.getByRole('link', {name: 'Need help?'})).toHaveAttribute('href', '/plugins/com.mattermostfederal.channel-requests/public/help/help.html');
+            await expect(page.getByRole('link', {name: 'Need help?'})).toHaveAttribute('href', '/plugins/com.mattermostfederal.mattermost-plugin-request-hub/public/help/docs.html');
         });
 
         test('explains when no prefixes are configured', async ({mount, page}) => {
             await routePrefixes(page, []);
             await mount(<StoreHarness requestOpen={true}><RequestChannelModal/></StoreHarness>);
-            await expect(page.getByText('Channel requests aren’t configured yet.', {exact: false})).toBeVisible();
+            await expect(page.getByText('Channel creation requests aren’t configured yet', {exact: false})).toBeVisible();
             await page.getByRole('button', {name: 'Close'}).click();
             await expect(page.getByText('Request a Channel')).toBeHidden();
         });

@@ -5,7 +5,7 @@ import {MemberPicker} from './MemberPicker';
 
 import {expect, test} from '../playwright/ct-coverage';
 
-const AUTOCOMPLETE = '**/plugins/com.mattermostfederal.channel-requests/api/v1/user_autocomplete**';
+const AUTOCOMPLETE = '**/plugins/com.mattermostfederal.mattermost-plugin-request-hub/api/v1/user_autocomplete**';
 
 const users = [
     {id: 'u1', username: 'alice', first_name: 'Alice', last_name: 'Adams'},
@@ -86,20 +86,43 @@ test.describe('MemberPicker', () => {
             expect(queries[0].get('team_id')).toBe('team1');
         });
 
-        test('omits the team when none is given', async ({mount, page}) => {
+        test('searches users outside a team with not_in_team_id', async ({mount, page}) => {
             const queries = await routeUsers(page);
             await mount(<MemberPicker
                 value=''
+                notInTeamId='team1'
                 onChange={() => undefined}
                         />);
             await input(page).fill('al');
             await expect(page.getByText('@alice')).toBeVisible();
+            expect(queries[0].get('not_in_team_id')).toBe('team1');
             expect(queries[0].has('team_id')).toBe(false);
+        });
+
+        test('does not search without exactly one scope', async ({mount, page}) => {
+            const queries = await routeUsers(page);
+            const component = await mount(<MemberPicker
+                value=''
+                onChange={() => undefined}
+                                          />);
+            await input(page).fill('al');
+            await page.waitForTimeout(400);
+            await component.update(<MemberPicker
+                value=''
+                teamId='team1'
+                notInTeamId='team2'
+                onChange={() => undefined}
+                                   />);
+            await input(page).fill('ale');
+            await page.waitForTimeout(400);
+            expect(queries).toHaveLength(0);
+            await expect(page.getByText('@alice')).toHaveCount(0);
         });
 
         test('shows full name, then nickname, as secondary text', async ({mount, page}) => {
             await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -111,6 +134,7 @@ test.describe('MemberPicker', () => {
         test('does not search for a blank or @-only query', async ({mount, page}) => {
             const queries = await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -122,6 +146,7 @@ test.describe('MemberPicker', () => {
         test('leaves out users already picked', async ({mount, page}) => {
             await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice'
                 onChange={() => undefined}
                         />);
@@ -133,6 +158,7 @@ test.describe('MemberPicker', () => {
         test('shows nothing when the search fails', async ({mount, page}) => {
             await routeUsers(page, {error: 'nope'}, 500);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -144,6 +170,7 @@ test.describe('MemberPicker', () => {
         test('shows nothing when the network fails', async ({mount, page}) => {
             await page.route(AUTOCOMPLETE, (route) => route.abort('connectionrefused'));
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -163,6 +190,7 @@ test.describe('MemberPicker', () => {
                 await route.fulfill({contentType: 'application/json', body: JSON.stringify([users[0]])});
             });
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -177,6 +205,7 @@ test.describe('MemberPicker', () => {
         test('groups badged users above the rest', async ({mount, page}) => {
             await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 usernameBadges={{albert: 'Channel Admin'}}
                 onChange={() => undefined}
@@ -191,6 +220,7 @@ test.describe('MemberPicker', () => {
         test('closes the dropdown on an outside click and reopens on click', async ({mount, page}) => {
             await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -206,6 +236,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page);
             await page.route('**/api/v4/users/*/image**', (route) => route.fulfill({status: 404, body: ''}));
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -219,6 +250,7 @@ test.describe('MemberPicker', () => {
             const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
             await page.route('**/api/v4/users/*/image**', (route) => route.fulfill({contentType: 'image/png', body: png}));
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -233,6 +265,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={(v) => changes.push(v)}
                         />);
@@ -247,6 +280,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={(v) => changes.push(v)}
                         />);
@@ -264,6 +298,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={(v) => changes.push(v)}
                         />);
@@ -279,6 +314,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={(v) => changes.push(v)}
                         />);
@@ -292,6 +328,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page, []);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice'
                 onChange={(v) => changes.push(v)}
                         />);
@@ -303,6 +340,7 @@ test.describe('MemberPicker', () => {
         test('Enter with an empty query adds nothing', async ({mount, page}) => {
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={(v) => changes.push(v)}
                         />);
@@ -314,6 +352,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page, []);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice'
                 onChange={(v) => changes.push(v)}
                         />);
@@ -325,6 +364,7 @@ test.describe('MemberPicker', () => {
         test('Escape closes the dropdown', async ({mount, page}) => {
             await routeUsers(page);
             await mount(<MemberPicker
+                teamId='team1'
                 value=''
                 onChange={() => undefined}
                         />);
@@ -339,6 +379,7 @@ test.describe('MemberPicker', () => {
         test('removes a user with ×', async ({mount, page}) => {
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice, bob'
                 onChange={(v) => changes.push(v)}
                         />);
@@ -350,6 +391,7 @@ test.describe('MemberPicker', () => {
         test('Backspace on an empty input removes the last user', async ({mount, page}) => {
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice, bob'
                 onChange={(v) => changes.push(v)}
                         />);
@@ -363,6 +405,7 @@ test.describe('MemberPicker', () => {
             await routeUsers(page, []);
             const changes: string[] = [];
             await mount(<MemberPicker
+                teamId='team1'
                 value='alice'
                 onChange={(v) => changes.push(v)}
                         />);
