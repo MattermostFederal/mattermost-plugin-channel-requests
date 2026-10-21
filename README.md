@@ -1,56 +1,63 @@
-# Mattermost Plugin: Channel Requests
+# Mattermost Request Hub
 
-A Mattermost plugin that lets non-admins **request** new channels for approval instead of creating them directly. On approval, the plugin creates the channel and adds the requester plus any designated members and Channel Admins. System Admins and users on an auto-approve list bypass approval and create channels immediately.
+Governance plugin for Mattermost: non-admins **request** channels, Channel Admin, teams, team membership, guest invites, bots, and webhooks. Approvers act from plugin-managed channels with two-way messaging threads.
+
+**Plugin ID:** `com.mattermostfederal.mattermost-plugin-request-hub`  
+**Slash command:** `/mattermost-request-hub`  
+**Sidebar category:** Mattermost: Request Hub
+
+> **Breaking (0.5.0):** plugin ID changed from `com.mattermostfederal.channel-requests`. Uninstall the old bundle before installing this one: settings and pending KV tickets do not migrate.
 
 ## Features
 
-- **Request workflow**: Non-admins submit a channel request via the `/channel-request` slash command (native dialog with a member picker, or `create`, `admin` and `prefixes` subcommands to skip the form), a "Request Channel" channel-header button, or the sidebar "+" menu (relabeled "Request new channel" for non-admins).
-- **Admin approval**: Requests are posted to a configured approval channel with Approve / Deny buttons. System Admins can act, and so can Team Admins of the approval team when **Team Admins can approve requests** is on. Only a System Admin can approve their own request. Approving creates the channel and adds the requester + designated members; denying notifies the requester. Either way the requester gets a DM.
-- **Admin bypass**: Requests from System Admins and from users on the auto-approve list create the channel immediately.
-- **Configurable naming**: Admins define a list of channel prefixes (`team-`, `ops-`, ...), each with a description and a maximum suffix length. Requesters pick a prefix, and the channel URL is the prefix plus a suffix. At least one prefix is required before requests can be made.
-- **Agents tools**: When **Offer tools to Agents** is on, an agent from the Mattermost Agents plugin can list prefixes and file channel and Channel Admin requests for the user it's talking to, under the same rules. Agents can't approve or deny.
-- **Channel Admin requests**: On an existing channel, a non-admin member can request that someone be made a Channel Admin, via a "Request Admin" button in the Members panel, the channel-name menu, or `/channel-request admin @user`. The request is posted to the approval channel, @-mentioning the System Admins and the channel's Team Admins, who Approve / Deny.
+- Request Hub (App Bar) plus More actions, slash commands, and native menu overrides
+- Slash command arguments that request a channel (`channel <prefix> <Channel name> [options]`) or Channel Admin (`channel-admin @user ...`) without opening a form, plus `prefixes` to list the channel prefixes
+- Per-type enable toggles in System Console
+- Per-user limit on pending channel and Channel Admin requests, and an expiry after which they can no longer be approved
+- Approval routing: channel requests (root or per-team), team-scope tickets in `mattermost-team-requests`, bots/webhooks in dedicated channels
+- Soft-squash approval cards and DM ticket threads with message relay
+- Bot/webhook two-step approval via User Attributes
+- Optional tools for the Mattermost Agents plugin (**Offer tools to Agents**): an agent can list prefixes and file channel and Channel Admin requests for the user it's talking to, under the same rules and per-type toggles. Agents can't approve or deny.
 
 ## Documentation
 
-- [Channel Requests: User Guide](docs/CHANNEL_CREATION_GUIDE.md): requesting and approving **new channels**.
-- [Channel Admin Requests: User Guide](docs/CHANNEL_ADMIN_GUIDE.md): requesting **admin rights on an existing channel**.
-- [Releasing](docs/RELEASING.md): how to cut a release.
-- Built-in help, served by the plugin at `/plugins/com.mattermostfederal.channel-requests/public/help/help.html`, with a slash command reference and a troubleshooting page. The System Console settings page links to it.
+- [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md): requesting and approving **new channels**
+- [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md): requesting **admin rights on an existing channel**
+- [Team Requests](docs/TEAM_REQUEST_GUIDE.md): create team / Team Admin
+- [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md): add members / guest invite email
+- [Bot Accounts](docs/BOT_REQUEST_GUIDE.md)
+- [Webhooks](docs/WEBHOOK_REQUEST_GUIDE.md)
+- [Admin Guide](docs/admin-guide.md)
+- [Releasing](docs/RELEASING.md): how to cut a release
 
-## Configuration
-
-In **System Console → Plugins → Channel Requests**, set:
-
-- **Approval team**: the team containing the approval channel, picked from a dropdown. Recommended.
-- **Approval channel**: the channel where requests are posted, picked from a dropdown. Recommended: if it isn't set, or the channel is missing or archived, each request is sent by direct message to every System Admin instead.
-- **Channel domain prefixes**: the prefixes requesters pick from, with descriptions and suffix rules. At least one is required.
-- **Team Admins can approve requests**: optional; lets Team Admins of the approval team act on channel-creation requests.
-- **Auto-approve requests from these users**: optional; these users' requests skip approval.
-- **Pending requests per user**: how many requests of each kind (new channel, Channel Admin) one user can have waiting for review. Default 5, up to 1000; 0 means no limit.
-- **Request expiry (days)**: pending requests older than this can no longer be approved. Default 30, at most 3650; 0 means requests never expire.
-- **Audit channel ID**: optional; every approve/deny is logged to this channel, which must be a private channel.
-- **Offer tools to Agents**: optional, off by default; lets the Mattermost Agents plugin file requests on a user's behalf.
+In Mattermost, **`/mattermost-request-hub docs`** opens the bundled HTML guide, served by the plugin at `/plugins/com.mattermostfederal.mattermost-plugin-request-hub/public/help/docs.html`, with a slash command reference and a troubleshooting page. The System Console settings page links to it.
 
 Requires Mattermost 11.3 or later.
-
-See the [user guide](docs/CHANNEL_CREATION_GUIDE.md#admin-setup) for details.
-
-> To fully funnel non-admins through the request flow, remove the built-in **Create Public/Private Channel** permission from the System User role (System Console → User Management → Permissions). Mattermost's plugin API cannot veto native channel creation.
 
 ## Build and deploy
 
 ```sh
-make dist    # build the plugin bundle
-make deploy  # build and deploy to a running Mattermost server
+make dist    # builds dist/com.mattermostfederal.mattermost-plugin-request-hub-*.tar.gz
+make deploy  # optional: deploy to a running Mattermost server
 ```
 
 ## Common commands
 
-- `make dist` - build the plugin bundle
-- `make check-style` - lint Go and webapp code
-- `make test` - run tests
-- `make deploy` - deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
+- `make dist`: build the plugin bundle
+- `make check-style`: lint Go and webapp code
+- `make test`: run tests
+- `make deploy`: deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
+
+## Configuration
+
+**System Console → Plugins → Mattermost Request Hub**
+
+- Set **Approval team**
+- Enable the request types you need (guest invites default off; team member / team / bot / webhook default on)
+- Configure channel domain prefixes for channel creation
+- For guests: enable Guest Accounts on the server before relying on emailed invites
+
+> To fully funnel non-admins through the request flow, remove the built-in **Create Public/Private Channel** permission from the System User role (System Console → User Management → Permissions). Mattermost's plugin API cannot veto native channel creation.
 
 ## PR preview environments
 
@@ -70,10 +77,14 @@ One-time setup:
 
 This plugin ships with a CycloneDX SBOM and grype-based vulnerability audit:
 
-- `make sbom` - generate CycloneDX SBOMs for the Go server and npm webapp into `dist/sbom/`
-- `make sbom-scan` - run grype against the SBOMs and fail on high or critical CVEs
-- `make sbom-audit` - `sbom` then `sbom-scan` in one step
+- `make sbom`: generate CycloneDX SBOMs for the Go server and npm webapp into `dist/sbom/`
+- `make sbom-scan`: run grype against the SBOMs and fail on high or critical CVEs
+- `make sbom-audit`: `sbom` then `sbom-scan` in one step
 
 Suppress known-false-positive findings by adding entries to `.grype.yaml` with a short reason. Typical reasons include: dev-only transitive dependency (not in the shipped bundle) or runtime dependency that Mattermost externalizes (e.g. react, redux).
 
 See the [Mattermost plugin developer docs](https://developers.mattermost.com/extend/plugins/) for more information.
+
+## License
+
+See [LICENSE](LICENSE).

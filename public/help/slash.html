@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slash commands (Mattermost Request Hub)</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html" class="active">Slash commands</a>
+            <a href="agents.html">AI agents</a>
+            <a href="troubleshooting.html">Troubleshooting</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Slash commands
+        </div>
+
+
+        <h1>Slash commands</h1>
+        <p class="tagline">Same requests as the hub and native menus, from the message box. Replies are only visible to you.</p>
+
+        <h2 id="overview">The <code>/mattermost-request-hub</code> command</h2>
+        <table class="field-table">
+            <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><a href="#docs"><code>/mattermost-request-hub docs</code></a></td><td>Links to this documentation (overview).</td></tr>
+                <tr><td><a href="#help"><code>/mattermost-request-hub help</code></a></td><td>Lists every subcommand and its arguments, with a link to this documentation.</td></tr>
+                <tr><td><a href="#channel"><code>/mattermost-request-hub channel</code></a></td><td>Opens the Request a Channel form, or with arguments requests a channel without it. <code>/mattermost-request-hub</code> on its own opens the form too.</td></tr>
+                <tr><td><a href="#channel-admin"><code>/mattermost-request-hub channel-admin</code></a></td><td>Opens the Request Channel Admin form, or with <code>@user</code> names asks for those channel members to be made Channel Admins of the channel you run it in.</td></tr>
+                <tr><td><a href="#prefixes"><code>/mattermost-request-hub prefixes</code></a></td><td>Lists the channel prefixes you can use, with each one's description and suffix rule.</td></tr>
+                <tr><td><a href="#team"><code>/mattermost-request-hub team</code></a></td><td>Opens the Request a Team form.</td></tr>
+                <tr><td><a href="#team-admin"><code>/mattermost-request-hub team-admin</code></a></td><td>Opens the Request Team Admin form.</td></tr>
+                <tr><td><a href="#team-member"><code>/mattermost-request-hub team-member</code></a></td><td>Opens the Request Team Members form.</td></tr>
+                <tr><td><a href="#team-guest"><code>/mattermost-request-hub team-guest</code></a></td><td>Opens the Request Guest Invite form.</td></tr>
+                <tr><td><a href="#bot"><code>/mattermost-request-hub bot</code></a></td><td>Opens the Request a Bot form.</td></tr>
+                <tr><td><a href="#webhook-incoming"><code>/mattermost-request-hub webhook-incoming</code></a></td><td>Opens the incoming webhook form.</td></tr>
+                <tr><td><a href="#webhook-outgoing"><code>/mattermost-request-hub webhook-outgoing</code></a></td><td>Opens the outgoing webhook form.</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            A request type a System Admin has turned off in the System Console replies that it is disabled, for
+            example <em>Channel requests are currently disabled by an administrator.</em>
+            Requests made with a slash command always go to the approvers, even when a System Admin runs it.
+            An unknown subcommand replies <em>Unknown subcommand `name`.</em> followed by the list above.
+        </p>
+
+        <h2 id="docs"><code>/mattermost-request-hub docs</code></h2>
+        <p>Replies with a link to the <a href="docs.html">overview</a> of this documentation.</p>
+
+        <h2 id="help"><code>/mattermost-request-hub help</code></h2>
+        <p>Lists every subcommand and its arguments, with a link to this documentation.</p>
+
+        <h2 id="channel"><code>/mattermost-request-hub channel</code></h2>
+        <p>
+            On its own, opens the <a href="channel.html">Request a Channel</a> form. With a prefix and a channel
+            name, it requests the channel in the current team without the form.
+        </p>
+
+        <h3 id="channel-without-form">Requesting a channel without the form</h3>
+<pre><code>/mattermost-request-hub channel &lt;prefix&gt; &lt;Channel name&gt; [--suffix &lt;suffix&gt;] [--purpose &lt;text&gt;] [--private] [--members @user ...] [--admins @user ...] [--category &lt;name&gt;]</code></pre>
+        <p>
+            The prefix comes first, typed exactly as <code>/mattermost-request-hub prefixes</code> lists it
+            (for example <code>team-</code>). Then comes the channel name, which can be several words, then any
+            options in any order. Each option takes the words up to the next <code>--</code>, and each can be
+            given only once.
+        </p>
+
+        <table class="field-table">
+            <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><code>--suffix &lt;suffix&gt;</code></td><td>The URL part after the prefix, as one word. Leave it out to generate it from the channel name.</td></tr>
+                <tr><td><code>--purpose &lt;text&gt;</code></td><td>A short description of the channel.</td></tr>
+                <tr><td><code>--private</code></td><td>Makes the channel private. Without it the channel is public.</td></tr>
+                <tr><td><code>--members @user ...</code></td><td>Users who become regular members on approval. If you list exactly one member and no <code>--admins</code>, that member is made a Channel Admin, so the channel always has someone who can manage it.</td></tr>
+                <tr><td><code>--admins @user ...</code></td><td>Users who become Channel Admins on approval.</td></tr>
+                <tr><td><code>--category &lt;name&gt;</code></td><td>Sidebar category to place the channel in on approval. It can be several words; a missing category is created.</td></tr>
+            </tbody>
+        </table>
+
+        <p>For example:</p>
+<pre><code>/mattermost-request-hub channel team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
+/mattermost-request-hub channel ops- SRE On-call --suffix sre-oncall --private --category Operations</code></pre>
+
+        <p>
+            The request goes through the same checks and approval as the form, and you get the same confirmation.
+        </p>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Limits of the command</div>
+            <p>
+                A channel name, purpose or category can't contain a word that starts with <code>--</code>, and
+                extra spaces or line breaks in them become single spaces. Use the form if you need either.
+            </p>
+        </div>
+
+        <h3 id="channel-errors">When <code>channel</code> refuses</h3>
+        <p>If something is wrong, the reply says what, and nothing is submitted.</p>
+        <table class="field-table">
+            <thead><tr><th>Reply</th><th>What to do</th></tr></thead>
+            <tbody>
+                <tr><td><em>Could not read the request: a prefix and a channel name are required.</em></td><td>Give the prefix, then the name, before any option.</td></tr>
+                <tr><td><em>Could not read the request: unknown option `--x`.</em>, <em>... is given more than once</em>, <em>`--suffix` takes exactly one value</em></td><td>Check the options against the table above.</td></tr>
+                <tr><td><em>prefix "x" is not in the list of allowed prefixes</em></td><td>Run <code>/mattermost-request-hub prefixes</code> and copy one exactly.</td></tr>
+                <tr><td><em>suffix "x" doesn't match the required pattern for prefix "y"</em></td><td>The prefix has a suffix rule; <code>prefixes</code> shows it.</td></tr>
+                <tr><td><em>unknown user: name</em></td><td>Check the spelling of each <code>@user</code>.</td></tr>
+                <tr><td><em>you must be a member of the team to request a channel in it</em></td><td>Run the command from a team you belong to.</td></tr>
+                <tr><td><em>you have N pending requests waiting for review...</em>, <em>you already have a pending request for ~name in this team</em></td><td>See <a href="troubleshooting.html#pending-limit">Pending limit</a>.</td></tr>
+                <tr><td><em>Channel requests aren't configured yet...</em></td><td>See <a href="troubleshooting.html#not-configured">Not configured</a>.</td></tr>
+            </tbody>
+        </table>
+
+        <h2 id="channel-admin"><code>/mattermost-request-hub channel-admin</code></h2>
+        <p>
+            On its own, opens the <a href="channel-admin.html">Request Channel Admin</a> form. With
+            <code>@user</code> names, it files the request for the channel you run it in.
+        </p>
+
+        <h3 id="channel-admin-without-form">Requesting Channel Admin without the form</h3>
+<pre><code>/mattermost-request-hub channel-admin @user [@user ...]</code></pre>
+        <p>
+            Run it in the channel itself. You must be a member of it (System Admins excepted), and everyone you
+            name must already be a member too; the request never adds anyone to the channel. The request goes to
+            the System Admins and the Team Admins of the channel's team, the same approvers as the form. The
+            command isn't hidden from people who already admin the channel, but they can manage it directly
+            instead.
+        </p>
+        <table class="field-table">
+            <thead><tr><th>Reply</th><th>What to do</th></tr></thead>
+            <tbody>
+                <tr><td><em>Name at least one channel member...</em></td><td>Add at least one <code>@user</code>.</td></tr>
+                <tr><td><em>everyone you nominate must already be a member of the channel</em></td><td>Add them to the channel first.</td></tr>
+                <tr><td><em>channel not found, or you are not a member of it</em></td><td>Run it from a channel you belong to.</td></tr>
+                <tr><td><em>Channel Admins can only be requested for public or private channels</em>, <em>that channel is archived</em></td><td>Direct and group messages and archived channels can't have Channel Admins.</td></tr>
+                <tr><td><em>you already have a pending Channel Admin request for these people in this channel</em></td><td>Wait for the existing request to be reviewed.</td></tr>
+            </tbody>
+        </table>
+
+        <h2 id="prefixes"><code>/mattermost-request-hub prefixes</code></h2>
+        <p>
+            Lists every prefix your admin configured, with its description and, where there is one, its suffix
+            rule. Use these exactly with <code>/mattermost-request-hub channel</code>.
+        </p>
+
+        <h2 id="other-forms">Forms for the other request types</h2>
+        <p>
+            These subcommands take no arguments and open the request form for their type. The form, approvers
+            and what happens on approve are described on each type's page.
+        </p>
+        <h3 id="team"><code>/mattermost-request-hub team</code></h3>
+        <p>Opens the Request a Team form. See <a href="team.html">Teams</a>.</p>
+        <h3 id="team-admin"><code>/mattermost-request-hub team-admin</code></h3>
+        <p>Opens the Request Team Admin form for the current team. See <a href="team.html">Teams</a>.</p>
+        <h3 id="team-member"><code>/mattermost-request-hub team-member</code></h3>
+        <p>Opens the Request Team Members form for the current team. See <a href="team-member.html">Team members</a>.</p>
+        <h3 id="team-guest"><code>/mattermost-request-hub team-guest</code></h3>
+        <p>Opens the Request Guest Invite form for the current team. See <a href="team-guest.html">Guest invites</a>.</p>
+        <h3 id="bot"><code>/mattermost-request-hub bot</code></h3>
+        <p>Opens the Request a Bot form. See <a href="bot.html">Bots</a>.</p>
+        <h3 id="webhook-incoming"><code>/mattermost-request-hub webhook-incoming</code></h3>
+        <p>Opens the incoming webhook form. See <a href="webhook.html">Webhooks</a>.</p>
+        <h3 id="webhook-outgoing"><code>/mattermost-request-hub webhook-outgoing</code></h3>
+        <p>Opens the outgoing webhook form. See <a href="webhook.html">Webhooks</a>.</p>
+
+        <p>
+            Channel and Channel Admin requests can also be filed by an AI agent; see <a href="agents.html">AI agents</a>.
+            If a reply isn't clear, see <a href="troubleshooting.html">Troubleshooting</a>.
+        </p>
+
+        <p style="margin-top: 32px; opacity: 0.65; font-size: 13px;">
+            Markdown sources for contributors live in the plugin repo under <code>docs/</code>
+            (including <code>admin-guide.md</code> for System Console setup).
+        </p>
+
+    </main>
+</div>
+</body>
+</html>

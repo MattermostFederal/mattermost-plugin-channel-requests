@@ -2,8 +2,9 @@ import manifest from 'manifest';
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 
-import {fetchPrefixes, submitChannelRequest} from './client';
-import type {ChannelPrefix} from './client';
+import {fetchPrefixes, fetchSidebarCategories, submitChannelRequest} from './client';
+import type {ChannelPrefix, SidebarCategory} from './client';
+import {useDialogFocusTrap} from './dialogA11y';
 import {MemberPicker, parseUsernames} from './MemberPicker';
 import {closeRequestModal, getCurrentTeamId, isRequestModalOpen} from './store';
 import type {GlobalState} from './store';
@@ -66,6 +67,8 @@ export const RequestChannelModal = () => {
     const [prefixesLoaded, setPrefixesLoaded] = useState(false);
     const [prefixError, setPrefixError] = useState(false);
     const [selectedPrefix, setSelectedPrefix] = useState('');
+    const [categories, setCategories] = useState<SidebarCategory[]>([]);
+    const [selectedCategory, setSelectedCategory] = useState('');
 
     // Generation counter so only the latest fetch updates state. Rapid
     // Retry clicks, or close-then-reopen while a fetch is in flight, would
@@ -103,6 +106,10 @@ export const RequestChannelModal = () => {
             return;
         }
         loadPrefixes();
+
+        // Load sidebar categories alongside prefixes. Failures are silent —
+        // the dropdown just won't appear (feature degrades gracefully).
+        fetchSidebarCategories(teamId).then(setCategories).catch(() => setCategories([]));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
@@ -116,10 +123,6 @@ export const RequestChannelModal = () => {
         return selectedPrefix + (slug || 'suffix');
     }, [urlName, displayName, selectedPrefix]);
 
-    if (!isOpen) {
-        return null;
-    }
-
     const reset = () => {
         setDisplayName('');
         setUrlName('');
@@ -127,6 +130,7 @@ export const RequestChannelModal = () => {
         setChannelType('O');
         setMembersText('');
         setAdminMembersText('');
+        setSelectedCategory('');
         setError('');
         setSuccess('');
         setSubmitting(false);
@@ -143,6 +147,13 @@ export const RequestChannelModal = () => {
         reset();
         dispatch(closeRequestModal());
     };
+
+    // Must run unconditionally — never after `if (!isOpen) return null`.
+    const {dialogRef, onKeyDown: onDialogKeyDown} = useDialogFocusTrap(close, isOpen);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const submit = async () => {
         if (!displayName.trim()) {
@@ -166,6 +177,7 @@ export const RequestChannelModal = () => {
                 channel_type: channelType,
                 members,
                 admin_members: adminMembers,
+                category: selectedCategory || undefined,
             });
 
             if (result.error) {
@@ -189,14 +201,23 @@ export const RequestChannelModal = () => {
             onClick={close}
         >
             <div
+                ref={dialogRef}
                 style={dialogStyle}
+                role='dialog'
+                aria-modal={true}
+                aria-labelledby='rc-title'
+                tabIndex={-1}
+                onKeyDown={onDialogKeyDown}
                 onClick={(e) => e.stopPropagation()}
             >
-                <h3 style={{marginTop: 0}}>{'Request a Channel'}</h3>
+                <h3
+                    id='rc-title'
+                    style={{marginTop: 0}}
+                >{'Request a Channel'}</h3>
                 <p style={{opacity: 0.72}}>
                     {'Your request will be sent to an admin for approval. '}
                     <a
-                        href={`/plugins/${manifest.id}/public/help/help.html`}
+                        href={`/plugins/${manifest.id}/public/help/docs.html`}
                         target='_blank'
                         rel='noopener noreferrer'
                     >
@@ -233,6 +254,7 @@ export const RequestChannelModal = () => {
                             <div>
                                 <div
                                     className='alert alert-danger'
+                                    role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {'Could not load channel request settings. Please try again.'}
@@ -262,7 +284,7 @@ export const RequestChannelModal = () => {
                                     className='alert alert-warning'
                                     style={{marginBottom: 16}}
                                 >
-                                    {'Channel requests aren’t configured yet. Ask a System Admin to define at least one channel prefix in System Console → Plugins → Channel Requests.'}
+                                    {'Channel creation requests aren’t configured yet — no channel prefixes have been defined. Ask a System Admin to add at least one prefix in System Console → Plugins → Mattermost Request Hub, then try again.'}
                                 </div>
                                 <div style={{textAlign: 'right'}}>
                                     <button
@@ -425,9 +447,35 @@ export const RequestChannelModal = () => {
                             );
                         })()}
 
+                            <div style={fieldStyle}>
+                                <label htmlFor='cr-category'>{'Sidebar category (optional)'}</label>
+                                <input
+                                    id='cr-category'
+                                    className='form-control'
+                                    list='cr-category-suggestions'
+                                    value={selectedCategory}
+                                    onChange={(e) => setSelectedCategory(e.target.value)}
+                                    placeholder='Pick an existing category or type a new name'
+                                    maxLength={64}
+                                    autoComplete='off'
+                                />
+                                <datalist id='cr-category-suggestions'>
+                                    {categories.map((c) => (
+                                        <option
+                                            key={c.id}
+                                            value={c.display_name}
+                                        />
+                                ))}
+                                </datalist>
+                                <small style={{opacity: 0.6}}>
+                                    {'Pick from suggestions or type a new name. On approval, the channel is placed there for you and listed members — a missing category is created automatically.'}
+                                </small>
+                            </div>
+
                             {error ? (
                                 <div
                                     className='alert alert-danger'
+                                    role='alert'
                                     style={{marginBottom: 16}}
                                 >
                                     {error}
