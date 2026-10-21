@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channels — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html" class="active">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+            <a href="agents.html">AI agents</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Channels
+        </div>
+
+        <h1>Request a channel</h1>
+        <p class="tagline">
+            Same form from every entry point. Approvers create the channel and post a welcome message.
+        </p>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>+ menu:</strong> channel sidebar <strong>+</strong> → <strong>Request new channel</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request a Channel</strong></li>
+            <li><strong>Dropdown:</strong> channel name → More actions → <strong>Request a Channel</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub channel</code> opens the form; add a prefix, a name and options to skip it (see <a href="slash.html#channel-without-form">Slash commands</a>)</li>
+            <li><strong>Agent:</strong> when <em>Offer tools to Agents</em> is on, ask an AI agent to file it for you (see <a href="agents.html">AI agents</a>)</li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/channel-request/mattermost-creation-plus-menu.png" alt="Request new channel in the + menu">
+                <figcaption>+ menu</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-request-hub.png" alt="Request Hub with Request a Channel">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form</h2>
+        <img src="images/channel-request/mattermost-creation-modal.png" alt="Request a Channel form">
+
+        <table class="field-table">
+            <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td>Domain prefix</td><td>Required. Category for the URL (<code>prefix</code> + <code>suffix</code>).</td></tr>
+                <tr><td>Channel name</td><td>Display name (required).</td></tr>
+                <tr><td>URL suffix</td><td>Optional; live Preview shows the final URL.</td></tr>
+                <tr><td>Purpose / Visibility</td><td>Optional description; Public or Private.</td></tr>
+                <tr><td>Members / Channel Admins</td><td>Who to add on approval (a user is in one list only).</td></tr>
+                <tr><td>Sidebar category</td><td>Optional; pick existing or type a new name (created on approval).</td></tr>
+            </tbody>
+        </table>
+
+        <div class="alert alert-warning">
+            <div class="alert-title">No prefixes configured</div>
+            <p>
+                Channel requests need at least one domain prefix. Until a System Admin defines one, the form and
+                the slash command show: <em>Channel requests aren't configured yet. Ask a System Admin to define at
+                least one channel prefix in System Console → Plugins → Mattermost Request Hub.</em>
+            </p>
+        </div>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Limits</div>
+            <p>
+                A System Admin sets how many channel requests you can have waiting for review at once
+                (<em>Pending requests per user</em>; Channel Admin requests are counted separately). At the
+                limit, you'll see <em>you have N pending requests waiting for review; you can submit more once
+                some are approved, denied or expire</em>.
+            </p>
+            <p>
+                You can't have the same request pending twice: asking again for a channel name you're already
+                waiting on shows <em>you already have a pending request for ~name in this team</em>. Requests
+                that aren't reviewed within <em>Request expiry (days)</em> expire, and your ticket DM says so.
+            </p>
+        </div>
+
+        <h2>On approve</h2>
+        <p>Approval card → Approve creates the channel and posts a welcome message.</p>
+        <p>
+            Approve checks the request again first. If the requester's account is no longer active, they've
+            left the team, or the channel name no longer matches the configured prefixes, the approver gets a
+            private message saying so; the request stays pending and the card keeps its buttons, so it can be
+            denied. An expired request can't be approved (see <a href="approving.html#expired">Expired requests</a>).
+        </p>
+        <img src="images/channel-request/mattermost-creation-approval-card.png" alt="Channel creation approval card">
+        <img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel">
+
+    </main>
+</div>
+</body>
+</html>

@@ -71,4 +71,4 @@ formatters:
           replacement: any
     goimports:
       local-prefixes:
-        - github.com/MattermostFederal/mattermost-plugin-channel-requests
+        - github.com/MattermostFederal/mattermost-plugin-request-hub

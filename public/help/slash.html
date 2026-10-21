@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slash commands — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html" class="active">Slash commands</a>
+            <a href="agents.html">AI agents</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Slash commands
+        </div>
+
+
+        <h1>Slash commands</h1>
+        <p class="tagline">Same requests as the hub and native menus, from the message box. Replies are only visible to you.</p>
+
+        <table class="field-table">
+            <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><code>/mattermost-request-hub docs</code></td><td>Links to this documentation (overview).</td></tr>
+                <tr><td><code>/mattermost-request-hub help</code></td><td>Lists every subcommand and its arguments, with a link to this documentation.</td></tr>
+                <tr><td><code>/mattermost-request-hub channel</code></td><td>Opens the Request a Channel form. <code>/mattermost-request-hub</code> on its own does the same.</td></tr>
+                <tr><td><code>/mattermost-request-hub channel &lt;prefix&gt; &lt;Channel name&gt; [options]</code></td><td>Requests a channel in the current team without the form. See <a href="#channel-without-form">below</a>.</td></tr>
+                <tr><td><code>/mattermost-request-hub channel-admin</code></td><td>Opens the Request Channel Admin form.</td></tr>
+                <tr><td><code>/mattermost-request-hub channel-admin @user [@user ...]</code></td><td>Asks for those channel members to be made Channel Admins of the channel you run it in. See <a href="#channel-admin-without-form">below</a>.</td></tr>
+                <tr><td><code>/mattermost-request-hub prefixes</code></td><td>Lists the channel prefixes you can use, with each one's description and suffix rule.</td></tr>
+                <tr><td><code>/mattermost-request-hub team</code></td><td>Opens the Request a Team form.</td></tr>
+                <tr><td><code>/mattermost-request-hub team-admin</code></td><td>Opens the Request Team Admin form.</td></tr>
+                <tr><td><code>/mattermost-request-hub team-member</code></td><td>Opens the Request Team Members form.</td></tr>
+                <tr><td><code>/mattermost-request-hub team-guest</code></td><td>Opens the Request Guest Invite form.</td></tr>
+                <tr><td><code>/mattermost-request-hub bot</code></td><td>Opens the Request a Bot form.</td></tr>
+                <tr><td><code>/mattermost-request-hub webhook-incoming</code></td><td>Opens the incoming webhook form.</td></tr>
+                <tr><td><code>/mattermost-request-hub webhook-outgoing</code></td><td>Opens the outgoing webhook form.</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            A request type a System Admin has turned off in the System Console replies that it is disabled.
+            Requests made with a slash command always go to the approvers, even when a System Admin runs it.
+            An unknown subcommand replies with the list above.
+        </p>
+
+        <h2 id="channel-without-form">Requesting a channel without the form</h2>
+        <p>
+            The prefix comes first, typed exactly as <code>/mattermost-request-hub prefixes</code> lists it
+            (for example <code>team-</code>). Then comes the channel name, which can be several words, then any
+            options in any order. Each option takes the words up to the next <code>--</code>.
+        </p>
+
+        <table class="field-table">
+            <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><code>--suffix &lt;suffix&gt;</code></td><td>The URL part after the prefix, as one word. Leave it out to generate it from the channel name.</td></tr>
+                <tr><td><code>--purpose &lt;text&gt;</code></td><td>A short description of the channel.</td></tr>
+                <tr><td><code>--private</code></td><td>Makes the channel private. Without it the channel is public.</td></tr>
+                <tr><td><code>--members @user ...</code></td><td>Users who become regular members on approval.</td></tr>
+                <tr><td><code>--admins @user ...</code></td><td>Users who become Channel Admins on approval.</td></tr>
+                <tr><td><code>--category &lt;name&gt;</code></td><td>Sidebar category to place the channel in on approval. It can be several words; a missing category is created.</td></tr>
+            </tbody>
+        </table>
+
+        <p>For example:</p>
+<pre><code>/mattermost-request-hub channel team- Marketing Team --purpose Campaign planning --members @alice @bob --admins @carol
+/mattermost-request-hub channel ops- SRE On-call --suffix sre-oncall --private --category Operations</code></pre>
+
+        <p>
+            The request goes through the same checks and approval as the form, and you get the same confirmation.
+            If something is wrong, such as an unknown prefix, an unknown <code>@user</code> or a suffix that breaks
+            the prefix's rule, the reply says what, and nothing is submitted.
+        </p>
+
+        <div class="alert alert-info">
+            <div class="alert-title">Limits of the command</div>
+            <p>
+                A channel name, purpose or category can't contain a word that starts with <code>--</code>, and
+                extra spaces or line breaks in them become single spaces. Use the form if you need either.
+            </p>
+        </div>
+
+        <h2 id="channel-admin-without-form">Requesting Channel Admin without the form</h2>
+        <p>
+            Run <code>/mattermost-request-hub channel-admin @user [@user ...]</code> in the channel itself. You must
+            be a member of it (System Admins excepted), and everyone you name must already be a member too; the request never adds anyone
+            to the channel. The approvers are the same as for the form. The command isn't hidden from people who
+            already admin the channel, but they can manage it directly instead.
+        </p>
+
+        <p style="margin-top: 32px; opacity: 0.65; font-size: 13px;">
+            Markdown sources for contributors live in the plugin repo under <code>docs/</code>
+            (including <code>admin-guide.md</code> for System Console setup).
+        </p>
+
+    </main>
+</div>
+</body>
+</html>

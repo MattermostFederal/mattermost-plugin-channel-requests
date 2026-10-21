@@ -10,9 +10,11 @@ import (
 
 // The tools are a third entry point beside the slash command and the
 // webapp modal, and go through the same submitRequest and
-// submitAdminRequest, which own validation, membership checks and
-// auto-approval. Approving and denying are deliberately not tools: they
-// are the human checkpoint.
+// submitAdminRequest, which own validation, membership checks and the
+// System Admin shortcut. Like the webapp modal, a System Admin's request
+// takes effect at once. Each tool honors the same per-type setting as the
+// slash command and the modal. Approving and denying are deliberately not
+// tools: they are the human checkpoint.
 
 type ListPrefixesArgs struct{}
 
@@ -56,12 +58,12 @@ func (p *Plugin) registerMCPTools(server *pluginmcp.Server) {
 
 	pluginmcp.AddTool(server, &mcp.Tool{
 		Name:        "request_channel",
-		Description: "Request a new channel on the user's behalf. The request is posted for admin approval, unless the user is a System Admin or on the auto-approve list, in which case the channel is created at once. Call list_prefixes first for the prefix.",
+		Description: "Request a new channel on the user's behalf. The request is posted for admin approval, unless the user is a System Admin, in which case the channel is created at once. Call list_prefixes first for the prefix.",
 	}, p.requestChannelTool)
 
 	pluginmcp.AddTool(server, &mcp.Tool{
 		Name:        "request_channel_admin",
-		Description: "Request that existing members of a channel be made Channel Admins, on the user's behalf. The request is posted for admin approval, unless the user is a System Admin or on the auto-approve list, in which case they are promoted at once.",
+		Description: "Request that existing members of a channel be made Channel Admins, on the user's behalf. The request is posted for admin approval, unless the user is a System Admin, in which case they are promoted at once.",
 	}, p.requestChannelAdminTool)
 }
 
@@ -71,6 +73,9 @@ func (p *Plugin) listPrefixesTool(ctx context.Context, _ *mcp.CallToolRequest, _
 	}
 
 	config := p.getConfiguration()
+	if !config.RequestEnabled(requestTypeChannel) {
+		return nil, ListPrefixesOutput{}, errors.New(channelRequestsDisabledMsg)
+	}
 	if !config.UsesPrefixList() {
 		return nil, ListPrefixesOutput{}, errors.New(notConfiguredMessage)
 	}
@@ -90,6 +95,9 @@ func (p *Plugin) requestChannelTool(ctx context.Context, _ *mcp.CallToolRequest,
 	userID := pluginmcp.GetUserID(ctx)
 	if userID == "" {
 		return nil, MCPMessageOutput{}, errNoMCPUser
+	}
+	if !p.getConfiguration().RequestEnabled(requestTypeChannel) {
+		return nil, MCPMessageOutput{}, errors.New(channelRequestsDisabledMsg)
 	}
 
 	memberIDs, err := p.resolveUsernameList(in.Members)
@@ -123,13 +131,16 @@ func (p *Plugin) requestChannelAdminTool(ctx context.Context, _ *mcp.CallToolReq
 	if userID == "" {
 		return nil, MCPMessageOutput{}, errNoMCPUser
 	}
+	if !p.getConfiguration().RequestEnabled(requestTypeChannelAdmin) {
+		return nil, MCPMessageOutput{}, errors.New(channelAdminRequestsDisabledMsg)
+	}
 
 	nomineeIDs, err := p.resolveUsernameList(in.Nominees)
 	if err != nil {
 		return nil, MCPMessageOutput{}, err
 	}
 
-	message, err := p.submitAdminRequest(userID, in.ChannelID, nomineeIDs)
+	message, err := p.submitAdminRequest(userID, in.ChannelID, nomineeIDs, false)
 	if err != nil {
 		return nil, MCPMessageOutput{}, err
 	}

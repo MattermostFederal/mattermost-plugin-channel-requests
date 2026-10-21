@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teams — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html" class="active">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+            <a href="agents.html">AI agents</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Teams
+        </div>
+
+        <h1>Request a team / Team Admin</h1>
+        <p class="tagline">
+            Create a new team, or request Team Admin on a team you already belong to.
+            See also <a href="team-member.html">team members</a> and <a href="team-guest.html">guest invites</a>.
+        </p>
+
+        <h2>New team — how to open</h2>
+        <ul class="entry-list">
+            <li><strong>Native:</strong> team sidebar → <strong>Request a Team</strong> (relabeled Create a team for non-admins)</li>
+            <li><strong>Team rail +:</strong> the + under teams opens Request a Team for non–System Admins</li>
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request a Team</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request a Team</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub team</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/team-request/mattermost-team-native-menu.png" alt="Request a Team in team sidebar">
+                <figcaption>Team sidebar</figcaption>
+            </figure>
+            <figure>
+                <img src="images/team-request/mattermost-team-more-actions.png" alt="Request a Team in More actions">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/team-request/mattermost-team-hub.png" alt="Request Hub with Request a Team">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>New team — form &amp; approve</h2>
+        <img src="images/team-request/mattermost-team-modal.png" alt="Request a New Team form">
+        <img src="images/team-request/mattermost-team-approval-card.png" alt="Team creation approval card">
+
+        <h2>Team Admin — how to open</h2>
+        <ul class="entry-list">
+            <li><strong>Native:</strong> team sidebar → <strong>Request Team Admin</strong></li>
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request Team Admin</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request Team Admin</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub team-admin</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/team-admin-request/mattermost-team-admin-native.png" alt="Request Team Admin in team sidebar">
+                <figcaption>Team sidebar</figcaption>
+            </figure>
+            <figure>
+                <img src="images/team-admin-request/mattermost-team-admin-more-actions.png" alt="Request Team Admin in More actions">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+        </div>
+
+        <h2>Team Admin — form</h2>
+        <img src="images/team-admin-request/mattermost-team-admin-modal.png" alt="Request Team Admin confirmation">
+        <img src="images/team-admin-request/mattermost-team-admin-approval-card.png" alt="Team Admin approval card">
+
+    </main>
+</div>
+</body>
+</html>
