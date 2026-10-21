@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 
 // PrefixEditor: MM System Console custom setting for the channel
 // domain-prefix list. Table row per prefix. No regex — the admin only
-// picks a MAX LENGTH (2..32 chars). Character class is fixed at
+// picks a MAX LENGTH (2..48 chars). Character class is fixed at
 // letters + digits + dashes because MM channel URLs are restricted to
 // that anyway (and lowercased at request time).
 //
@@ -29,9 +29,9 @@ type PrefixRow = {
     maxLength: number;
 };
 
-const DEFAULT_MAX_LENGTH = 24;
+const DEFAULT_MAX_LENGTH = 48;
 const MIN_MAX_LENGTH = 2;
-const MAX_MAX_LENGTH = 32;
+const MAX_MAX_LENGTH = 48;
 
 // Preset packs — populate the table with sensible starter values.
 // Clicking one UPSERTS its rows: prefixes already in the table are
@@ -42,40 +42,40 @@ const PRESET_PACKS: Array<{name: string; description: string; rows: PrefixRow[]}
         name: 'SRE / Ops',
         description: 'Operational + incident-response channels',
         rows: [
-            {prefix: 'ops-', description: 'Operational channels', maxLength: 24},
-            {prefix: 'incident-', description: 'Incident response', maxLength: 24},
-            {prefix: 'post-', description: 'Post-mortem channels', maxLength: 24},
-            {prefix: 'runbook-', description: 'Runbook discussion', maxLength: 24},
+            {prefix: 'ops-', description: 'Operational channels', maxLength: 48},
+            {prefix: 'incident-', description: 'Incident response', maxLength: 48},
+            {prefix: 'post-', description: 'Post-mortem channels', maxLength: 48},
+            {prefix: 'runbook-', description: 'Runbook discussion', maxLength: 48},
         ],
     },
     {
         name: 'Product org',
         description: 'Team, project, launch, design channels',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
-            {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
-            {prefix: 'launch-', description: 'Launch coordination', maxLength: 24},
-            {prefix: 'design-', description: 'Design reviews', maxLength: 24},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 48},
+            {prefix: 'project-', description: 'Project workstreams', maxLength: 48},
+            {prefix: 'launch-', description: 'Launch coordination', maxLength: 48},
+            {prefix: 'design-', description: 'Design reviews', maxLength: 48},
         ],
     },
     {
         name: 'Support / Success',
         description: 'Customer help + onboarding + VIP channels',
         rows: [
-            {prefix: 'help-', description: 'Customer help channels', maxLength: 24},
-            {prefix: 'onboard-', description: 'Customer onboarding', maxLength: 24},
-            {prefix: 'vip-', description: 'Enterprise account channels', maxLength: 24},
+            {prefix: 'help-', description: 'Customer help channels', maxLength: 48},
+            {prefix: 'onboard-', description: 'Customer onboarding', maxLength: 48},
+            {prefix: 'vip-', description: 'Enterprise account channels', maxLength: 48},
         ],
     },
     {
         name: 'General org',
         description: 'Broad-purpose starter (team + channel + project + announcements + general)',
         rows: [
-            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 24},
-            {prefix: 'channel-', description: 'General purpose channels', maxLength: 24},
-            {prefix: 'project-', description: 'Project workstreams', maxLength: 24},
-            {prefix: 'announcements-', description: 'Read-only announcements', maxLength: 24},
-            {prefix: 'general-', description: 'General-purpose channels', maxLength: 24},
+            {prefix: 'team-', description: 'Team collaboration channels', maxLength: 48},
+            {prefix: 'channel-', description: 'General purpose channels', maxLength: 48},
+            {prefix: 'project-', description: 'Project workstreams', maxLength: 48},
+            {prefix: 'announcements-', description: 'Read-only announcements', maxLength: 48},
+            {prefix: 'general-', description: 'General-purpose channels', maxLength: 48},
         ],
     },
 ];
@@ -128,6 +128,15 @@ function serializeRows(rows: PrefixRow[]): string {
         filter((r) => r.prefix.trim() !== '').
         map((r) => [r.prefix.trim(), r.description.trim(), String(clampLength(r.maxLength))].join('|')).
         join('\n');
+}
+
+// prefixNeedsSeparator reports whether a prefix would run together with the
+// suffix. MM channel URLs allow only [a-z0-9-], so "-" is the only possible
+// separator — a non-empty prefix that doesn't end in one yields URLs like
+// "teammarketing". Non-blocking: the admin can keep it, but we flag it.
+function prefixNeedsSeparator(prefix: string): boolean {
+    const p = prefix.trim();
+    return p !== '' && !p.endsWith('-');
 }
 
 function clampLength(n: number): number {
@@ -288,6 +297,20 @@ export const PrefixEditor: React.FC<Props> = ({id, value, disabled, onChange, se
                                         disabled={disabled}
                                         onChange={(e) => updateRow(idx, {prefix: e.target.value})}
                                     />
+                                    {prefixNeedsSeparator(row.prefix) ? (
+                                        <div style={{marginTop: 4, fontSize: 12, color: 'rgba(210, 75, 78, 0.95)'}}>
+                                            {`⚠ No separator — URLs run together (${row.prefix.trim()}suffix). `}
+                                            <button
+                                                type='button'
+                                                className='btn btn-link btn-sm'
+                                                style={{padding: 0, fontSize: 12, verticalAlign: 'baseline'}}
+                                                disabled={disabled}
+                                                onClick={() => updateRow(idx, {prefix: row.prefix.trim() + '-'})}
+                                            >
+                                                {'Add “-”'}
+                                            </button>
+                                        </div>
+                                    ) : null}
                                 </td>
                                 <td style={{padding: 6}}>
                                     <input
