@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team members — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html" class="active">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Team members
+        </div>
+
+        <h1>Request team members (add users to a team)</h1>
+        <p class="tagline">
+            Ask to <strong>add existing Mattermost users or bots onto a team</strong> — not the same as
+            <a href="team.html">Request Team Admin</a> (role promotion) or
+            <a href="team.html">Request a Team</a> (create a new team).
+        </p>
+        <p>
+            Tickets go to <code>mattermost-team-requests</code> for System Admin review.
+            On approve, nominees are added with <code>CreateTeamMember</code>.
+        </p>
+
+        <div class="alert alert-info">
+            <strong>Adding a bot to a team</strong>
+            Use this same request — search for the bot’s username in <strong>Users or bots to add</strong>.
+            The bot account must already exist (create it first with
+            <a href="bot.html">Request a Bot</a> if needed). Approval is the same System Admin queue as for people.
+        </div>
+
+        <div class="alert alert-info">
+            <strong>Tile missing in the Request Hub?</strong>
+            Enable <strong>Allow team member requests</strong> in
+            System Console → Plugins → Mattermost Request Hub, then reopen the hub.
+            The hub tile is labeled <strong>Request Team Members</strong>
+            (description: “Ask to add existing users or bots to your current team.”).
+        </div>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request Team Members</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request Team Members</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub team-member</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/team-user-request/mattermost-team-member-more-actions.png" alt="More actions → Request Team Members">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/team-user-request/mattermost-team-member-hub.png" alt="Request Hub with Request Team Members">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form</h2>
+        <p>Targets the <strong>team you are currently viewing</strong>. Switch teams first if needed.</p>
+        <img src="images/team-user-request/mattermost-team-member-modal.png" alt="Request Team Members form">
+        <table>
+            <thead>
+                <tr><th>Field</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Users or bots to add</strong></td>
+                    <td>Pick one or more existing Mattermost users <em>or bots</em> not already on that team.</td>
+                </tr>
+                <tr>
+                    <td><strong>Reason</strong></td>
+                    <td>Optional context for reviewers.</td>
+                </tr>
+            </tbody>
+        </table>
+        <p>Click <strong>Submit request</strong>. You’ll get a DM when a System Admin responds.</p>
+
+        <h2>On approve</h2>
+        <img src="images/team-user-request/mattermost-team-member-approval-card.png" alt="Team member approval card">
+        <ul>
+            <li><strong>Approve</strong> — nominees are added to the team; requester is notified by DM.</li>
+            <li><strong>Deny</strong> — request closed; requester notified by DM.</li>
+            <li>System Admins who submit skip the queue and add immediately.</li>
+        </ul>
+
+        <p>See also <a href="team-guest.html">guest invites</a> and <a href="messaging.html">messaging threads</a>.</p>
+    </main>
+</div>
+</body>
+</html>

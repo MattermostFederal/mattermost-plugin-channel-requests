@@ -1,7 +1,6 @@
 import manifest from 'manifest';
 import React, {useEffect, useRef, useState} from 'react';
 
-import type {UserSummary} from './client';
 import {makeDebug} from './debug';
 
 // Traces autocomplete behavior when localStorage
@@ -22,7 +21,13 @@ const debug = makeDebug('member-picker');
 // Debounce is 200ms — snappy enough to feel live, sparse enough not to
 // hammer the endpoint on every keystroke.
 
-type User = UserSummary;
+type User = {
+    id: string;
+    username: string;
+    nickname?: string;
+    first_name?: string;
+    last_name?: string;
+};
 
 type Props = {
     value: string; // comma-separated usernames
@@ -30,13 +35,13 @@ type Props = {
     onChange: (value: string) => void;
     placeholder?: string;
 
-    // teamId, when set, scopes autocomplete to members of that team.
+    // teamId, when set, scopes autocomplete to members of that team
+    // (channel create / Channel Admin). Mutually exclusive with notInTeamId.
     teamId?: string;
 
-    // searchUsers, when set, replaces the plugin's team-scoped
-    // /api/v1/user_autocomplete as the source of candidates (e.g. the
-    // System Console, which has no team to scope to).
-    searchUsers?: (term: string) => Promise<User[]>;
+    // notInTeamId scopes autocomplete to users who are NOT on that team
+    // (team member add — find people elsewhere on the instance).
+    notInTeamId?: string;
 
     // usernameBadges maps username -> a short label ("Channel Admin",
     // "Member", "Auto-approved", etc.). When a candidate's username
@@ -125,7 +130,7 @@ const UserAvatar: React.FC<{user: User; size?: number}> = ({user, size = 26}) =>
     );
 };
 
-export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, searchUsers, usernameBadges}) => {
+export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeholder, teamId, notInTeamId, usernameBadges}) => {
     const [selected, setSelected] = useState<string[]>(() => parseUsernames(value));
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<User[]>([]);
@@ -164,16 +169,21 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         setSelected(parseUsernames(value));
     }, [value]);
 
-    // Debounced autocomplete fetch. Team-scoped via ?team_id when the
-    // parent passed teamId. Strips leading @ from the query before
-    // sending — MM usernames don't contain @, so "@cfi" would never
-    // match a real username; users expect to be able to type @-prefixed
-    // like every other mention affordance.
+    // Debounced autocomplete fetch. Scoped via ?team_id (in-team) or
+    // ?not_in_team_id (everyone else). Strips leading @ from the query —
+    // MM usernames don't contain @, so "@cfi" would never match; users
+    // expect to type @-prefixed like every other mention affordance.
     useEffect(() => {
         // Strip any leading @ AND trim. If nothing meaningful left,
         // clear the dropdown.
         const q = query.trim().replace(/^@+/, '').trim();
         if (!q) {
+            setCandidates([]);
+            return undefined;
+        }
+        // Need exactly one scope — otherwise the API returns [].
+        if ((teamId && notInTeamId) || (!teamId && !notInTeamId)) {
+            debug('missing or conflicting scope', {teamId, notInTeamId});
             setCandidates([]);
             return undefined;
         }
@@ -184,31 +194,27 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
         let cancelled = false;
         const timer = window.setTimeout(async () => {
             try {
-                let users: User[];
-                if (searchUsers) {
-                    debug('searching via custom source', {q, selectedCount: selected.length});
-                    users = await searchUsers(q);
-                } else {
-                    const params = new URLSearchParams({q});
-                    if (teamId) {
-                        params.set('team_id', teamId);
-                    }
-                    const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
-                    debug('fetching', {url, q, teamId, selectedCount: selected.length});
-                    const response = await fetch(url, {
-                        credentials: 'same-origin',
-                        headers: {'X-Requested-With': 'XMLHttpRequest'},
-                    });
-                    if (cancelled) {
-                        return;
-                    }
-                    if (!response.ok) {
-                        debug('response not ok', {status: response.status});
-                        setCandidates([]);
-                        return;
-                    }
-                    users = await response.json();
+                const params = new URLSearchParams({q});
+                if (teamId) {
+                    params.set('team_id', teamId);
+                } else if (notInTeamId) {
+                    params.set('not_in_team_id', notInTeamId);
                 }
+                const url = `/plugins/${manifest.id}/api/v1/user_autocomplete?${params.toString()}`;
+                debug('fetching', {url, q, teamId, notInTeamId, selectedCount: selected.length});
+                const response = await fetch(url, {
+                    credentials: 'same-origin',
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                });
+                if (cancelled) {
+                    return;
+                }
+                if (!response.ok) {
+                    debug('response not ok', {status: response.status});
+                    setCandidates([]);
+                    return;
+                }
+                const users: User[] = await response.json();
                 if (cancelled) {
                     return;
                 }
@@ -234,7 +240,7 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
             cancelled = true;
             window.clearTimeout(timer);
         };
-    }, [query, selected, teamId, searchUsers]);
+    }, [query, selected, teamId, notInTeamId]);
 
     // Close dropdown when clicking outside.
     useEffect(() => {
@@ -303,7 +309,13 @@ export const MemberPicker: React.FC<Props> = ({value, disabled, onChange, placeh
                 addUser(u.username);
             }
         } else if (e.key === 'Escape') {
-            setShowDropdown(false);
+            // Stop the dialog focus trap from treating this Escape as "close
+            // the whole modal" while autocomplete suggestions are open.
+            if (showDropdown) {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowDropdown(false);
+            }
         } else if (e.key === 'Backspace' && !query && selected.length > 0) {
             // Backspace on empty input removes the last selected user.
             commit(selected.slice(0, -1));

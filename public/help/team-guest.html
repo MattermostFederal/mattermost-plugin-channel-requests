@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guest invites — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html" class="active">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Guest invites
+        </div>
+
+        <h1>Request guest invite</h1>
+        <p class="tagline">
+            Invite an <strong>external person as a guest</strong> with channel-scoped access —
+            not the same as <a href="team-member.html">adding an existing user as a full team member</a>,
+            and not <a href="team.html">Request Team Admin</a>.
+        </p>
+        <p>
+            <strong>Guest email is required.</strong>
+            On approve, Mattermost emails a <strong>channel-scoped guest invitation</strong>
+            (Guest Accounts must be enabled). A regular team signup link is never returned.
+            Tickets go to <code>mattermost-team-requests</code>.
+        </p>
+
+        <div class="alert alert-info">
+            <strong>Tile missing in the Request Hub?</strong>
+            Guest invites default <strong>off</strong>. Enable
+            <strong>Allow team guest requests</strong> in
+            System Console → Plugins → Mattermost Request Hub, and ensure Guest Accounts
+            are enabled. The hub tile is labeled <strong>Request Guest Invite</strong>.
+        </div>
+
+        <h2>Who can request</h2>
+        <p>
+            You must already be a <strong>member of the target team</strong>
+            (System Admins may invite for any team). Open a channel on that team first —
+            the current channel becomes the guest’s initial channel access.
+        </p>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>Dropdown:</strong> channel More actions → <strong>Request Guest Invite</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request Guest Invite</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub team-guest</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/team-user-request/mattermost-team-guest-more-actions.png" alt="More actions → Request Guest Invite">
+                <figcaption>More actions</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/team-user-request/mattermost-team-guest-hub.png" alt="Request Hub with Request Guest Invite">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form</h2>
+        <img src="images/team-user-request/mattermost-team-guest-modal.png" alt="Request Guest Invite form">
+        <table>
+            <thead>
+                <tr><th>Field</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Guest email</strong></td>
+                    <td>Required. Address that receives the guest invitation email on approve.</td>
+                </tr>
+                <tr>
+                    <td><strong>Message / reason</strong></td>
+                    <td>Optional note for reviewers.</td>
+                </tr>
+            </tbody>
+        </table>
+        <p>Click <strong>Submit request</strong>. You’ll get a DM when a System Admin responds.</p>
+
+        <h2>On approve</h2>
+        <img src="images/team-user-request/mattermost-team-guest-approval-card.png" alt="Guest invite approval card">
+        <ul>
+            <li><strong>Approve</strong> — Mattermost emails the channel-scoped guest invitation; requester notified by DM.</li>
+            <li><strong>Deny</strong> — request closed; requester notified by DM.</li>
+            <li>System Admins who submit skip the queue and email the invite immediately.</li>
+        </ul>
+
+        <p>See also <a href="team-member.html">team members</a> and <a href="messaging.html">messaging threads</a>.</p>
+    </main>
+</div>
+</body>
+</html>

@@ -12,7 +12,7 @@ import (
 func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{}) // no prefixes configured
+	p.setConfiguration(&configuration{AllowChannelRequests: true}) // enabled, but no prefixes
 
 	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{TriggerId: "trig", TeamId: "team1"})
 
@@ -26,7 +26,10 @@ func TestExecuteCommand_NotConfiguredDoesNotOpenDialog(t *testing.T) {
 func TestExecuteCommand_OpensDialogWhenConfigured(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p.setConfiguration(&configuration{
+		AllowChannelRequests: true,
+		prefixes:             []channelPrefix{{Prefix: "team-"}},
+	})
 
 	api.On("OpenInteractiveDialog", mock.Anything).Return(nil)
 
@@ -35,4 +38,24 @@ func TestExecuteCommand_OpensDialogWhenConfigured(t *testing.T) {
 	require.Nil(t, appErr)
 	require.NotNil(t, resp)
 	api.AssertCalled(t, "OpenInteractiveDialog", mock.Anything)
+}
+
+func TestExecuteCommand_DocsOpensGuide(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{
+		Command:   "/mattermost-request-hub docs",
+		SiteURL:   "https://mm.example.com",
+		TriggerId: "trig",
+	})
+
+	require.Nil(t, appErr)
+	require.NotNil(t, resp)
+	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
+	// GotoLocation must stay empty — SPA push of /plugins/... HTML is a Loading hang.
+	require.Empty(t, resp.GotoLocation)
+	require.Contains(t, resp.Text, "Documentation")
+	require.Contains(t, resp.Text, "https://mm.example.com/plugins/"+manifest.Id+"/public/help/docs.html")
+	require.Contains(t, resp.Text, "Open the full guide")
 }
