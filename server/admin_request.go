@@ -30,13 +30,20 @@ type adminRequest struct {
 	// still are get the channel_admin scheme role. Nobody is added to the
 	// channel by this flow.
 	NomineeIDs []string `json:"nominee_ids"`
+
+	// Ticket messaging fields — set after the approval post and DM are created.
+	// Used by the MessageHasBeenPosted hook to route thread replies in both directions.
+	ApprovalPostID    string `json:"approval_post_id,omitempty"`
+	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
+	DMRootPostID      string `json:"dm_root_post_id,omitempty"`
+	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
 // submitAdminRequest validates the input and either promotes the nominees
-// immediately (System Admins + auto-approve users) or stores a pending
-// request and posts it to the approval channel. Returns a message suitable
-// for showing to the requester.
-func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string) (string, error) {
+// immediately (System Admins) or stores a pending
+// request and posts it to the approval channel. forceQueue (slash-command
+// dialog) disables the bypass so an approval card is always posted.
+func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string, forceQueue bool) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return "", errors.New("a channel is required")
 	}
@@ -90,31 +97,61 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		NomineeIDs:  nominees,
 	}
 
-	config := p.getConfiguration()
-
-	// Bypass approval for System Admins and delegated managers on the
-	// auto-approve list, mirroring the channel-creation flow.
-	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
+	// Bypass approval for System Admins — unless forceQueue (slash-command
+	// dialog) which always produces an approval card.
+	if !forceQueue && requester.IsSystemAdmin() {
 		req.NomineeIDs = p.promoteChannelAdmins(req)
 		p.postAdminPromotionMessage(channel, req, requester)
-		p.logAudit(config, fmt.Sprintf("CHANNEL ADMIN: @%s promoted %s to Channel Admin in ~%s",
-			requester.Username, p.mentionList(req.NomineeIDs), channel.Name))
+		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Channel Admin in ~%s",
+			requester.Username, p.mentionList(req.NomineeIDs), channel.Name), "")
 		return fmt.Sprintf("Promoted %s to Channel Admin in ~%s.", p.mentionList(req.NomineeIDs), channel.Name), nil
 	}
 
+	// Store before posting so approve/deny handlers can find the request immediately.
 	if err := p.storeAdminRequest(req); err != nil {
 		p.API.LogError("failed to store Channel Admin request", "error", err.Error())
 		return "", errors.New("could not save your request; try again")
 	}
+	rawBefore, err := json.Marshal(req)
+	if err != nil {
+		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
+		return "", errors.Wrap(err, "failed to snapshot admin request")
+	}
 
-	if err := p.postAdminApprovalRequest(req, requester, channel); err != nil {
+	approvalPostID, approvalChannelID, err := p.postAdminApprovalRequest(req, requester, channel)
+	if err != nil {
 		// Roll back so the stored request isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
 		p.API.LogError("failed to post Channel Admin request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 
+	req.ApprovalPostID = approvalPostID
+	req.ApprovalChannelID = approvalChannelID
+
+	dmRootPostID, dmChannelID := p.sendAdminTicketCreatedDM(req, requester, channel)
+	req.DMRootPostID = dmRootPostID
+	req.DMChannelID = dmChannelID
+
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvAdminRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "admin request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeChannelAdmin, ScopeID: channelID,
+		},
+	})
+
 	return "Your Channel Admin request has been submitted for approval. You'll be notified once an admin responds.", nil
+}
+
+func (p *Plugin) sendAdminTicketCreatedDM(req *adminRequest, requester *model.User, channel *model.Channel) (dmRootPostID, dmChannelID string) {
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.adminApprovalAttachment(req, requester, channel),
+		ticketSubmittedIntro("Channel Admin request"),
+	)
 }
 
 // promoteChannelAdmins grants the channel_admin role to each nominee who is
@@ -193,17 +230,16 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 }
 
 // postAdminApprovalRequest delivers a channel-admin request (with Approve/Deny
-// buttons) to the reviewers. It reuses postApprovalAttachment, which prefers
-// the configured approval channel and — when that isn't configured or can't be
-// found — falls back to DMing every System Admin, exactly as the
-// channel-creation flow does. This guarantees a request is never silently
-// dropped for want of an approval channel. The header @-mentions the guaranteed
-// approvers (System Admins + the target channel's Team Admins) so they're
-// pulled into the review when it lands in a channel.
-func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) error {
+// buttons) to the reviewers. It reuses postApprovalAttachment, which posts to
+// the resolved approval channel and falls back to DMing every System Admin when
+// none is available, exactly as the channel-creation flow does. Returns the
+// created post ID and channel ID; both empty in fallback mode.
+func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
+	approvalChannel, teamLabel := p.resolveApprovalChannel(channel.TeamId)
 	return p.postApprovalAttachment(
 		p.adminApprovalAttachment(req, requester, channel),
-		p.adminApprovalHeader(channel),
+		teamLabel+p.adminApprovalHeader(channel),
+		approvalChannel,
 	)
 }
 
@@ -266,20 +302,28 @@ func (p *Plugin) adminApproverIDs(teamID string) []string {
 }
 
 // adminApprovalAttachment builds the Slack attachment (with Approve/Deny
-// buttons) describing a channel-admin request.
+// buttons) describing a channel-admin request. Core fields (requester +
+// channel) are always visible; the nominee list goes in Text so a large
+// nomination doesn't dominate the card.
 func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.User, channel *model.Channel) *model.MessageAttachment {
+	teamName := p.teamDisplayName(channel.TeamId)
 	fields := []*model.MessageAttachmentField{
+		{Title: "Team", Value: escapeMarkdown(teamName), Short: false},
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
-		{Title: "Team", Value: p.teamLabel(channel.TeamId), Short: true},
 		{Title: "Channel", Value: escapeMarkdown(fmt.Sprintf("%s (%s)", channel.DisplayName, channel.Name)), Short: true},
-		{Title: "Proposed Channel Admins", Value: p.mentionList(req.NomineeIDs), Short: false},
+	}
+
+	title := "Channel Admin request"
+	if teamName != "" && teamName != "(unknown team)" {
+		title = fmt.Sprintf("Channel Admin request — %s", teamName)
 	}
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel Admin request",
+		Title:   title,
 		Color:   "#0058CC",
 		Fields:  fields,
+		Text:    fmt.Sprintf("**Proposed Channel Admins:** %s", p.mentionList(req.NomineeIDs)),
 		Actions: p.adminApprovalActions(req.ID, siteURL),
 	}
 }
