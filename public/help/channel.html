@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channels — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html" class="active">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Channels
+        </div>
+
+        <h1>Request a channel</h1>
+        <p class="tagline">
+            Same form from every entry point. Approvers create the channel and post a welcome message.
+        </p>
+
+        <h2>How to open</h2>
+        <ul class="entry-list">
+            <li><strong>+ menu:</strong> channel sidebar <strong>+</strong> → <strong>Request new channel</strong></li>
+            <li><strong>Hub:</strong> right App Bar <strong>plug</strong> → Requests → <strong>Request a Channel</strong></li>
+            <li><strong>Dropdown:</strong> channel name → More actions → <strong>Request a Channel</strong></li>
+            <li><strong>Slash:</strong> <code>/mattermost-request-hub channel</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/channel-request/mattermost-creation-plus-menu.png" alt="Request new channel in the + menu">
+                <figcaption>+ menu</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-requests-plug-appbar.png" alt="Plug icon on the right App Bar opening Requests">
+                <figcaption>Right App Bar (plug)</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-request-hub.png" alt="Request Hub with Request a Channel">
+                <figcaption>Request Hub</figcaption>
+            </figure>
+        </div>
+
+        <h2>Form</h2>
+        <img src="images/channel-request/mattermost-creation-modal.png" alt="Request a Channel form">
+
+        <table class="field-table">
+            <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td>Domain prefix</td><td>Category for the URL (<code>prefix</code> + <code>suffix</code>).</td></tr>
+                <tr><td>Channel name</td><td>Display name (required).</td></tr>
+                <tr><td>URL suffix</td><td>Optional; live Preview shows the final URL.</td></tr>
+                <tr><td>Purpose / Visibility</td><td>Optional description; Public or Private.</td></tr>
+                <tr><td>Members / Channel Admins</td><td>Who to add on approval (a user is in one list only).</td></tr>
+                <tr><td>Sidebar category</td><td>Optional; pick existing or type a new name (created on approval).</td></tr>
+            </tbody>
+        </table>
+
+        <h2>On approve</h2>
+        <p>Approval card → Approve creates the channel and posts a welcome message.</p>
+        <img src="images/channel-request/mattermost-creation-approval-card.png" alt="Channel creation approval card">
+        <img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel">
+
+    </main>
+</div>
+</body>
+</html>
