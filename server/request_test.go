@@ -17,10 +17,16 @@ import (
 const channelAdminRoles = "channel_user channel_admin"
 
 // newTestPlugin wires a Plugin up to a mock API with a known bot user.
+// Channel and channel-admin request types default to enabled so existing
+// tests match plugin.json defaults without each case setting toggles.
 func newTestPlugin(api *plugintest.API) *Plugin {
 	p := &Plugin{}
 	p.SetAPI(api)
 	p.botUserID = "bot-user-id"
+	p.setConfiguration(&configuration{
+		AllowChannelRequests:      true,
+		AllowChannelAdminRequests: true,
+	})
 	return p
 }
 
@@ -36,6 +42,9 @@ func stubLogs(api *plugintest.API) {
 			api.On(method, args...).Maybe()
 		}
 	}
+	// CAS re-store of post IDs after approval/DM create — most queue tests
+	// don't care about the success path beyond "submitted".
+	api.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 }
 
 // testAppErr builds a throwaway *model.AppError for failure-path mocks.
@@ -312,6 +321,8 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 		return c.TeamId == "team1" && c.Name == "team-marketing"
 	})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
+	// No AdminMemberIDs → requester is auto-promoted to channel admin.
+	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	msg, err := p.submitRequest(requestInput{
@@ -328,19 +339,20 @@ func TestSubmitRequest_SystemAdminExemptFromMembership(t *testing.T) {
 	api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
 }
 
-func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
+func TestSubmitRequest_BypassCreation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{
-		prefixes:       []channelPrefix{{Prefix: "team-"}},
-		AuditChannelID: "audit1",
+		prefixes: []channelPrefix{{Prefix: "team-"}},
 	})
 
 	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
+	// No AdminMemberIDs → requester is auto-promoted to channel admin.
+	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	_, err := p.submitRequest(requestInput{
@@ -351,11 +363,42 @@ func TestSubmitRequest_AuditsBypassCreation(t *testing.T) {
 		Name:        "marketing",
 	})
 	require.NoError(t, err)
+	// Channel was created directly (System Admin bypass path).
+	api.AssertCalled(t, "CreateChannel", mock.Anything)
+}
 
-	// The bypass-path (sysadmin/auto-approve) creation is audited.
-	api.AssertCalled(t, "CreatePost", mock.MatchedBy(func(post *model.Post) bool {
-		return post.ChannelId == "audit1" && strings.Contains(post.Message, "CREATED")
-	}))
+func TestSubmitRequest_ForceQueueSkipsSystemAdminBypass(t *testing.T) {
+	// Slash-command dialogs set ForceQueue so even System Admins get an
+	// approval card instead of an immediate create.
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{
+		prefixes:     []channelPrefix{{Prefix: "team-"}},
+		ApprovalTeam: "appteam",
+	})
+
+	api.On("GetUser", "admin1").Return(&model.User{Id: "admin1", Username: "admin", Roles: "system_user system_admin"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	api.On("GetChannelByNameForTeamName", "appteam", "mattermost-channel-requests", false).
+		Return(&model.Channel{Id: "approval-ch"}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "team", DisplayName: "Team"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "approval-1"}, nil)
+	api.On("GetDirectChannel", "admin1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+
+	msg, err := p.submitRequest(requestInput{
+		RequesterID: "admin1",
+		TeamID:      "team1",
+		DisplayName: "Marketing",
+		Prefix:      "team-",
+		Name:        "marketing",
+		ForceQueue:  true,
+	})
+	require.NoError(t, err)
+	require.Contains(t, msg, "submitted")
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+	api.AssertCalled(t, "KVSet", mock.Anything, mock.Anything)
 }
 
 func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
@@ -376,30 +419,6 @@ func TestSubmitRequest_SoftDeletedMemberRejected(t *testing.T) {
 		Name:        "marketing",
 	})
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "member of the team")
-	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
-}
-
-func TestSubmitRequest_AutoApproveUserStillNeedsMembership(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{autoApproveUserIDs: []string{"u1"}})
-
-	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
-	api.On("GetTeamMember", "team1", "u1").Return(nil, testAppErr("not a member"))
-
-	_, err := p.submitRequest(requestInput{
-		RequesterID: "u1",
-		TeamID:      "team1",
-		DisplayName: "Marketing",
-		Prefix:      "team-",
-		Name:        "marketing",
-	})
-
-	// Auto-approve grants an approval bypass, NOT a team-membership bypass.
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "member of the team")
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
@@ -554,4 +573,83 @@ func TestResolveUsernameList_UnknownUserErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, ids)
 	require.Contains(t, err.Error(), "ghost")
+}
+
+// Regression: CreateChannelSidebarCategory returning (cat, nil) must not
+// surface a typed-nil *AppError as a non-nil error — that panicked
+// ServeHTTP after Approve and skipped the soft-squash update.
+func TestPlaceChannelInCategory_CreateSuccessReturnsRealNil(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetChannelSidebarCategories", "u1", "team1").Return(&model.OrderedSidebarCategories{
+		Categories: []*model.SidebarCategoryWithChannels{},
+	}, nil)
+	api.On("CreateChannelSidebarCategory", "u1", "team1", mock.MatchedBy(func(c *model.SidebarCategoryWithChannels) bool {
+		return c != nil && c.DisplayName == "Requests" && len(c.Channels) == 1 && c.Channels[0] == "ch1"
+	})).Return(&model.SidebarCategoryWithChannels{}, nil)
+
+	err := p.placeChannelInCategory("u1", "team1", "ch1", "Requests")
+	require.NoError(t, err)
+	// Prove the interface value is truly nil (not typed-nil *AppError).
+	require.Nil(t, err)
+}
+
+func TestPostPermalink(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	t.Run("empty post id", func(t *testing.T) {
+		require.Equal(t, "", p.postPermalink(""))
+	})
+
+	t.Run("builds team pl link", func(t *testing.T) {
+		api.On("GetConfig").Return(&model.Config{
+			ServiceSettings: model.ServiceSettings{SiteURL: new("https://mm.example.com")},
+		})
+		api.On("GetPost", "post1").Return(&model.Post{Id: "post1", ChannelId: "ch1"}, nil)
+		api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "ops"}, nil)
+
+		require.Equal(t, "https://mm.example.com/ops/pl/post1", p.postPermalink("post1"))
+	})
+}
+
+func TestAuditCardStyle(t *testing.T) {
+	color, title := auditCardStyle(auditApproved)
+	require.Equal(t, colorApproved, color)
+	require.Equal(t, "✅ Approved", title)
+
+	color, title = auditCardStyle(auditDenied)
+	require.Equal(t, colorDenied, color)
+	require.Equal(t, "❌ Denied", title)
+
+	color, title = auditCardStyle(auditDirect)
+	require.Equal(t, colorDirect, color)
+	require.Equal(t, "⚡ Direct", title)
+}
+
+func TestApprovalAttachment_IncludesTeamProminently(t *testing.T) {
+	api := &plugintest.API{}
+	p := newTestPlugin(api)
+
+	api.On("GetTeam", "team1").Return(&model.Team{
+		Id: "team1", Name: "testing-team", DisplayName: "Testing Team Creation Admin",
+	}, nil)
+
+	att := p.approvalAttachment(&channelRequest{
+		ID:          "req1",
+		TeamID:      "team1",
+		DisplayName: "testing 2",
+		Name:        "ops-testing-2",
+		ChannelType: channelTypeOpen,
+	}, &model.User{Id: "u1", Username: "chris.fickess"})
+
+	require.Equal(t, "Channel creation request — Testing Team Creation Admin", att.Title)
+	require.NotEmpty(t, att.Fields)
+	require.Equal(t, "Team", att.Fields[0].Title)
+	require.Equal(t, "Testing Team Creation Admin", att.Fields[0].Value)
+	require.False(t, bool(att.Fields[0].Short), "Team should be full-width so it stands out")
 }

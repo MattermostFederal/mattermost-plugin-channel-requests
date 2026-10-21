@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -28,6 +29,11 @@ const (
 
 	// actionContextRequestID carries the pending request ID on the approve/deny buttons.
 	actionContextRequestID = "request_id"
+
+	// fieldCategory is the optional sidebar category name the requester specifies.
+	// On approval the new channel is placed in this category for the requester and
+	// all designated members.
+	fieldCategory = "category"
 
 	// Channel type values as plain strings, for use in dialog options, comparisons, and storage.
 	channelTypeOpen    = string(model.ChannelTypeOpen)
@@ -66,6 +72,18 @@ type channelRequest struct {
 	// approval, these users get channel_admin scheme roles in the newly
 	// created channel (in addition to being members).
 	AdminMemberIDs []string `json:"admin_member_ids"`
+
+	// CategoryName is the optional sidebar category the requester wants the
+	// new channel placed in on approval. Matched case-insensitively; if no
+	// match exists for a user, a custom category with this name is created.
+	CategoryName string `json:"category_name,omitempty"`
+
+	// Ticket messaging fields — set after the approval post and DM are created.
+	// Used by the MessageHasBeenPosted hook to route thread replies in both directions.
+	ApprovalPostID    string `json:"approval_post_id,omitempty"`
+	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
+	DMRootPostID      string `json:"dm_root_post_id,omitempty"`
+	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
 // requestInput is the normalized set of values gathered from either entry point (slash command
@@ -85,6 +103,13 @@ type requestInput struct {
 	ChannelType    string
 	MemberIDs      []string
 	AdminMemberIDs []string
+	// CategoryName is the optional sidebar category name to place the channel
+	// in on approval. Passed through to channelRequest unchanged.
+	CategoryName string
+	// ForceQueue skips System Admin bypass so the request
+	// always posts to the approval channel. Set by slash-command dialogs —
+	// those are explicitly a "request" flow and must produce the card.
+	ForceQueue bool
 }
 
 // promoteSoleMember applies the orphaned-channel guard: when no Channel
@@ -120,7 +145,7 @@ func slugify(s string) string {
 // channel names.
 func (p *Plugin) resolveChannelName(config *configuration, in requestInput) (string, error) {
 	if !config.UsesPrefixList() {
-		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Channel Requests")
+		return "", errors.New("plugin is not configured: an admin must define at least one channel prefix in System Console -> Plugins -> Mattermost Request Hub")
 	}
 	return resolvePrefixedName(config.Prefixes(), in)
 }
@@ -217,7 +242,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	}
 
 	// System Admins can create channels in any team (they administer all
-	// of them). Everyone else — including delegated auto-approve users —
+	// of them). Everyone else —
 	// must belong to the target team, so a client-supplied TeamID can't be
 	// used to plant channels in a team the requester has no access to.
 	if !requester.IsSystemAdmin() {
@@ -257,36 +282,70 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		ChannelType:    in.ChannelType,
 		MemberIDs:      in.MemberIDs,
 		AdminMemberIDs: in.AdminMemberIDs,
+		CategoryName:   strings.TrimSpace(in.CategoryName),
 	}
 
-	// Bypass approval for:
-	//   - System Admins (always)
-	//   - Users on the admin-configured auto-approve list (delegated managers)
-	if requester.IsSystemAdmin() || config.AutoApproveContains(requester.Id) {
-		channel, err := p.createChannelForRequest(req)
-		if err != nil {
-			return "", err
+	// Bypass approval for System Admins — unless ForceQueue (slash-command
+	// dialog) which always produces an approval card.
+	if !in.ForceQueue && requester.IsSystemAdmin() {
+		channel, createErr := p.createChannelForRequest(req)
+		if createErr != nil {
+			return "", createErr
 		}
+		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		p.postWelcomeMessage(channel, req, requester, requester)
-		// Audit the bypass-path creations too — these are the
-		// highest-privilege (System Admin / delegated auto-approve)
-		// creations and the ones an audit trail most needs to record.
-		p.logAudit(config, fmt.Sprintf("CREATED: @%s created channel `%s` (%s) directly (System Admin or auto-approve)",
-			requester.Username, req.DisplayName, channel.Name))
+		p.postChannelAutoCreatedNotice(req, requester, channel, "System Admin")
+		p.logAudit(auditDirect, fmt.Sprintf("@%s created channel `%s` (%s) directly (System Admin)",
+			requester.Username, req.DisplayName, channel.Name), "")
 		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
-	if err := p.storeRequest(req); err != nil {
-		return "", err
+	// Store the request before posting the approval message so the approve/deny
+	// handlers can find it by ID the moment the post is live.
+	if storeErr := p.storeRequest(req); storeErr != nil {
+		return "", storeErr
+	}
+	rawBefore, snapErr := json.Marshal(req)
+	if snapErr != nil {
+		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
+		return "", errors.Wrap(snapErr, "failed to snapshot channel request")
 	}
 
-	if err := p.postApprovalRequest(req, requester); err != nil {
+	approvalPostID, approvalChannelID, err := p.postApprovalRequest(req, requester)
+	if err != nil {
 		// Roll back the stored request so it isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvRequestPrefix + req.ID)
 		return "", err
 	}
 
+	req.ApprovalPostID = approvalPostID
+	req.ApprovalChannelID = approvalChannelID
+
+	dmRootPostID, dmChannelID := p.sendTicketCreatedDM(req, requester)
+	req.DMRootPostID = dmRootPostID
+	req.DMChannelID = dmChannelID
+
+	p.persistTicketPosts(ticketPersist{
+		KVKey: kvRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
+		RequestID: req.ID, Label: "channel request",
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: requestTypeChannel, ScopeID: req.TeamID,
+		},
+	})
+
 	return "Your channel request has been submitted for approval. You'll be notified once an admin responds.", nil
+}
+
+// sendTicketCreatedDM posts the channel-request pending card as the requester's
+// ticket DM root (shared postTicketCreatedDM path).
+func (p *Plugin) sendTicketCreatedDM(req *channelRequest, requester *model.User) (dmRootPostID, dmChannelID string) {
+	return p.postTicketCreatedDM(
+		req.RequesterID,
+		p.approvalAttachment(req, requester),
+		ticketSubmittedIntro("channel request"),
+	)
 }
 
 // postWelcomeMessage posts a bot message in the newly-created channel announcing who requested it
@@ -318,19 +377,85 @@ func (p *Plugin) postWelcomeMessage(channel *model.Channel, req *channelRequest,
 	}
 }
 
-// logAudit posts an audit-trail line to the configured audit channel.
-// No-op when AuditChannelID is empty.
-func (p *Plugin) logAudit(config *configuration, message string) {
-	if strings.TrimSpace(config.AuditChannelID) == "" {
+// auditOutcome selects the colored card styling for an audit-channel post.
+type auditOutcome int
+
+const (
+	auditApproved auditOutcome = iota // green ✅
+	auditDenied                       // red ❌
+	auditDirect                       // blue — System Admin bypass / immediate fulfill
+)
+
+// logAudit posts a colored attachment card to the auto-created audit channel.
+// When threadPostID is set (usually the approval-card root), the card includes
+// an "Open ticket thread" markdown link. No-op when ApprovalTeam is unset.
+func (p *Plugin) logAudit(kind auditOutcome, body, threadPostID string) {
+	ch := p.ensureAuditChannel()
+	if ch == nil {
 		return
 	}
-	if _, appErr := p.API.CreatePost(&model.Post{
-		UserId:    p.botUserID,
-		ChannelId: config.AuditChannelID,
-		Message:   message,
-	}); appErr != nil {
-		p.API.LogWarn("audit post failed", "channel_id", config.AuditChannelID, "error", appErr.Error())
+
+	color, title := auditCardStyle(kind)
+	text := strings.TrimSpace(body)
+	if link := p.postPermalink(threadPostID); link != "" {
+		text = text + "\n\n[Open ticket thread](" + link + ")"
 	}
+
+	// Leave Message empty — the attachment Title already carries Approved/Denied/
+	// Direct. Duplicating it as the post body made every audit card show the
+	// status twice.
+	post := &model.Post{
+		UserId:    p.botUserID,
+		ChannelId: ch.Id,
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{{
+		Color: color,
+		Title: title,
+		Text:  text,
+	}})
+	if _, appErr := p.API.CreatePost(post); appErr != nil {
+		p.API.LogWarn("audit post failed", "channel_id", ch.Id, "error", appErr.Error())
+	}
+}
+
+func auditCardStyle(kind auditOutcome) (color, title string) {
+	switch kind {
+	case auditApproved:
+		return colorApproved, "✅ Approved"
+	case auditDenied:
+		return colorDenied, "❌ Denied"
+	case auditDirect:
+		return colorDirect, "⚡ Direct"
+	default:
+		return colorPending, "• Audit"
+	}
+}
+
+// postPermalink builds a Mattermost /{team}/pl/{postID} URL for a post in a
+// team channel. Returns "" when SiteURL is unset, the post/channel/team cannot
+// be loaded, or the channel has no team (DM/GM).
+func (p *Plugin) postPermalink(postID string) string {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return ""
+	}
+	base := strings.TrimRight(p.siteURL(), "/")
+	if base == "" {
+		return ""
+	}
+	post, appErr := p.API.GetPost(postID)
+	if appErr != nil || post == nil || post.ChannelId == "" {
+		return ""
+	}
+	ch, appErr := p.API.GetChannel(post.ChannelId)
+	if appErr != nil || ch == nil || ch.TeamId == "" {
+		return ""
+	}
+	team, appErr := p.API.GetTeam(ch.TeamId)
+	if appErr != nil || team == nil || team.Name == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/pl/%s", base, team.Name, postID)
 }
 
 // createChannelForRequest creates the channel described by req, adds the requester and any
@@ -351,8 +476,14 @@ func (p *Plugin) createChannelForRequest(req *channelRequest) (*model.Channel, e
 	}
 
 	// Union of everyone who should be a member: requester + regular + admin sets.
+	// If no explicit Channel Admins were designated, the requester is promoted
+	// automatically — a channel with no admin has nobody who can manage it.
+	adminIDs := req.AdminMemberIDs
+	if len(adminIDs) == 0 {
+		adminIDs = []string{req.RequesterID}
+	}
 	adminSet := map[string]bool{}
-	for _, uid := range req.AdminMemberIDs {
+	for _, uid := range adminIDs {
 		if uid != "" {
 			adminSet[uid] = true
 		}
@@ -436,39 +567,64 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 }
 
 // postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
-// act on.
-func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) error {
+// act on. Returns the created post's ID and channel ID, which are empty in fallback mode (when the
+// request is DM'd to system admins instead of posted to a channel).
+func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) (postID, channelID string, err error) {
+	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
 	return p.postApprovalAttachment(
 		p.approvalAttachment(req, requester),
-		"@channel — a new channel request needs your review.",
+		teamLabel+"@channel — a new channel request needs your review.",
+		approvalChannel,
 	)
 }
 
-// postApprovalAttachment delivers an approval attachment to the reviewers. It prefers the configured
-// approval channel, but when that isn't configured (or can't be found) it falls back to DMing every
-// System Admin so requests are never silently dropped. Shared by the channel-creation and
-// channel-admin request flows.
-func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string) error {
-	config := p.getConfiguration()
+// postChannelAutoCreatedNotice posts a no-button card into the approval channel
+// after a System Admin / allow-list bypass create so reviewers still see it.
+func (p *Plugin) postChannelAutoCreatedNotice(req *channelRequest, requester *model.User, channel *model.Channel, reason string) {
+	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
+	if approvalChannel == nil {
+		p.API.LogWarn("channel-requests: channel created but no approval channel to announce into — set Approval team in System Console")
+		return
+	}
+	attachment := p.approvalAttachment(req, requester)
+	attachment.Actions = nil
+	attachment.Color = colorApproved
+	attachment.Title = "Channel created (no approval required)"
+	post := &model.Post{
+		UserId:    p.botUserID,
+		ChannelId: approvalChannel.Id,
+		Message: fmt.Sprintf("%s✅ Channel ~%s was created immediately by @%s (%s) — no approval needed.",
+			teamLabel, channel.Name, requester.Username, reason),
+	}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+	if _, appErr := p.API.CreatePost(post); appErr != nil {
+		p.API.LogWarn("failed to post channel auto-create notice", "channel_id", channel.Id, "error", appErr.Error())
+	}
+}
 
-	if strings.TrimSpace(config.ApprovalTeam) != "" && strings.TrimSpace(config.ApprovalChannel) != "" {
-		channel, appErr := p.API.GetChannelByNameForTeamName(config.ApprovalTeam, config.ApprovalChannel, false)
-		if appErr == nil {
-			post := &model.Post{
-				UserId:    p.botUserID,
-				ChannelId: channel.Id,
-				Message:   headerMessage,
-			}
-			model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-			if _, postErr := p.API.CreatePost(post); postErr != nil {
-				return errors.Wrap(postErr, "failed to post approval request")
-			}
-			return nil
+// postApprovalAttachment delivers an approval attachment to the reviewers. When approvalChannel is
+// non-nil, the post goes there; otherwise it falls back to DMing every System Admin so requests are
+// never silently dropped. Shared by the channel-creation and channel-admin request flows.
+//
+// Returns (postID, channelID, error). postID and channelID are empty in fallback mode — in that case
+// the ticket messaging features (thread reply forwarding) are unavailable, but approve/deny notifications
+// still reach the requester via a new DM root post.
+func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string, approvalChannel *model.Channel) (postID, channelID string, err error) {
+	if approvalChannel != nil {
+		post := &model.Post{
+			UserId:    p.botUserID,
+			ChannelId: approvalChannel.Id,
+			Message:   headerMessage,
 		}
-		p.API.LogWarn("configured approval channel not found; falling back to System Admins", "team", config.ApprovalTeam, "channel", config.ApprovalChannel, "error", appErr.Error())
+		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
+		created, postErr := p.API.CreatePost(post)
+		if postErr != nil {
+			return "", "", errors.Wrap(postErr, "failed to post approval request")
+		}
+		return created.Id, approvalChannel.Id, nil
 	}
 
-	return p.postApprovalToSystemAdmins(attachment)
+	return "", "", p.postApprovalToSystemAdmins(attachment)
 }
 
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
@@ -505,39 +661,71 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 }
 
 // approvalAttachment builds the Slack attachment (with Approve/Deny buttons) describing a request.
+// Team is first and full-width so approvers scanning root or per-team queues see which
+// team the channel will live in without relying on the message preamble alone.
+// Verbose details (purpose, members, admins) go in Text so Mattermost's native "Show more"
+// collapses them on long requests — the approval channel stays scannable.
 func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) *model.MessageAttachment {
 	visibility := "Public"
 	if req.ChannelType == channelTypePrivate {
 		visibility = "Private"
 	}
 
+	teamName := p.teamDisplayName(req.TeamID)
 	fields := []*model.MessageAttachmentField{
+		{Title: "Team", Value: teamName, Short: false},
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
 		{Title: "Channel name", Value: req.DisplayName, Short: true},
 		{Title: "URL", Value: fmt.Sprintf("~%s", req.Name), Short: true},
 	}
+	if req.CategoryName != "" {
+		fields = append(fields, &model.MessageAttachmentField{Title: "Sidebar category", Value: req.CategoryName, Short: true})
+	}
+
+	var details []string
 	if req.Purpose != "" {
-		fields = append(fields, &model.MessageAttachmentField{Title: "Purpose", Value: req.Purpose, Short: false})
+		details = append(details, fmt.Sprintf("**Purpose:** %s", req.Purpose))
 	}
 	if len(req.MemberIDs) > 0 {
-		fields = append(fields, &model.MessageAttachmentField{Title: "Members to add", Value: p.mentionList(req.MemberIDs), Short: false})
+		details = append(details, fmt.Sprintf("**Members to add:** %s", p.mentionList(req.MemberIDs)))
 	}
 	if len(req.AdminMemberIDs) > 0 {
-		fields = append(fields, &model.MessageAttachmentField{
-			Title: "Channel Admins to add",
-			Value: p.mentionList(req.AdminMemberIDs),
-			Short: false,
-		})
+		details = append(details, fmt.Sprintf("**Channel Admins to add:** %s", p.mentionList(req.AdminMemberIDs)))
+	}
+
+	title := "Channel creation request"
+	if teamName != "" && teamName != "(unknown team)" {
+		title = fmt.Sprintf("Channel creation request — %s", teamName)
 	}
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Channel creation request",
+		Title:   title,
 		Color:   "#0058CC",
 		Fields:  fields,
+		Text:    strings.Join(details, "\n"),
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
+}
+
+// teamDisplayName returns the team's display name for approval cards.
+// Falls back to the team ID when lookup fails so the Team field is never blank.
+func (p *Plugin) teamDisplayName(teamID string) string {
+	if teamID == "" {
+		return "(unknown team)"
+	}
+	team, appErr := p.API.GetTeam(teamID)
+	if appErr != nil || team == nil {
+		return teamID
+	}
+	if name := strings.TrimSpace(team.DisplayName); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(team.Name); name != "" {
+		return name
+	}
+	return teamID
 }
 
 func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction {
@@ -565,6 +753,74 @@ func (p *Plugin) approvalActions(requestID, siteURL string) []*model.PostAction 
 	}
 }
 
+// addChannelToSidebarCategory places the newly-created channel in the
+// requester's chosen sidebar category for all relevant users (requester +
+// members + channel admins). Best-effort: failures are logged and don't
+// block the overall approval flow.
+func (p *Plugin) addChannelToSidebarCategory(channelID, teamID string, req *channelRequest) {
+	if req.CategoryName == "" {
+		return
+	}
+	seen := map[string]bool{}
+	for _, uid := range append([]string{req.RequesterID}, append(req.MemberIDs, req.AdminMemberIDs...)...) {
+		if uid == "" || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		if err := p.placeChannelInCategory(uid, teamID, channelID, req.CategoryName); err != nil {
+			p.API.LogWarn("failed to place channel in sidebar category",
+				"user_id", uid, "category", req.CategoryName, "error", fmt.Sprintf("%v", err))
+		}
+	}
+}
+
+// placeChannelInCategory adds channelID to the named sidebar category for a
+// single user. Match is case-insensitive against existing custom/display names.
+// If nothing matches, a new custom category is created with that display name
+// (so requesters can type a new bucket in the same form field).
+//
+// Never return a typed-nil *model.AppError as error — that interfaces as
+// non-nil and panics on .Error() (which broke Approve squash after create).
+func (p *Plugin) placeChannelInCategory(userID, teamID, channelID, categoryName string) error {
+	categoryName = strings.TrimSpace(categoryName)
+	if categoryName == "" {
+		return nil
+	}
+	cats, appErr := p.API.GetChannelSidebarCategories(userID, teamID)
+	if appErr != nil {
+		// Never return a typed-nil *model.AppError as error — interfaces as non-nil.
+		return errors.New(appErr.Error())
+	}
+	if cats != nil {
+		for _, cat := range cats.Categories {
+			if cat == nil || !strings.EqualFold(cat.DisplayName, categoryName) {
+				continue
+			}
+			if slices.Contains(cat.Channels, channelID) {
+				return nil // already in this category
+			}
+			cat.Channels = append(cat.Channels, channelID)
+			if _, updateErr := p.API.UpdateChannelSidebarCategories(userID, teamID, []*model.SidebarCategoryWithChannels{cat}); updateErr != nil {
+				return errors.New(updateErr.Error())
+			}
+			return nil
+		}
+	}
+
+	if _, createErr := p.API.CreateChannelSidebarCategory(userID, teamID, &model.SidebarCategoryWithChannels{
+		SidebarCategory: model.SidebarCategory{
+			UserId:      userID,
+			TeamId:      teamID,
+			DisplayName: categoryName,
+			Type:        model.SidebarCategoryCustom,
+		},
+		Channels: []string{channelID},
+	}); createErr != nil {
+		return errors.New(createErr.Error())
+	}
+	return nil
+}
+
 // mentionList renders a list of user IDs as @mentions for display.
 func (p *Plugin) mentionList(userIDs []string) string {
 	mentions := make([]string, 0, len(userIDs))
@@ -574,20 +830,4 @@ func (p *Plugin) mentionList(userIDs []string) string {
 		}
 	}
 	return strings.Join(mentions, ", ")
-}
-
-// notifyRequester sends a DM from the bot to the requester about the outcome of their request.
-func (p *Plugin) notifyRequester(requesterID, message string) {
-	channel, appErr := p.API.GetDirectChannel(requesterID, p.botUserID)
-	if appErr != nil {
-		p.API.LogWarn("failed to open DM with requester", "user_id", requesterID, "error", appErr.Error())
-		return
-	}
-	if _, appErr := p.API.CreatePost(&model.Post{
-		UserId:    p.botUserID,
-		ChannelId: channel.Id,
-		Message:   message,
-	}); appErr != nil {
-		p.API.LogWarn("failed to notify requester", "user_id", requesterID, "error", appErr.Error())
-	}
 }
