@@ -1,6 +1,6 @@
 module github.com/MattermostFederal/mattermost-plugin-request-hub
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/mattermost/mattermost/server/public v0.4.4
