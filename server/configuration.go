@@ -1,15 +1,40 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
+)
+
+// kvPrefixMaxLenV48 marks that ChannelNamePrefixes has been considered for
+// the 24→48 default-suffix-max migration. Prevents SavePluginConfig from
+// re-entering OnConfigurationChange in a loop.
+const kvPrefixMaxLenV48 = "migration_prefix_maxlen_v48"
+
+// Previous / current shipped defaults for the numeric third field in
+// ChannelNamePrefixes. Uploading a new bundle does not rewrite persisted
+// config, so entries still carrying the old default need a one-shot bump.
+const (
+	legacyDefaultSuffixMax  = 24
+	currentDefaultSuffixMax = 48
+)
+
+// Request type identifiers. Each names a kind of request users can
+// submit and maps to a per-type admin toggle via RequestEnabled.
+const (
+	requestTypeChannel      = "channel"
+	requestTypeChannelAdmin = "channel_admin"
+	requestTypeTeam         = "team"
+	requestTypeTeamAdmin    = "team_admin"
+	requestTypeTeamMember   = "team_member"
+	requestTypeTeamGuest    = "team_guest"
+	requestTypeWebhook      = "webhook"
+	requestTypeBot          = "bot"
 )
 
 // channelPrefix is one entry in the admin-configured list of allowed
@@ -39,18 +64,26 @@ type channelPrefix struct {
 // deserialized from the Mattermost server configuration in OnConfigurationChange.
 //
 // Field grouping (matches the System Console layout):
-//  1. Approval routing (team + channel IDs)
+//  1. Approval routing (team + channel slugs)
 //  2. Naming enforcement (structured prefix list — required)
-//  3. Approver policy (who can approve, auto-approve list)
-//  4. Notification preferences (DM + audit channel + welcome post)
-//  5. Agents (MCP tools)
+//  3. Approver policy (who can approve)
+//  4. Requestable types (per-type toggles)
+//  5. Multi-step approver pools (bot / webhook two-step)
+//  6. Agents (MCP tools)
 type configuration struct {
 	// --- 1. Approval routing ---
-	// ApprovalTeam and ApprovalChannel hold IDs, not names, so renames
-	// don't change where requests go. Older versions stored names;
-	// migrateLegacySettings converts them once at activation.
-	ApprovalTeam    string
-	ApprovalChannel string
+
+	// ApprovalTeam is the team where all named approval channels are created
+	// (bot, webhook, team, audit, and the root channel/admin channel requests).
+	// The channel URL is always "mattermost-channel-requests" — no separate
+	// setting is needed.
+	ApprovalTeam string
+
+	// PerTeamApprovalChannels enables automatic creation of a per-team
+	// approval channel (named by PerTeamChannelName) in every team. When
+	// true, channel and admin-promotion requests route to the requesting
+	// team's dedicated channel instead of the global ApprovalTeam/Channel.
+	PerTeamApprovalChannels bool
 
 	// --- 2. Naming enforcement ---
 	// ChannelNamePrefixes is the raw multi-line prefix list. Each line
@@ -63,22 +96,50 @@ type configuration struct {
 	// --- 3. Approver policy ---
 	AllowTeamAdminApprovers bool
 
-	// AutoApproveUserIDs is the comma-separated user IDs the admin picked
-	// in the AutoApprovePicker. Older versions stored usernames;
-	// migrateLegacySettings converts them once at activation.
-	AutoApproveUserIDs string
+	// --- 4. Requestable types (per-type feature toggles) ---
+	// Defaults (plugin.json): channel, channel-admin, team, team-admin,
+	// team-member, bot, and webhook are on; guest stays off until opted in.
+	AllowChannelRequests      bool
+	AllowChannelAdminRequests bool
+	AllowTeamRequests         bool
+	AllowTeamAdminRequests    bool
+	AllowTeamMemberRequests   bool
+	AllowTeamGuestRequests    bool
+	AllowBotTokenRequests     bool // covers full bot-account requests
+	AllowWebhookRequests      bool
 
-	// --- 4. Audit ---
-	AuditChannelID string
+	// --- 5. Multi-step approver pools (bot / webhook two-step) ---
+	// TwoStepApproverMode selects how security + system pools are resolved:
+	//   "attribute"    — User Attributes / ABAC (CPA); default
+	//   "usergroup"    — Mattermost custom / synced user groups by name
+	//   "system_admin" — System Admins only (backup when ABAC/groups unavailable)
+	TwoStepApproverMode string
 
-	// --- 5. Agents ---
+	// SecurityApproverAttribute / SystemApproverAttribute: CPA field names used
+	// when TwoStepApproverMode is "attribute". Rename to match your ABAC schema.
+	SecurityApproverAttribute string
+	SystemApproverAttribute   string
+
+	// SecurityApproverGroup / SystemApproverGroup: Mattermost group names
+	// (handles) used when TwoStepApproverMode is "usergroup". Defaults in
+	// plugin.json are "security-approvers" / "system-approvers"; admins can
+	// rename them in System Console. Empty → fall back to System Admins.
+	SecurityApproverGroup string
+	SystemApproverGroup   string
+
+	// --- 6. Agents ---
 	// EnableMCP offers the request tools to the Mattermost Agents plugin.
 	// Off by default; syncMCPServer applies changes on save.
 	EnableMCP bool
 
 	// --- Parsed / computed (unexported) ---
-	prefixes           []channelPrefix
-	autoApproveUserIDs []string
+	prefixes []channelPrefix
+}
+
+// TeamChannelName returns the fixed per-team approval channel URL name.
+// Follows the mattermost-*-requests pattern used by all plugin-managed channels.
+func (c *configuration) TeamChannelName() string {
+	return "mattermost-channel-requests"
 }
 
 // UsesPrefixList reports whether the admin has configured at least one
@@ -97,10 +158,29 @@ func (c *configuration) Prefixes() []channelPrefix {
 	return out
 }
 
-// AutoApproveContains reports whether the given user ID is in the
-// admin-configured auto-approve list.
-func (c *configuration) AutoApproveContains(userID string) bool {
-	return slices.Contains(c.autoApproveUserIDs, userID)
+// RequestEnabled reports whether the given request type is currently
+// enabled for users to submit. Unknown types return false.
+func (c *configuration) RequestEnabled(requestType string) bool {
+	switch requestType {
+	case requestTypeChannel:
+		return c.AllowChannelRequests
+	case requestTypeChannelAdmin:
+		return c.AllowChannelAdminRequests
+	case requestTypeTeam:
+		return c.AllowTeamRequests
+	case requestTypeTeamAdmin:
+		return c.AllowTeamAdminRequests
+	case requestTypeTeamMember:
+		return c.AllowTeamMemberRequests
+	case requestTypeTeamGuest:
+		return c.AllowTeamGuestRequests
+	case requestTypeWebhook:
+		return c.AllowWebhookRequests
+	case requestTypeBot:
+		return c.AllowBotTokenRequests
+	default:
+		return false
+	}
 }
 
 func (p *Plugin) getConfiguration() *configuration {
@@ -136,16 +216,63 @@ func (p *Plugin) OnConfigurationChange() error {
 		return errors.Wrap(err, "failed to load plugin configuration")
 	}
 
+	// One-shot: persisted ChannelNamePrefixes keep their old |24 default
+	// across plugin uploads. Rewrite those to |48 and SavePluginConfig so
+	// System Console + runtime enforcement both see the new default.
+	// KV flag is set before SavePluginConfig to break the re-entry loop;
+	// cleared again if persistence fails so the next config load retries.
+	if migrated, _ := p.API.KVGet(kvPrefixMaxLenV48); migrated == nil {
+		if bumped, changed := bumpLegacyDefaultSuffixMax(configuration.ChannelNamePrefixes); changed {
+			configuration.ChannelNamePrefixes = bumped
+			_ = p.API.KVSet(kvPrefixMaxLenV48, []byte("1"))
+			if cfgMap, mapErr := configurationToMap(configuration); mapErr != nil {
+				_ = p.API.KVDelete(kvPrefixMaxLenV48)
+				p.API.LogWarn("channel-requests: failed to serialize config for prefix max-length migration",
+					"error", mapErr.Error())
+			} else if appErr := p.API.SavePluginConfig(cfgMap); appErr != nil {
+				_ = p.API.KVDelete(kvPrefixMaxLenV48)
+				p.API.LogWarn("channel-requests: failed to persist prefix max-length migration",
+					"error", appErr.Error())
+			} else {
+				p.API.LogInfo("channel-requests: migrated ChannelNamePrefixes suffix max from 24 to 48")
+			}
+		} else {
+			_ = p.API.KVSet(kvPrefixMaxLenV48, []byte("1"))
+		}
+	}
+
 	// Parse the new prefix-list setting. Each non-blank line is a
 	// pipe-delimited entry: "prefix|description|optional_regex". Bad
 	// entries are logged and skipped rather than failing the whole
 	// activation — a typo in one line should not wedge the plugin.
 	configuration.prefixes = parsePrefixList(configuration.ChannelNamePrefixes, p.API.LogError)
 
-	// Parse the auto-approve list. Only user IDs are accepted.
-	configuration.autoApproveUserIDs = parseAutoApproveList(configuration.AutoApproveUserIDs, p.API.LogWarn)
+	// Detect PerTeamApprovalChannels being enabled for the first time so we can
+	// backfill channels for teams that existed before the setting was toggled on.
+	// Only triggers on a real false→true change after a previous configuration
+	// exists — OnConfigurationChange runs before OnActivate, and the first load
+	// must not race botUserID or duplicate the OnActivate sweep.
+	p.configurationLock.RLock()
+	hadPrevConfig := p.configuration != nil
+	prevPerTeamEnabled := false
+	prevTwoStep := ""
+	if hadPrevConfig {
+		prevPerTeamEnabled = p.configuration.PerTeamApprovalChannels
+		prevTwoStep = twoStepPoolFingerprint(p.configuration)
+	}
+	p.configurationLock.RUnlock()
 
 	p.setConfiguration(configuration)
+
+	if hadPrevConfig && configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
+		go p.ensureAllTeamApprovalChannels()
+	}
+	// Reseed bot/webhook channels when two-step pool settings change (mode,
+	// group names, or attribute names) so newly configured security approvers
+	// are added without a plugin restart.
+	if hadPrevConfig && twoStepPoolFingerprint(configuration) != prevTwoStep {
+		go p.syncTwoStepApproverChannels()
+	}
 
 	if err := p.syncMCPServer(); err != nil {
 		p.API.LogError("channel-requests: failed to apply the MCP setting", "error", err.Error())
@@ -154,130 +281,65 @@ func (p *Plugin) OnConfigurationChange() error {
 	return nil
 }
 
-// splitSettingList splits a free-form list setting on commas,
-// semicolons and whitespace so admins can paste in any reasonable format
-// ("a, b", "a b", "a\nb").
-func splitSettingList(raw string) []string {
-	return strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
-	})
+// twoStepPoolFingerprint captures the settings that control who must be in the
+// bot/webhook approval channels.
+func twoStepPoolFingerprint(c *configuration) string {
+	if c == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		c.twoStepMode(),
+		strings.TrimSpace(c.SecurityApproverGroup),
+		strings.TrimSpace(c.SystemApproverGroup),
+		strings.TrimSpace(c.SecurityApproverAttribute),
+		strings.TrimSpace(c.SystemApproverAttribute),
+	}, "|")
 }
 
-// parseAutoApproveList parses the auto-approve setting into a deduplicated
-// list of user IDs. Entries that aren't well-formed IDs are skipped with a
-// warning.
-func parseAutoApproveList(raw string, logWarn func(msg string, keyValuePairs ...any)) []string {
-	fields := splitSettingList(raw)
-	seen := make(map[string]bool, len(fields))
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		f = strings.TrimSpace(f)
-		if f == "" || seen[f] {
-			continue
-		}
-		if !model.IsValidId(f) {
-			logWarn("channel-requests: auto-approve entry is not a user ID; skipping", "entry", f)
-			continue
-		}
-		seen[f] = true
-		out = append(out, f)
+// bumpLegacyDefaultSuffixMax rewrites numeric third fields equal to the
+// previous shipped default (24) up to the current default (48). Custom
+// lengths (16, 32, …) are left alone. Comment/blank lines are preserved.
+func bumpLegacyDefaultSuffixMax(raw string) (string, bool) {
+	if raw == "" {
+		return raw, false
 	}
-	return out
-}
-
-// migrateLegacySettings converts settings saved by older versions as names
-// (approval team slug, approval channel name, auto-approve usernames) to
-// IDs and saves them back, once. Names are resolved here, at upgrade time,
-// against whatever currently holds them, and each conversion is logged so
-// an admin can check it. Unresolvable entries are kept as-is for
-// ApprovalTeam/ApprovalChannel (requests then fall back to DMing System
-// Admins, as for an unconfigured channel) and dropped from the
-// auto-approve list.
-func (p *Plugin) migrateLegacySettings() error {
-	stored := p.API.GetPluginConfig()
-	cfg := make(map[string]any, len(stored))
-	for k, v := range stored {
-		cfg[strings.ToLower(k)] = v
-	}
-	str := func(key string) string {
-		v, _ := cfg[key].(string)
-		return strings.TrimSpace(v)
-	}
-
+	legacy := strconv.Itoa(legacyDefaultSuffixMax)
+	current := strconv.Itoa(currentDefaultSuffixMax)
+	lines := strings.Split(raw, "\n")
 	changed := false
-
-	teamID := str("approvalteam")
-	if teamID != "" && !p.isTeamID(teamID) {
-		if team, appErr := p.API.GetTeamByName(teamID); appErr == nil && team != nil {
-			p.API.LogInfo("channel-requests: migrated ApprovalTeam from name to ID", "name", teamID, "team_id", team.Id)
-			teamID = team.Id
-			cfg["approvalteam"] = teamID
-			changed = true
-		} else {
-			p.API.LogWarn("channel-requests: ApprovalTeam is neither a team ID nor a team name; leaving it unchanged", "value", teamID)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
 		}
+		parts := strings.SplitN(trimmed, "|", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		if strings.TrimSpace(parts[2]) != legacy {
+			continue
+		}
+		lines[i] = strings.TrimSpace(parts[0]) + "|" + strings.TrimSpace(parts[1]) + "|" + current
+		changed = true
 	}
-
-	if channelName := str("approvalchannel"); channelName != "" && p.isTeamID(teamID) {
-		if channel, appErr := p.API.GetChannel(channelName); appErr != nil || channel == nil {
-			if channel, appErr := p.API.GetChannelByName(teamID, channelName, false); appErr == nil && channel != nil {
-				p.API.LogInfo("channel-requests: migrated ApprovalChannel from name to ID", "name", channelName, "channel_id", channel.Id)
-				cfg["approvalchannel"] = channel.Id
-				changed = true
-			} else {
-				p.API.LogWarn("channel-requests: ApprovalChannel is neither a channel ID nor a channel name in the approval team; leaving it unchanged", "value", channelName)
-			}
-		}
-	}
-
-	if raw := str("autoapproveuserids"); raw != "" {
-		var ids []string
-		legacy := false
-		for _, f := range splitSettingList(raw) {
-			f = strings.TrimPrefix(strings.TrimSpace(f), "@")
-			if f == "" {
-				continue
-			}
-			if model.IsValidId(f) {
-				if _, appErr := p.API.GetUser(f); appErr == nil {
-					ids = append(ids, f)
-					continue
-				}
-			}
-			legacy = true
-			user, appErr := p.API.GetUserByUsername(f)
-			if appErr != nil || user == nil {
-				p.API.LogWarn("channel-requests: dropping auto-approve entry that is neither a user ID nor a username", "entry", f)
-				continue
-			}
-			p.API.LogInfo("channel-requests: migrated auto-approve entry from username to ID", "username", f, "user_id", user.Id)
-			ids = append(ids, user.Id)
-		}
-		if legacy {
-			cfg["autoapproveuserids"] = strings.Join(dedupeNonEmpty(ids), ",")
-			changed = true
-		}
-	}
-
 	if !changed {
-		return nil
+		return raw, false
 	}
-	if appErr := p.API.SavePluginConfig(cfg); appErr != nil {
-		return errors.Wrap(appErr, "failed to save migrated settings")
-	}
-	// Mattermost only delivers OnConfigurationChange to active plugins, and
-	// this runs from OnActivate, so the save above doesn't reach us. Reload
-	// explicitly or the old name values stay in effect until the next save.
-	return p.OnConfigurationChange()
+	return strings.Join(lines, "\n"), true
 }
 
-// isTeamID reports whether s is the ID of an existing team.
-func (p *Plugin) isTeamID(s string) bool {
-	if !model.IsValidId(s) {
-		return false
+// configurationToMap JSON-round-trips exported settings into the map shape
+// SavePluginConfig expects. Unexported computed fields are omitted.
+func configurationToMap(c *configuration) (map[string]any, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return nil, err
 	}
-	team, appErr := p.API.GetTeam(s)
-	return appErr == nil && team != nil
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // parsePrefixList parses the admin's multi-line prefix-list setting.
@@ -336,16 +398,16 @@ var matchNothing = regexp.MustCompile(`[^\s\S]`)
 // caller stores the raw text so error messages reference what the admin
 // wrote.
 func compileSuffixRule(third, prefix string, logErr func(msg string, keyValuePairs ...any)) (*regexp.Regexp, string) {
-	// Numeric shape: treat as max length. Build [a-z0-9-]{2,N}. Any
-	// N > 32 is silently capped since MM channel identifiers max out
-	// at 64 total and we want room for the prefix.
+	// Numeric shape: treat as max length. Build [a-z0-9-]{2,N}. Cap at
+	// 48 so long suffixes fit while leaving room for the prefix under
+	// MM's 64-char channel name limit.
 	if isPositiveInt(third) {
 		n, _ := strconv.Atoi(third)
 		if n < 2 {
 			n = 2
 		}
-		if n > 32 {
-			n = 32
+		if n > 48 {
+			n = 48
 		}
 		// Anchor the pattern so it matches the whole suffix. This lets
 		// callers use MatchString directly and avoids leftmost-first

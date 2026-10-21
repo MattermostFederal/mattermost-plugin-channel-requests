@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const mcpToolPrefix = "com_mattermostfederal_channel-requests__"
+const mcpToolPrefix = "com_mattermostfederal_mattermost-plugin-request-hub__"
 
 // callMCPTool calls a tool over a real MCP session acting for userID.
 func callMCPTool(t *testing.T, p *Plugin, userID, tool string, args map[string]any) *mcp.CallToolResult {
@@ -106,6 +106,8 @@ func TestRequestChannelTool_UsesContextUserNotArgs(t *testing.T) {
 		return c.CreatorId == "admin1" && c.TeamId == "team1" && c.Name == "team-marketing"
 	})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
 	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
+	// With no Channel Admins named, the requester becomes one.
+	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
 
 	result := callMCPTool(t, p, "admin1", "request_channel", map[string]any{
@@ -226,4 +228,65 @@ func TestRequestChannelAdminTool_UnknownNomineeIsRefused(t *testing.T) {
 
 	require.Equal(t, "unknown user: ghost", mcpToolError(t, result))
 	api.AssertNotCalled(t, "GetUser", mock.Anything)
+}
+
+func TestMCPTools_HonorRequestTypeSettings(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		off  func(c *configuration)
+		want string
+	}{
+		{"list_prefixes", nil, func(c *configuration) { c.AllowChannelRequests = false }, channelRequestsDisabledMsg},
+		{"request_channel", map[string]any{
+			"team_id": "team1", "prefix": "team-", "display_name": "Marketing", "members": []string{"alice"},
+		}, func(c *configuration) { c.AllowChannelRequests = false }, channelRequestsDisabledMsg},
+		{"request_channel_admin", map[string]any{
+			"channel_id": "ch1", "nominees": []string{"nommy"},
+		}, func(c *configuration) { c.AllowChannelAdminRequests = false }, channelAdminRequestsDisabledMsg},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			p := newMCPTestPlugin(t, api, &configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+			config := *p.getConfiguration()
+			tc.off(&config)
+			p.setConfiguration(&config)
+
+			result := callMCPTool(t, p, "u1", tc.tool, tc.args)
+
+			require.Equal(t, tc.want, mcpToolError(t, result))
+			api.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
+			api.AssertNotCalled(t, "GetUser", mock.Anything)
+		})
+	}
+}
+
+func TestRequestChannelTool_QueuesForRegularMember(t *testing.T) {
+	stubMCP(t)
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newMCPTestPlugin(t, api, approvalConfig())
+
+	mockMemberRequester(api)
+	var stored channelRequest
+	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
+	}).Return(nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	mockApprovalChannel(api)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "appch" })).Return(&model.Post{Id: "card1"}, nil)
+	api.On("GetDirectChannel", "u1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm1" })).Return(&model.Post{Id: "dmroot"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	out := mcpToolOutput[MCPMessageOutput](t, callMCPTool(t, p, "u1", "request_channel", map[string]any{
+		"team_id": "team1", "prefix": "team-", "display_name": "Marketing",
+	}))
+
+	require.Contains(t, out.Message, "submitted for approval")
+	require.Equal(t, "u1", stored.RequesterID)
+	require.Equal(t, "team-marketing", stored.Name)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }

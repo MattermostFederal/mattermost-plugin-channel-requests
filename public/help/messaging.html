@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messaging threads — Mattermost Request Hub</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h2>Mattermost Request Hub</h2>
+            <span class="version">In-app documentation</span>
+        </div>
+        <nav>
+            <span class="nav-section">Start here</span>
+            <a href="docs.html">Overview</a>
+            <a href="open.html">How to open requests</a>
+            <a href="messaging.html" class="active">Messaging threads</a>
+            <span class="nav-section">Request types</span>
+            <a href="channel.html">Channels</a>
+            <a href="channel-admin.html">Channel Admin</a>
+            <a href="team.html">Teams</a>
+            <a href="team-member.html">Team members</a>
+            <a href="team-guest.html">Guest invites</a>
+            <a href="bot.html">Bots</a>
+            <a href="webhook.html">Webhooks</a>
+            <span class="nav-section">Also</span>
+            <a href="approving.html">Approving</a>
+            <a href="slash.html">Slash commands</a>
+            <a href="agents.html">AI agents</a>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <div class="breadcrumb">
+            <span>Docs</span>
+            <span class="separator">/</span>
+            Messaging threads
+        </div>
+
+
+        <h1>Messaging while a request is pending</h1>
+        <p class="tagline">Talk to reviewers without leaving the ticket.</p>
+
+        <p>
+            Every ticket links an <strong>approval Thread</strong> and a <strong>DM Thread</strong> with the bot.
+            Replies are relayed both ways. Use Mattermost's <strong>Thread</strong> right-hand sidebar
+            (Reply on the card) — not a new top-level message.
+        </p>
+        <ul class="entry-list">
+            <li><strong>Approver:</strong> ask in the approval Thread (e.g. <em>Why do you need this new team?</em>)</li>
+            <li><strong>Requester:</strong> see <code>Message from @admin:</code> in your DM Thread with the bot</li>
+            <li><strong>Reply:</strong> answer in that DM Thread; the approval Thread shows <code>Reply from @you:</code></li>
+        </ul>
+        <div class="entry-shots">
+            <figure>
+                <img src="images/shared/mattermost-thread-approver-ask.png" alt="Approver asks in the Thread RHS">
+                <figcaption>Approval Thread</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-thread-requester-dm.png" alt="Requester DM Thread with relayed question and reply">
+                <figcaption>Requester DM</figcaption>
+            </figure>
+            <figure>
+                <img src="images/shared/mattermost-thread-relay-back.png" alt="Approval Thread showing requester reply">
+                <figcaption>Relay back</figcaption>
+            </figure>
+        </div>
+
+        <div class="alert alert-tip">
+            <div class="alert-title">Reply in the ticket thread</div>
+            <p>
+                A brand-new DM to the bot (outside a ticket) gets a nudge to reply inside the
+                specific request Thread instead.
+            </p>
+        </div>
+
+    </main>
+</div>
+</body>
+</html>
