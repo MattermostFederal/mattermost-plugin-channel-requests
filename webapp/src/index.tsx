@@ -5,8 +5,8 @@ import type {Store} from 'redux';
 import type {PluginRegistry} from 'types/mattermost-webapp';
 
 import {TeamPicker} from './ApprovalChannelPicker';
-import {fetchEnabledRequestTypes} from './client';
 import {installChannelCreationOverride} from './channelCreationOverride';
+import {fetchEnabledRequestTypes} from './client';
 import {HeaderIcon} from './HeaderIcon';
 import {installIntegrationsPageOverride} from './integrationsPageOverride';
 import {installMembersPanelButton} from './membersPanelButton';
@@ -62,11 +62,13 @@ export default class Plugin {
         // initialize() and take the others down with it. safe() logs and
         // continues. The Members-panel injector is installed FIRST so it's
         // never blocked by an earlier registration failing.
-        const safe = (label: string, fn: () => void | (() => void)) => {
+        // Registry calls return a registration ID (a string); DOM helpers
+        // return a disposer. Only disposers need cleanup here.
+        const safe = (label: string, fn: () => unknown) => {
             try {
                 const disposer = fn();
                 if (typeof disposer === 'function') {
-                    this.disposers.push(disposer);
+                    this.disposers.push(disposer as () => void);
                 }
             } catch (err) {
                 // eslint-disable-next-line no-console
