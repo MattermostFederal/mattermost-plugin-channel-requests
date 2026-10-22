@@ -123,6 +123,15 @@ Click **Submit request**. You'll get a DM when a System Admin responds.
 
 ---
 
+**Limits.** A System Admin sets how many team member requests and how many guest invite requests you can have waiting for review
+at once (each request type is counted separately). At the limit you'll see *you
+have N pending requests waiting for review; you can submit more once some are
+approved, denied or expire*. Asking again for the same people in the same team shows *you already have a
+pending request to add these people to this team*; asking again to invite the
+same email address to the same team shows *you already have a pending request to
+invite email to this team*. Requests that aren't reviewed within the configured number of days expire, and
+you'll get a direct message saying so.
+
 ## Messaging while a request is pending
 
 Team member and guest requests use the same **two-way Thread relay** as other

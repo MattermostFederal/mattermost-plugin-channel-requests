@@ -720,7 +720,7 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 			return errors.New("could not save a channel request")
 		}
 		undo := func() { _, _ = p.removeExerciseRequest(pendingKindChannel, req.ID) }
-		entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}
+		entry := newPendingEntry(req)
 		if err := p.addPendingEntry(pendingKindChannel, req.RequesterID, entry); err != nil {
 			return errors.New("could not list a channel request as pending")
 		}
@@ -762,7 +762,7 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 			return errors.New("could not save a Channel Admin request")
 		}
 		undo := func() { _, _ = p.removeExerciseRequest(pendingKindAdmin, req.ID) }
-		entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: adminRequestKey(req)}
+		entry := newPendingEntry(req)
 		if err := p.addPendingEntry(pendingKindAdmin, req.RequesterID, entry); err != nil {
 			return errors.New("could not list a Channel Admin request as pending")
 		}

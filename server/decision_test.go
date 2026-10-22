@@ -68,7 +68,7 @@ func decisionFixture(t *testing.T, approvalPostID string) (*plugintest.API, *Plu
 		store[kvApprovalCardsPrefix+req.ID] = recordJSON(t, []string{"post1", "post2"})
 	}
 	store[kvRequestPrefix+req.ID] = recordJSON(t, req)
-	store[pendingListKey(pendingKindChannel, "u_req")] = recordJSON(t, []pendingEntry{{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}})
+	store[pendingListKey(pendingKindChannel, "u_req")] = recordJSON(t, []pendingEntry{{ID: req.ID, CreatedAt: req.CreatedAt, Key: req.pendingKey()}})
 
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil).Maybe()
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil).Maybe()

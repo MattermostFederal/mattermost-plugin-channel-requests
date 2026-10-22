@@ -132,6 +132,7 @@ func TestNewerActionHandlers_ApproveOnDeletedTeamLeavesRequestPending(t *testing
 
 func TestHandleTeamAdminAction_ApprovePromotesNominees(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 
@@ -159,6 +160,7 @@ func TestHandleTeamAdminAction_ApprovePromotesNominees(t *testing.T) {
 
 func TestHandleTeamAdminAction_DenyAfterTeamDeletedNamesTeamByID(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 
@@ -196,6 +198,7 @@ func TestHandleTeamMemberAction_ApproveReportsEachOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newTestPlugin(api)
 
@@ -227,6 +230,7 @@ func TestHandleTeamMemberAction_ApproveReportsEachOutcome(t *testing.T) {
 
 func TestHandleTeamMemberAction_DenyAddsNobody(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 
@@ -250,6 +254,7 @@ func TestHandleTeamGuestAction_ApproveSendsInvite(t *testing.T) {
 	srv := &restServer{status: http.StatusOK}
 	ts := srv.start(t)
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
@@ -299,6 +304,7 @@ func TestHandleTeamGuestAction_InviteFailureRestoresRequest(t *testing.T) {
 
 func TestHandleTeamGuestAction_DenySendsNoInvite(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 
@@ -319,6 +325,7 @@ func TestHandleTeamGuestAction_DenySendsNoInvite(t *testing.T) {
 
 func TestHandleTeamAction_ApproveCreatesTeam(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 
@@ -366,6 +373,7 @@ func TestHandleTeamAction_CreateFailureKeepsRequestPending(t *testing.T) {
 
 func TestHandleTeamAction_DenyCreatesNoTeam(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 

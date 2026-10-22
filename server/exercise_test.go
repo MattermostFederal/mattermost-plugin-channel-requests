@@ -697,7 +697,7 @@ func TestExercise_TeardownLeavesRealDataAlone(t *testing.T) {
 	f.channels["realch"] = &model.Channel{Id: "realch", TeamId: exerciseTeamID, Name: "team-tanker-fallout", Header: exerciseBanner, CreatorId: "real"}
 	realReq := &channelRequest{ID: model.NewId(), RequesterID: "real", TeamID: exerciseTeamID, Name: "team-real", DisplayName: "Real", CreatedAt: model.GetMillis()}
 	require.NoError(t, f.p.storeRequest(realReq))
-	require.NoError(t, f.p.addPendingEntry(pendingKindChannel, "real", pendingEntry{ID: realReq.ID, CreatedAt: realReq.CreatedAt, Key: channelRequestKey(realReq)}))
+	require.NoError(t, f.p.addPendingEntry(pendingKindChannel, "real", newPendingEntry(realReq)))
 	// The seeded channel lost its record, so only the name scan finds it.
 	f.setManifest(t, func(m *exerciseManifest) { m.ChannelIDs = nil })
 

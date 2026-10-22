@@ -15,8 +15,14 @@ const (
 	// kvPendingPrefix namespaces each user's list of pending requests.
 	kvPendingPrefix = "pending_"
 
-	pendingKindChannel = "channel"
-	pendingKindAdmin   = "admin"
+	pendingKindChannel    = "channel"
+	pendingKindAdmin      = "admin"
+	pendingKindTeam       = requestTypeTeam
+	pendingKindTeamAdmin  = requestTypeTeamAdmin
+	pendingKindTeamMember = requestTypeTeamMember
+	pendingKindTeamGuest  = requestTypeTeamGuest
+	pendingKindBot        = requestTypeBot
+	pendingKindWebhook    = requestTypeWebhook
 
 	// pendingUpdateAttempts bounds the compare-and-set retries when the
 	// same user's list is being updated at the same time.
@@ -31,21 +37,172 @@ type pendingEntry struct {
 	Key       string `json:"key"`
 }
 
+// storedRequest is a pending request of any type.
+type storedRequest interface {
+	// pendingFields returns the request's ID, its requester, and where its
+	// CreatedAt is kept.
+	pendingFields() (id, requesterID string, createdAt *int64)
+	// pendingKey identifies what was requested, for the duplicate check.
+	pendingKey() string
+}
+
+// pendingKindInfo describes how one kind of request is stored.
+type pendingKindInfo struct {
+	kvPrefix  string
+	newRecord func() storedRequest
+	// duplicate is the refusal for a second pending request with key.
+	duplicate func(key string) error
+}
+
+// pendingKinds lists every request type that counts toward the per-user
+// limit. Each user has one list per kind.
+var pendingKinds = map[string]pendingKindInfo{
+	pendingKindChannel: {
+		kvPrefix:  kvRequestPrefix,
+		newRecord: func() storedRequest { return &channelRequest{} },
+		duplicate: func(key string) error {
+			_, name, _ := strings.Cut(key, "/")
+			return errors.Errorf("you already have a pending request for ~%s in this team", name)
+		},
+	},
+	pendingKindAdmin: {
+		kvPrefix:  kvAdminRequestPrefix,
+		newRecord: func() storedRequest { return &adminRequest{} },
+		duplicate: func(string) error {
+			return errors.New("you already have a pending Channel Admin request for these people in this channel")
+		},
+	},
+	pendingKindTeam: {
+		kvPrefix:  kvTeamRequestPrefix,
+		newRecord: func() storedRequest { return &teamCreationRequest{} },
+		duplicate: func(key string) error {
+			return errors.Errorf("you already have a pending request for a team named %s", key)
+		},
+	},
+	pendingKindTeamAdmin: {
+		kvPrefix:  kvTeamAdminRequestPrefix,
+		newRecord: func() storedRequest { return &teamAdminRequest{} },
+		duplicate: func(string) error {
+			return errors.New("you already have a pending Team Admin request for these people in this team")
+		},
+	},
+	pendingKindTeamMember: {
+		kvPrefix:  kvTeamMemberRequestPrefix,
+		newRecord: func() storedRequest { return &teamMemberRequest{} },
+		duplicate: func(string) error {
+			return errors.New("you already have a pending request to add these people to this team")
+		},
+	},
+	pendingKindTeamGuest: {
+		kvPrefix:  kvTeamGuestRequestPrefix,
+		newRecord: func() storedRequest { return &teamGuestRequest{} },
+		duplicate: func(key string) error {
+			_, email, _ := strings.Cut(key, "/")
+			return errors.Errorf("you already have a pending request to invite %s to this team", email)
+		},
+	},
+	pendingKindBot: {
+		kvPrefix:  kvBotRequestPrefix,
+		newRecord: func() storedRequest { return &botRequest{} },
+		duplicate: func(key string) error {
+			return errors.Errorf("you already have a pending request for bot @%s", key)
+		},
+	},
+	pendingKindWebhook: {
+		kvPrefix:  kvWebhookRequestPrefix,
+		newRecord: func() storedRequest { return &webhookRequest{} },
+		duplicate: func(key string) error {
+			webhookType, _, _ := strings.Cut(key, "/")
+			return errors.Errorf("you already have a pending %s webhook request with this name in this channel", webhookType)
+		},
+	},
+}
+
+// pendingKindForKey returns the kind of request stored under a KV key.
+func pendingKindForKey(key string) (string, bool) {
+	for kind, info := range pendingKinds {
+		if strings.HasPrefix(key, info.kvPrefix) {
+			return kind, true
+		}
+	}
+	return "", false
+}
+
 func pendingListKey(kind, userID string) string {
 	return kvPendingPrefix + kind + "_" + userID
 }
 
-// channelRequestKey identifies a channel request by team and channel name.
-func channelRequestKey(req *channelRequest) string {
-	return req.TeamID + "/" + req.Name
+// newPendingEntry is the pending-list entry for a request.
+func newPendingEntry(r storedRequest) pendingEntry {
+	id, _, createdAt := r.pendingFields()
+	return pendingEntry{ID: id, CreatedAt: *createdAt, Key: r.pendingKey()}
 }
 
-// adminRequestKey identifies a Channel Admin request by channel and the
-// set of nominees, in any order.
-func adminRequestKey(req *adminRequest) string {
-	nominees := slices.Clone(req.NomineeIDs)
-	slices.Sort(nominees)
-	return req.ChannelID + "/" + strings.Join(nominees, ",")
+// sortedIDsKey identifies a set of users within scope, in any order.
+func sortedIDsKey(scope string, ids []string) string {
+	sorted := slices.Clone(ids)
+	slices.Sort(sorted)
+	return scope + "/" + strings.Join(sorted, ",")
+}
+
+func (r *channelRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a channel request by team and channel name.
+func (r *channelRequest) pendingKey() string { return r.TeamID + "/" + r.Name }
+
+func (r *adminRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a Channel Admin request by channel and the set of
+// nominees.
+func (r *adminRequest) pendingKey() string { return sortedIDsKey(r.ChannelID, r.NomineeIDs) }
+
+func (r *teamCreationRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a team request by its URL name.
+func (r *teamCreationRequest) pendingKey() string { return r.Name }
+
+func (r *teamAdminRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a Team Admin request by team and the set of nominees.
+func (r *teamAdminRequest) pendingKey() string { return sortedIDsKey(r.TeamID, r.NomineeIDs) }
+
+func (r *teamMemberRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a team member request by team and the set of
+// nominees.
+func (r *teamMemberRequest) pendingKey() string { return sortedIDsKey(r.TeamID, r.NomineeIDs) }
+
+func (r *teamGuestRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a guest request by team and email address.
+func (r *teamGuestRequest) pendingKey() string { return r.TeamID + "/" + strings.ToLower(r.Email) }
+
+func (r *botRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a bot request by username.
+func (r *botRequest) pendingKey() string { return r.Username }
+
+func (r *webhookRequest) pendingFields() (string, string, *int64) {
+	return r.ID, r.RequesterID, &r.CreatedAt
+}
+
+// pendingKey identifies a webhook request by type, channel and name.
+func (r *webhookRequest) pendingKey() string {
+	return r.WebhookType + "/" + r.ChannelID + "/" + strings.ToLower(r.DisplayName)
 }
 
 // updatePending applies change to a user's pending list with
@@ -161,7 +318,11 @@ func (p *Plugin) reservePending(kind, userID string, entry pendingEntry, config 
 // pendingRequestExists reports whether the request behind a pending entry
 // is still stored.
 func (p *Plugin) pendingRequestExists(kind, requestID string) (bool, error) {
-	data, appErr := p.API.KVGet(requestKVPrefix(kind) + requestID)
+	info, ok := pendingKinds[kind]
+	if !ok {
+		return false, errors.Errorf("unknown pending request kind %q", kind)
+	}
+	data, appErr := p.API.KVGet(info.kvPrefix + requestID)
 	if appErr != nil {
 		return false, errors.Wrap(appErr, "failed to load pending request")
 	}
@@ -170,18 +331,11 @@ func (p *Plugin) pendingRequestExists(kind, requestID string) (bool, error) {
 
 // requestKVPrefix is the KV prefix of the records of a pending kind.
 func requestKVPrefix(kind string) string {
-	if kind == pendingKindAdmin {
-		return kvAdminRequestPrefix
-	}
-	return kvRequestPrefix
+	return pendingKinds[kind].kvPrefix
 }
 
 func duplicateRequestError(kind, key string) error {
-	if kind == pendingKindAdmin {
-		return errors.New("you already have a pending Channel Admin request for these people in this channel")
-	}
-	_, name, _ := strings.Cut(key, "/")
-	return errors.Errorf("you already have a pending request for ~%s in this team", name)
+	return pendingKinds[kind].duplicate(key)
 }
 
 // addPendingEntry adds entry to the user's list without the limit or
@@ -212,8 +366,9 @@ const (
 	// kvPendingMigrated marks that requests saved by older versions have a
 	// CreatedAt and appear in their requester's pending list. While one
 	// server runs the migration it holds migrationRunning, which expires so
-	// an interrupted run is retried on a later activation.
-	kvPendingMigrated       = "migrated_pending_v1"
+	// an interrupted run is retried on a later activation. v2 covers every
+	// request type; v1 covered channel and Channel Admin requests only.
+	kvPendingMigrated       = "migrated_pending_v2"
 	migrationDone           = "1"
 	migrationRunning        = "running"
 	migrationClaimSeconds   = 10 * 60
@@ -254,7 +409,7 @@ func (p *Plugin) migratePendingRequests() error {
 			return errors.Wrap(appErr, "failed to list stored requests")
 		}
 		for _, key := range batch {
-			if strings.HasPrefix(key, kvRequestPrefix) || strings.HasPrefix(key, kvAdminRequestPrefix) {
+			if _, ok := pendingKindForKey(key); ok {
 				keys = append(keys, key)
 			}
 		}
@@ -349,44 +504,27 @@ type backfilledRequest struct {
 // backfillRequest decodes a stored request and gives it a CreatedAt of now
 // if it has none.
 func backfillRequest(key string, raw []byte, now int64) (backfilledRequest, error) {
-	var (
-		b         backfilledRequest
-		id        string
-		createdAt int64
-		dedupe    string
-		record    any
-	)
-	if strings.HasPrefix(key, kvAdminRequestPrefix) {
-		var req adminRequest
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return b, err
-		}
-		if req.CreatedAt <= 0 {
-			req.CreatedAt = now
-			record = req
-		}
-		b.kind, b.requesterID, id, createdAt, dedupe = pendingKindAdmin, req.RequesterID, req.ID, req.CreatedAt, adminRequestKey(&req)
-	} else {
-		var req channelRequest
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return b, err
-		}
-		if req.CreatedAt <= 0 {
-			req.CreatedAt = now
-			record = req
-		}
-		b.kind, b.requesterID, id, createdAt, dedupe = pendingKindChannel, req.RequesterID, req.ID, req.CreatedAt, channelRequestKey(&req)
+	var b backfilledRequest
+	kind, ok := pendingKindForKey(key)
+	if !ok {
+		return b, errors.New("not a stored request")
 	}
-	if !model.IsValidId(id) || !model.IsValidId(b.requesterID) || !strings.HasSuffix(key, "_"+id) {
+	record := pendingKinds[kind].newRecord()
+	if err := json.Unmarshal(raw, record); err != nil {
+		return b, err
+	}
+	id, requesterID, createdAt := record.pendingFields()
+	if !model.IsValidId(id) || !model.IsValidId(requesterID) || !strings.HasSuffix(key, "_"+id) {
 		return b, errors.New("stored request has a missing or mismatched ID")
 	}
-	if record != nil {
+	if *createdAt <= 0 {
+		*createdAt = now
 		updated, err := json.Marshal(record)
 		if err != nil {
 			return b, err
 		}
 		b.updated = updated
 	}
-	b.entry = pendingEntry{ID: id, CreatedAt: createdAt, Key: dedupe}
+	b.kind, b.requesterID, b.entry = kind, requesterID, newPendingEntry(record)
 	return b, nil
 }

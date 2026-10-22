@@ -87,8 +87,8 @@
 
         <h2 id="expired">"This request has expired"</h2>
         <p>
-            <strong>Cause:</strong> the channel or Channel Admin request wasn't reviewed within <em>Request expiry
-            (days)</em>. Approve and Deny, on the card or with the slash command, both reply <em>This request has expired.</em>, the card is marked
+            <strong>Cause:</strong> the request wasn't reviewed within <em>Request expiry (days)</em>. Bot and
+            webhook requests count from submission, even after one approval step. Approve and Deny, on the card or with the slash command, both reply <em>This request has expired.</em>, the card is marked
             <em>⌛ Expired: not reviewed within N days.</em>, and the requester's ticket is closed as expired.
         </p>
         <p>
@@ -99,16 +99,16 @@
         <h2 id="pending-limit">"You have N pending requests waiting for review"</h2>
         <p>
             <strong>Cause:</strong> the requester is at <em>Pending requests per user</em> for that kind of
-            request (new channels and Channel Admins are counted separately). Expired requests no longer count.
+            request (each request type is counted separately). Expired requests no longer count.
         </p>
         <p>
             <strong>Fix:</strong> wait for an approver to act on some, or for them to expire. A System Admin can
             raise the limit, or set it to <code>0</code> for no limit.
         </p>
         <p>
-            A related message, <em>you already have a pending request for ~name in this team</em> (or <em>you
-            already have a pending Channel Admin request for these people in this channel</em>), means the same
-            request is already waiting. It doesn't need to be submitted twice.
+            A related message starting <em>you already have a pending</em>, such as <em>you already have a
+            pending request for ~name in this team</em>, means the same request is already waiting. It doesn't
+            need to be submitted twice. Each request type's page lists its exact wording.
         </p>
 
         <h2 id="requester-left">Approve says the requester is no longer active or a member</h2>

@@ -100,6 +100,14 @@ webhooks you checked. You'll get a DM when both approvers have acted.
 
 ---
 
+**Limits.** A System Admin sets how many bot requests you can have waiting for review
+at once (each request type is counted separately). At the limit you'll see *you
+have N pending requests waiting for review; you can submit more once some are
+approved, denied or expire*. Asking again for a bot username you're already waiting on shows *you already
+have a pending request for bot @username*. Requests that aren't reviewed within the configured number of days of being
+submitted expire, even if one approval step is done, and you'll get a direct
+message saying so.
+
 ## Messaging while a request is pending
 
 Bot tickets use the same **two-way thread relay** as other request types.

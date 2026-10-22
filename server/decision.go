@@ -390,8 +390,8 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 	})
 }
 
-// expiredRequest describes a pending channel or Channel Admin request
-// that was approved or denied after it expired.
+// expiredRequest describes a pending request that was approved or denied
+// after it expired.
 type expiredRequest struct {
 	kvKey       string
 	raw         []byte

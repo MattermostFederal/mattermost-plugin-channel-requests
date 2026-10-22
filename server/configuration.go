@@ -137,7 +137,7 @@ type configuration struct {
 	// --- 7. Request limits ---
 	// Both are text settings holding whole numbers; 0 turns the limit off.
 	// Blank or invalid values fall back to the defaults below. They apply to
-	// channel and Channel Admin requests.
+	// every request type, and each type is counted separately.
 	MaxPendingRequestsPerUser string
 	RequestExpiryDays         string
 

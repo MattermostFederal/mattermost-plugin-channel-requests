@@ -338,6 +338,7 @@ func TestTwoStepActionHandlers_PartialApprovalRecordsStepAndRepaintsCard(t *test
 
 func TestHandleBotAction_DenyClosesTicket(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	raw := mustMarshal(t, pendingBotRequest(twoStepState{}))
@@ -400,6 +401,7 @@ func finalBot(t *testing.T, api *plugintest.API, req *botRequest) {
 
 func TestHandleBotAction_ExtrasSkippedWithoutSessionOrSiteURL(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	api.On("GetConfig").Return(&model.Config{})
@@ -422,6 +424,7 @@ func TestHandleBotAction_ExtrasFailuresAreReported(t *testing.T) {
 	capture := &hookCapture{status: http.StatusForbidden}
 	ts := capture.server(t)
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
@@ -455,6 +458,7 @@ func TestHandleBotAction_TokenDeliveredAfterReopeningDM(t *testing.T) {
 	capture := &hookCapture{}
 	ts := capture.server(t)
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
@@ -509,6 +513,7 @@ func TestHandleBotAction_UndeliverableIncomingWebhookIsRemoved(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ts := incomingHookServer(t, tc.hookID)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newTestPlugin(api)
 			stubSiteURL(api, ts.URL)
@@ -559,6 +564,7 @@ func finalWebhook(t *testing.T, api *plugintest.API, req *webhookRequest) []byte
 
 func TestHandleWebhookAction_DenyClosesTicket(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	created := false
@@ -581,6 +587,7 @@ func TestHandleWebhookAction_DenyClosesTicket(t *testing.T) {
 
 func TestHandleWebhookAction_ApproveCreatesWebhookAfterReopeningDM(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	var createdFor *webhookRequest
@@ -646,6 +653,7 @@ func TestHandleWebhookAction_CreateFailureRestoresAndRepaintsCard(t *testing.T) 
 
 func TestHandleWebhookAction_UndeliverableURLRemovalFailureAsksAdmin(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	p := newTestPlugin(api)
 	p.createWebhookFn = func(*webhookRequest, string) (string, string, error) { return "msg", "hook1", nil }

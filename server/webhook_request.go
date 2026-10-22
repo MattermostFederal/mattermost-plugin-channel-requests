@@ -33,6 +33,9 @@ type webhookRequest struct {
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 	CallbackURL string `json:"callback_url,omitempty"` // outgoing only
+	// CreatedAt is when the request was submitted, in milliseconds.
+	// Requests saved by older versions get it from migratePendingRequests.
+	CreatedAt int64 `json:"created_at,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -122,26 +125,37 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 		ID:          model.NewId(),
 		RequesterID: requesterID,
 		WebhookType: webhookType,
-		ChannelID:   channelID,
+		ChannelID:   channel.Id,
 		TeamID:      channel.TeamId,
 		DisplayName: strings.TrimSpace(displayName),
 		Description: strings.TrimSpace(description),
 		CallbackURL: strings.TrimSpace(callbackURL),
+		CreatedAt:   model.GetMillis(),
 	}
 
-	if storeErr := p.storeWebhookRequest(req); storeErr != nil {
-		return "", storeErr
+	entry := newPendingEntry(req)
+	if err = p.reservePending(pendingKindWebhook, req.RequesterID, entry, p.getConfiguration()); err != nil {
+		return "", err
+	}
+
+	if err = p.storeWebhookRequest(req); err != nil {
+		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
+		p.API.LogError("failed to store webhook request", "error", err.Error())
+		return "", errors.New("could not save your request; try again")
 	}
 	rawBefore, snapErr := json.Marshal(req)
 	if snapErr != nil {
 		_ = p.API.KVDelete(kvWebhookRequestPrefix + req.ID)
+		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
 		return "", errors.Wrap(snapErr, "failed to snapshot webhook request")
 	}
 
 	approvalPostID, approvalChannelID, err := p.postWebhookApprovalRequest(req, requester, channel)
 	if err != nil {
 		_ = p.API.KVDelete(kvWebhookRequestPrefix + req.ID)
-		return "", err
+		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
+		p.API.LogError("failed to post webhook request for approval", "error", err.Error())
+		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
