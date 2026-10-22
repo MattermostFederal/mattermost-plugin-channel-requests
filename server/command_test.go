@@ -104,13 +104,13 @@ func TestExecuteCommand_HelpAndUnknownSubcommand(t *testing.T) {
 
 	resp := runCommand(p, "/mattermost-request-hub help")
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
-	require.True(t, strings.HasPrefix(resp.Text, commandHelpText()))
+	require.True(t, strings.HasPrefix(resp.Text, commandHelpText(p.getConfiguration())))
 	require.Contains(t, resp.Text, "https://mm.example.com/plugins/"+manifest.Id+"/public/help/docs.html")
 
 	resp = runCommand(p, "/mattermost-request-hub bogus")
 	require.Equal(t, model.CommandResponseTypeEphemeral, resp.ResponseType)
 	require.Contains(t, resp.Text, "Unknown subcommand `bogus`")
-	require.Contains(t, resp.Text, commandHelpText())
+	require.Contains(t, resp.Text, commandHelpText(p.getConfiguration()))
 }
 
 func TestExecuteCommand_BareCommandWithTrailingSpaceOpensDialog(t *testing.T) {
@@ -158,7 +158,7 @@ func TestExecuteCommand_Prefixes(t *testing.T) {
 }
 
 func TestParseChannelCreateArgs(t *testing.T) {
-	in, err := parseChannelCreateArgs(strings.Fields("team- Marketing Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol --category Launch Work"))
+	in, err := parseChannelCreateArgs(argWords("team- Marketing Team --suffix mkt --purpose Plan the launch --private --members @alice bob --admins @carol --category Launch Work"))
 	require.NoError(t, err)
 	require.Equal(t, channelCreateInput{
 		Prefix:      "team-",
@@ -171,7 +171,7 @@ func TestParseChannelCreateArgs(t *testing.T) {
 		Category:    "Launch Work",
 	}, in)
 
-	in, err = parseChannelCreateArgs([]string{"team-", "Marketing"})
+	in, err = parseChannelCreateArgs(argWords("team- Marketing"))
 	require.NoError(t, err)
 	require.Equal(t, channelCreateInput{Prefix: "team-", DisplayName: "Marketing"}, in)
 
@@ -188,7 +188,7 @@ func TestParseChannelCreateArgs(t *testing.T) {
 		"team- Marketing --color blue":        "unknown option `--color`",
 		"team- Marketing --private --private": "`--private` is given more than once",
 	} {
-		_, err := parseChannelCreateArgs(strings.Fields(args))
+		_, err := parseChannelCreateArgs(argWords(args))
 		require.EqualError(t, err, want, args)
 	}
 }
@@ -381,12 +381,13 @@ func TestExecuteCommand_ChannelAdminQueuesForCurrentChannel(t *testing.T) {
 func TestGetAutocompleteData_MatchesDispatcherAndHelp(t *testing.T) {
 	data := getAutocompleteData()
 	require.NoError(t, data.IsValid())
+	help := commandHelpText(newTestPlugin(&plugintest.API{}).getConfiguration())
 
 	names := make([]string, 0, len(data.SubCommands))
 	for _, sub := range data.SubCommands {
 		names = append(names, sub.Trigger)
 		require.NotEmpty(t, sub.HelpText, sub.Trigger)
-		require.Contains(t, commandHelpText(), "`/"+commandTrigger+" "+sub.Trigger, sub.Trigger)
+		require.Contains(t, help, "`/"+commandTrigger+" "+sub.Trigger, sub.Trigger)
 		require.Contains(t, getCommand().AutoCompleteHint, sub.Trigger, sub.Trigger)
 	}
 	require.Contains(t, names, subcommandPrefixes)
@@ -402,4 +403,14 @@ func TestGetAutocompleteData_MatchesDispatcherAndHelp(t *testing.T) {
 	for _, name := range names {
 		require.NotContains(t, runCommand(p, "/"+commandTrigger+" "+name).Text, "Unknown subcommand", name)
 	}
+}
+
+// argWords splits s the way ExecuteCommand splits the words after the
+// subcommand.
+func argWords(s string) []commandArg {
+	words, err := splitCommandArgs(s)
+	if err != nil {
+		panic(err)
+	}
+	return words
 }
