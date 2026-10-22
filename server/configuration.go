@@ -318,13 +318,20 @@ func (p *Plugin) OnConfigurationChange() error {
 	hadPrevConfig := p.configuration != nil
 	prevPerTeamEnabled := false
 	prevTwoStep := ""
+	prevApprovalTeam := ""
 	if hadPrevConfig {
 		prevPerTeamEnabled = p.configuration.PerTeamApprovalChannels
 		prevTwoStep = twoStepPoolFingerprint(p.configuration)
+		prevApprovalTeam = strings.TrimSpace(p.configuration.ApprovalTeam)
 	}
 	p.configurationLock.RUnlock()
 
 	p.setConfiguration(configuration)
+
+	// A newly selected Approval team is recorded on its next use.
+	if hadPrevConfig && strings.TrimSpace(configuration.ApprovalTeam) != prevApprovalTeam {
+		p.forgetApprovalTeam()
+	}
 
 	if hadPrevConfig && configuration.PerTeamApprovalChannels && !prevPerTeamEnabled {
 		go p.ensureAllTeamApprovalChannels()

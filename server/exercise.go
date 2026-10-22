@@ -725,11 +725,13 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 			return errors.New("could not list a channel request as pending")
 		}
 		rawBefore, _ := json.Marshal(req) // the bytes storeRequest wrote
-		approvalPostID, approvalChannelID, dmPostIDs, err := p.postApprovalRequest(req, users[spec.Requester])
+		approvalPostID, approvalChannelID, err := p.postApprovalRequest(req, users[spec.Requester])
 		if err != nil {
 			return errors.New("could not post a channel request's approval card")
 		}
-		p.saveApprovalPosts(pendingKindChannel, req.ID, dmPostIDs)
+		if approvalPostID == "" {
+			p.resolveCardsIfHandled(pendingKindChannel, req.ID)
+		}
 		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
 		req.DMRootPostID, req.DMChannelID = p.sendTicketCreatedDM(req, users[spec.Requester])
 		p.persistTicketPosts(ticketPersist{
@@ -765,11 +767,13 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 			return errors.New("could not list a Channel Admin request as pending")
 		}
 		rawBefore, _ := json.Marshal(req) // the bytes storeAdminRequest wrote
-		approvalPostID, approvalChannelID, dmPostIDs, err := p.postAdminApprovalRequest(req, users[spec.Requester], channel)
+		approvalPostID, approvalChannelID, err := p.postAdminApprovalRequest(req, users[spec.Requester], channel)
 		if err != nil {
 			return errors.New("could not post a Channel Admin request's approval card")
 		}
-		p.saveApprovalPosts(pendingKindAdmin, req.ID, dmPostIDs)
+		if approvalPostID == "" {
+			p.resolveCardsIfHandled(pendingKindAdmin, req.ID)
+		}
 		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
 		req.DMRootPostID, req.DMChannelID = p.sendAdminTicketCreatedDM(req, users[spec.Requester], channel)
 		p.persistTicketPosts(ticketPersist{
@@ -1028,14 +1032,14 @@ func (p *Plugin) removeExerciseRequest(kind, requestID string) (bool, error) {
 	p.releasePending(kind, rec.RequesterID, requestID)
 	// Close the persona's ticket and every approval card the way an
 	// expiry would: no decision was made.
-	p.finish(newDecisionCards(requestID, "", rec.ApprovalPostID), "", exerciseRemovedText, p.closeTicket(ticketClose{
+	p.finish(newDecisionCards(requestID, "", rec.ApprovalPostID), "", exerciseRemovedText, ticketClose{
 		RequesterID: rec.RequesterID, DMRootPostID: rec.DMRootPostID, DMChannelID: rec.DMChannelID,
-		ApprovalPostID: rec.ApprovalPostID, Expired: true,
+		Expired:     true,
 		CardTitle:   exerciseDisplayPrefix + "Request Removed",
 		CardText:    "Teardown removed this exercise request.",
 		ThreadReply: exerciseRemovedText,
 		StatusLine:  exerciseRemovedText,
-	}))
+	})
 	for _, key := range exerciseRequestKeys(requestID, rec.ApprovalPostID, rec.DMRootPostID) {
 		if appErr := p.API.KVDelete(key); appErr != nil {
 			p.API.LogWarn("failed to delete exercise record", "key", key, "error", appErr.Error())
@@ -1048,7 +1052,7 @@ func (p *Plugin) removeExerciseRequest(kind, requestID string) (bool, error) {
 // its approval card copies and the two reply-forwarding lookups, which
 // outlive a decision.
 func exerciseRequestKeys(requestID, approvalPostID, dmRootPostID string) []string {
-	keys := []string{kvApprovalPostsPrefix + requestID}
+	keys := []string{kvApprovalCardsPrefix + requestID}
 	if approvalPostID != "" {
 		keys = append(keys, kvApprovalPostPrefix+approvalPostID)
 	}

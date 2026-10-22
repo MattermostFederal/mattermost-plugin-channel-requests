@@ -19,16 +19,16 @@ var isPendingListKey = mock.MatchedBy(func(key string) bool { return strings.Has
 // isNotPendingListKey matches every other KV key.
 var isNotPendingListKey = mock.MatchedBy(func(key string) bool { return !strings.HasPrefix(key, kvPendingPrefix) })
 
-// isApprovalPostsKey matches the KV key of any request's recorded
-// approval posts.
-var isApprovalPostsKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvApprovalPostsPrefix) })
+// isApprovalCardsKey matches the KV key of any request's recorded
+// approval cards.
+var isApprovalCardsKey = mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, kvApprovalCardsPrefix) })
 
-// stubApprovalPosts lets production code record approval posts freely:
+// stubApprovalPosts lets production code record approval cards freely:
 // none are recorded to start with and every write succeeds.
 func stubApprovalPosts(api *plugintest.API) {
-	api.On("KVGet", isApprovalPostsKey).Return(nil, nil).Maybe()
-	api.On("KVSet", isApprovalPostsKey, mock.Anything).Return(nil).Maybe()
-	api.On("KVDelete", isApprovalPostsKey).Return(nil).Maybe()
+	api.On("KVGet", isApprovalCardsKey).Return(nil, nil).Maybe()
+	api.On("KVSet", isApprovalCardsKey, mock.Anything).Return(nil).Maybe()
+	api.On("KVDelete", isApprovalCardsKey).Return(nil).Maybe()
 }
 
 // stubPendingLists lets production code read and update pending lists
@@ -70,7 +70,7 @@ func stubPendingMigrated(api *plugintest.API) {
 // approvableConfig is a configuration whose prefix list allows the
 // "team-" channel names the approval tests use.
 func approvableConfig() *configuration {
-	return &configuration{prefixes: []channelPrefix{{Prefix: "team-"}}}
+	return &configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}}
 }
 
 // stubActiveTeamMember makes userID an active member of teamID.

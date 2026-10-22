@@ -43,11 +43,9 @@ type adminRequest struct {
 	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
-// submitAdminRequest validates the input and either promotes the nominees
-// immediately (System Admins) or stores a pending
-// request and posts it to the approval channel. forceQueue (slash-command
-// dialog) disables the bypass so an approval card is always posted.
-func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string, forceQueue bool) (string, error) {
+// submitAdminRequest validates the input, stores a pending request and posts
+// it to the approval channel. Requests from System Admins queue too.
+func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return "", errors.New("a channel is required")
 	}
@@ -55,6 +53,9 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	nominees := dedupeNonEmpty(nomineeIDs)
 	if len(nominees) == 0 {
 		return "", errors.New("pick at least one person to make a Channel Admin")
+	}
+	if err := checkIDList(nominees, "Channel Admin nominees"); err != nil {
+		return "", err
 	}
 
 	requester, appErr := p.API.GetUser(requesterID)
@@ -102,16 +103,6 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		CreatedAt:   model.GetMillis(),
 	}
 
-	// Bypass approval for System Admins — unless forceQueue (slash-command
-	// dialog) which always produces an approval card.
-	if !forceQueue && requester.IsSystemAdmin() {
-		req.NomineeIDs = p.promoteChannelAdmins(req)
-		p.postAdminPromotionMessage(channel, req, requester)
-		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Channel Admin in ~%s",
-			requester.Username, p.mentionList(req.NomineeIDs), channel.Name), "")
-		return fmt.Sprintf("Promoted %s to Channel Admin in ~%s.", p.mentionList(req.NomineeIDs), channel.Name), nil
-	}
-
 	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: adminRequestKey(req)}
 	if err := p.reservePending(pendingKindAdmin, req.RequesterID, entry, p.getConfiguration()); err != nil {
 		return "", err
@@ -130,7 +121,7 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		return "", errors.Wrap(err, "failed to snapshot admin request")
 	}
 
-	approvalPostID, approvalChannelID, dmPostIDs, err := p.postAdminApprovalRequest(req, requester, channel)
+	approvalPostID, approvalChannelID, err := p.postAdminApprovalRequest(req, requester, channel)
 	if err != nil {
 		// Roll back so the stored request isn't orphaned without an approval message.
 		_ = p.API.KVDelete(kvAdminRequestPrefix + req.ID)
@@ -138,7 +129,10 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		p.API.LogError("failed to post Channel Admin request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
-	p.saveApprovalPosts(pendingKindAdmin, req.ID, dmPostIDs)
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindAdmin, req.ID)
+	}
 
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
@@ -247,16 +241,15 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 // buttons) to the reviewers. It reuses postApprovalAttachment, which posts to
 // the resolved approval channel and falls back to DMing every System Admin when
 // none is available, exactly as the channel-creation flow does. Returns the
-// created post ID and channel ID; both empty in fallback mode, where dmPostIDs
-// are the direct-message copies. Exercise requests mention nobody, so
-// seeding doesn't notify the approvers.
-func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) (postID, channelID string, dmPostIDs []string, err error) {
+// created post ID and channel ID; both empty in fallback mode. Exercise
+// requests mention nobody, so seeding doesn't notify the approvers.
+func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
 	approvalChannel, teamLabel := p.resolveApprovalChannel(channel.TeamId)
 	header := exerciseMarker + ": a Channel Admin request needs your review."
 	if !req.Exercise {
 		header = p.adminApprovalHeader(channel)
 	}
-	return p.postApprovalCards(p.adminApprovalAttachment(req, requester, channel), teamLabel+header, approvalChannel)
+	return p.postApprovalAttachment(req.ID, p.adminApprovalAttachment(req, requester, channel), teamLabel+header, approvalChannel)
 }
 
 // adminApprovalHeader builds the message that leads the approval post,

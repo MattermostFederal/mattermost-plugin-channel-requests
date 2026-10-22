@@ -184,8 +184,9 @@ func TestHandleUserAutocomplete_NotInTeamHappyPath(t *testing.T) {
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
 	api.On("GetConfig").Return(&model.Config{})
 	api.On("SearchUsers", mock.MatchedBy(func(s *model.UserSearch) bool {
-		return s.NotInTeamId == "t1" && s.TeamId == "" && s.Term == "bob"
+		return s.NotInTeamId == "t1" && s.TeamId == "" && s.Term == "bob" && s.Limit == 50
 	})).Return([]*model.User{{Id: "id_bob", Username: "bob"}}, nil)
+	api.On("HasPermissionTo", "u1", model.PermissionViewMembers).Return(true)
 
 	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=bob&not_in_team_id=t1", nil)
 	req.Header.Set(headerUserID, "u1")
@@ -197,6 +198,157 @@ func TestHandleUserAutocomplete_NotInTeamHappyPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	require.Len(t, out, 1)
 	require.Equal(t, "bob", out[0]["username"])
+}
+
+func TestHandleUserAutocomplete_NotInTeamKeepsTeammatesWithoutViewMembers(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
+	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
+	api.On("GetConfig").Return(&model.Config{})
+	api.On("SearchUsers", mock.MatchedBy(func(s *model.UserSearch) bool { return s.Limit == 100 })).Return([]*model.User{
+		{Id: "id_bob", Username: "bob"},
+		{Id: "id_eve", Username: "eve"},
+	}, nil)
+	api.On("HasPermissionTo", "u1", model.PermissionViewMembers).Return(false)
+	api.On("GetTeamsForUser", "u1").Return([]*model.Team{{Id: "t1"}, {Id: "t2"}}, nil)
+	api.On("GetTeamMembersForUser", "id_bob", 0, 200).Return([]*model.TeamMember{{TeamId: "t2", UserId: "id_bob"}}, nil)
+	api.On("GetTeamMembersForUser", "id_eve", 0, 200).Return([]*model.TeamMember{{TeamId: "t2", UserId: "id_eve", DeleteAt: 5}}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=b&not_in_team_id=t1", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleUserAutocomplete(w, req)
+
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	require.Equal(t, "bob", out[0]["username"])
+}
+
+func TestHandleUserAutocomplete_NotInTeamCutsToTwentyAfterFiltering(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
+	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
+	api.On("GetConfig").Return(&model.Config{})
+	api.On("HasPermissionTo", "u1", model.PermissionViewMembers).Return(false)
+	api.On("GetTeamsForUser", "u1").Return([]*model.Team{{Id: "t1"}, {Id: "t2"}}, nil)
+	// The first 25 results share no team with the caller; the next 25 do.
+	var found []*model.User
+	for i := range 50 {
+		id := fmt.Sprintf("user%02d", i)
+		found = append(found, &model.User{Id: id, Username: id})
+		team := "t3"
+		if i >= 25 {
+			team = "t2"
+		}
+		api.On("GetTeamMembersForUser", id, 0, 200).Return([]*model.TeamMember{{TeamId: team, UserId: id}}, nil)
+	}
+	api.On("SearchUsers", mock.Anything).Return(found, nil)
+
+	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=user&not_in_team_id=t1", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleUserAutocomplete(w, req)
+
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 20)
+	require.Equal(t, "user25", out[0]["username"])
+}
+
+func TestHandleUserAutocomplete_NotInTeamTeamListFailureReturnsNothing(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
+	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
+	api.On("GetConfig").Return(&model.Config{})
+	api.On("SearchUsers", mock.Anything).Return([]*model.User{{Id: "id_bob", Username: "bob"}}, nil)
+	api.On("HasPermissionTo", "u1", model.PermissionViewMembers).Return(false)
+	api.On("GetTeamsForUser", "u1").Return(nil, testAppErr("boom"))
+
+	req := httptest.NewRequest(http.MethodGet, routeUserAutocomplete+"?q=b&not_in_team_id=t1", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleUserAutocomplete(w, req)
+
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Empty(t, out)
+}
+
+func TestHandleListSidebarCategories_NonMemberGetsNothing(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t9", "u1").Return(&model.TeamMember{TeamId: "t9", UserId: "u1", DeleteAt: 7}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, routeSidebarCategories+"?team_id=t9", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleListSidebarCategories(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.JSONEq(t, "[]", w.Body.String())
+	api.AssertNotCalled(t, "GetChannelSidebarCategories", mock.Anything, mock.Anything)
+}
+
+func TestHandleListSidebarCategories_NeverJoinedGetsNothing(t *testing.T) {
+	for name, stub := range map[string]func(api *plugintest.API){
+		"lookup error": func(api *plugintest.API) {
+			api.On("GetTeamMember", "t9", "u1").Return(nil, testAppErr("not found"))
+		},
+		"no membership": func(api *plugintest.API) {
+			api.On("GetTeamMember", "t9", "u1").Return(nil, nil)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &plugintest.API{}
+			stubLogs(api)
+			p := newTestPlugin(api)
+			stub(api)
+
+			req := httptest.NewRequest(http.MethodGet, routeSidebarCategories+"?team_id=t9", nil)
+			req.Header.Set(headerUserID, "u1")
+			w := httptest.NewRecorder()
+			p.handleListSidebarCategories(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.JSONEq(t, "[]", w.Body.String())
+			api.AssertNotCalled(t, "GetChannelSidebarCategories", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestHandleListSidebarCategories_MemberGetsCategories(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := newTestPlugin(api)
+
+	api.On("GetTeamMember", "t1", "u1").Return(&model.TeamMember{TeamId: "t1", UserId: "u1"}, nil)
+	api.On("GetChannelSidebarCategories", "u1", "t1").Return(&model.OrderedSidebarCategories{
+		Categories: []*model.SidebarCategoryWithChannels{{
+			SidebarCategory: model.SidebarCategory{Id: "c1", DisplayName: "Work", Type: model.SidebarCategoryCustom},
+		}},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, routeSidebarCategories+"?team_id=t1", nil)
+	req.Header.Set(headerUserID, "u1")
+	w := httptest.NewRecorder()
+	p.handleListSidebarCategories(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "Work")
 }
 
 func TestHandleUserAutocomplete_BothScopesRejected(t *testing.T) {
@@ -253,7 +405,7 @@ func TestHandleAction_ApproveClaimsAndCreates(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -292,7 +444,7 @@ func TestHandleAction_CreateFailureRestoresRequest(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -314,8 +466,10 @@ func TestHandleAction_CreateFailureRestoresRequest(t *testing.T) {
 	var resp model.PostActionIntegrationResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(t, resp.EphemeralText, "still pending")
-	// The claimed request was written back to the KV store.
+	// The claimed request was written back to the KV store, and its cards
+	// still work.
 	api.AssertCalled(t, "KVSet", kvRequestPrefix+"req1", mock.Anything)
+	api.AssertNotCalled(t, "KVDelete", kvApprovalCardsPrefix+"req1")
 }
 
 func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
@@ -327,7 +481,7 @@ func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -352,6 +506,7 @@ func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
 	// The request is gone, so the card no longer offers it.
 	require.NotNil(t, resp.Update)
 	require.Contains(t, resp.Update.Message, "Ask the requester to submit it again")
+	api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"req1")
 }
 
 func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
@@ -360,8 +515,8 @@ func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{
-		AllowChannelRequests: true,
-		prefixes:             []channelPrefix{{Prefix: "team-"}},
+		AllowChannelRequests: true, AllowChannelAdminRequests: true,
+		prefixes: []channelPrefix{{Prefix: "team-"}},
 	})
 
 	// The header says "realuser"; the body tries to forge a sysadmin.
@@ -394,21 +549,22 @@ func TestHandleDialogSubmit_UsesHeaderIdentityNotBody(t *testing.T) {
 func TestCanApprove(t *testing.T) {
 	t.Run("nil user", func(t *testing.T) {
 		p := newTestPlugin(&plugintest.API{})
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 		require.False(t, p.canApprove(nil))
 	})
 
 	t.Run("system admin always", func(t *testing.T) {
 		p := newTestPlugin(&plugintest.API{})
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 		require.True(t, p.canApprove(&model.User{Id: "a", Roles: "system_user system_admin"}))
 	})
 
 	t.Run("team admin approves when flag on", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
 		api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "team1"}, nil)
+		stubApprovalTeamRecord(api)
 		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
 		require.True(t, p.canApprove(&model.User{Id: "u1", Roles: "system_user"}))
 	})
@@ -416,7 +572,7 @@ func TestCanApprove(t *testing.T) {
 	t.Run("team admin denied when flag off", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: false, ApprovalTeam: "appteam"})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: false, ApprovalTeam: "appteam"})
 		// Team membership must not even be consulted when the flag is off.
 		require.False(t, p.canApprove(&model.User{Id: "u1", Roles: "system_user"}))
 		api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
@@ -425,8 +581,9 @@ func TestCanApprove(t *testing.T) {
 	t.Run("regular user denied", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
 		api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "team1"}, nil)
+		stubApprovalTeamRecord(api)
 		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{Roles: "team_user"}, nil)
 		require.False(t, p.canApprove(&model.User{Id: "u1", Roles: "system_user"}))
 	})
@@ -434,8 +591,9 @@ func TestCanApprove(t *testing.T) {
 	t.Run("former team admin denied", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
 		api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "team1"}, nil)
+		stubApprovalTeamRecord(api)
 		// Leaving the team keeps SchemeAdmin on the soft-deleted row.
 		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{SchemeAdmin: true, DeleteAt: 12345}, nil)
 		require.False(t, p.canApprove(&model.User{Id: "u1", Roles: "system_user"}))
@@ -447,14 +605,15 @@ func TestHandleAction_TeamAdminCannotApproveOwnRequest(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: true, ApprovalTeam: "appteam"})
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_ta", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_ta", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
 	api.On("GetUser", "u_ta").Return(&model.User{Id: "u_ta", Username: "lead", Roles: "system_user"}, nil)
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
+	stubApprovalTeamRecord(api)
 	api.On("GetTeamMember", "appteam-id", "u_ta").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
 	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
 
@@ -476,9 +635,9 @@ func TestHandleAction_AuditRendersDisplayNameAsText(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{ApprovalTeam: "appteam"})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, ApprovalTeam: "appteam"})
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "a`b @here [c](https://example.com)", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "a`b @here [c](https://example.com)", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -487,7 +646,8 @@ func TestHandleAction_AuditRendersDisplayNameAsText(t *testing.T) {
 	api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
 	api.On("KVCompareAndDelete", kvRequestPrefix+"req1", raw).Return(true, nil)
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
-	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(&model.Channel{Id: "audit1"}, nil)
+	stubApprovalTeamRecord(api)
+	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "audit1"}, nil)
 	api.On("GetConfig").Return(&model.Config{}).Maybe()
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil).Maybe()
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
@@ -538,7 +698,7 @@ func TestHandleAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -576,7 +736,7 @@ func TestHandleAction_StaleClaimBytesAsksRetry(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -607,9 +767,9 @@ func TestHandleAction_DenyDoesNotCreateChannel(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -637,9 +797,9 @@ func TestHandleAction_NonApproverRejected(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{}) // AllowTeamAdminApprovers false
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true}) // AllowTeamAdminApprovers false
 
-	creq := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team_new", Name: "x", DisplayName: "X", ChannelType: "O"}
+	creq := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team_new", Name: "x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(creq)
 	require.NoError(t, err)
 
@@ -669,10 +829,10 @@ func TestHandleAction_PerTeamTeamAdminMayApprove(t *testing.T) {
 	p := newTestPlugin(api)
 	// Global ApprovalTeam Team Admins are NOT opted in — only the target team's
 	// Team Admins (per-team approval cards) may approve besides System Admins.
-	p.setConfiguration(&configuration{AllowTeamAdminApprovers: false, prefixes: []channelPrefix{{Prefix: "ops-"}}})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: false, prefixes: []channelPrefix{{Prefix: "ops-"}}})
 	stubActiveTeamMember(api, "team_new", "u_req")
 
-	creq := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team_new", Name: "ops-test-6", DisplayName: "test 6", ChannelType: "O"}
+	creq := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team_new", Name: "ops-test-6", DisplayName: "test 6", ChannelType: "O"}
 	raw, err := json.Marshal(creq)
 	require.NoError(t, err)
 
@@ -705,14 +865,14 @@ func TestHandleAction_PerTeamTeamAdminMayApprove(t *testing.T) {
 func TestCanApproveChannelRequest(t *testing.T) {
 	t.Run("system admin always", func(t *testing.T) {
 		p := newTestPlugin(&plugintest.API{})
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 		require.True(t, p.canApproveChannelRequest(&model.User{Id: "a", Roles: "system_user system_admin"}, "team_new"))
 	})
 
 	t.Run("target team admin may approve", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: false})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: false})
 		api.On("GetTeamMember", "team_new", "u_ta").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
 		require.True(t, p.canApproveChannelRequest(&model.User{Id: "u_ta", Roles: "system_user"}, "team_new"))
 	})
@@ -720,14 +880,14 @@ func TestCanApproveChannelRequest(t *testing.T) {
 	t.Run("plain member denied", func(t *testing.T) {
 		api := &plugintest.API{}
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowTeamAdminApprovers: false})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, AllowTeamAdminApprovers: false})
 		api.On("GetTeamMember", "team_new", "u1").Return(&model.TeamMember{Roles: "team_user"}, nil)
 		require.False(t, p.canApproveChannelRequest(&model.User{Id: "u1", Roles: "system_user"}, "team_new"))
 	})
 
 	t.Run("empty team id denied for non-global-approver", func(t *testing.T) {
 		p := newTestPlugin(&plugintest.API{})
-		p.setConfiguration(&configuration{})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 		require.False(t, p.canApproveChannelRequest(&model.User{Id: "u1", Roles: "system_user"}, ""))
 	})
 }
@@ -738,9 +898,9 @@ func TestHandleAdminAction_ApproveClaimsAndPromotes(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	areq := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(areq)
 	require.NoError(t, err)
 
@@ -769,8 +929,10 @@ func TestHandleAdminAction_ApproveClaimsAndPromotes(t *testing.T) {
 	require.NotNil(t, resp.Update)
 	api.AssertCalled(t, "KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw)
 	api.AssertCalled(t, "UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles)
-	// The claim deletes the key atomically; no separate KVDelete.
-	api.AssertNotCalled(t, "KVDelete", mock.Anything)
+	// The claim deletes the key atomically; the only KVDelete clears the
+	// request's recorded approval cards.
+	api.AssertNotCalled(t, "KVDelete", kvAdminRequestPrefix+"areq1")
+	api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"areq1")
 }
 
 func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
@@ -778,9 +940,9 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	areq := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(areq)
 	require.NoError(t, err)
 
@@ -814,7 +976,7 @@ func TestHandleAdminAction_UnknownRequestRepliesPrivately(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
 	// An unknown request gets a private reply; the post isn't loaded.
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
@@ -837,9 +999,9 @@ func TestHandleAdminAction_RequesterCannotApproveOwnRequest(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	areq := &adminRequest{ID: "areq1", RequesterID: "u_ta", ChannelID: "chX", NomineeIDs: []string{"u_ta"}}
+	areq := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_ta", ChannelID: "chX", NomineeIDs: []string{"u_ta"}}
 	raw, err := json.Marshal(areq)
 	require.NoError(t, err)
 
@@ -865,9 +1027,9 @@ func TestHandleAdminAction_ArchivedChannelLeavesRequestPending(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	areq := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(areq)
 	require.NoError(t, err)
 
@@ -1097,26 +1259,6 @@ func TestHandleRequestAdmin(t *testing.T) {
 
 		require.Equal(t, "a channel is required", jsonMap(t, w)["error"])
 	})
-
-	t.Run("system admin promotes directly", func(t *testing.T) {
-		api := &plugintest.API{}
-		stubLogs(api)
-		defer api.AssertExpectations(t)
-		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
-
-		api.On("GetUserByUsername", "nom").Return(&model.User{Id: "u_nom"}, nil)
-		api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
-		api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nom"}, nil)
-		api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", Type: model.ChannelTypeOpen}, nil)
-		api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
-		api.On("UpdateChannelMemberRoles", "chX", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
-		api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
-
-		w := callHandler(p.handleRequestAdmin, http.MethodPost, routeRequestAdmin, "admin1", `{"channel_id":"chX","nominees":["nom"]}`)
-
-		require.Equal(t, "Promoted @nom to Channel Admin in ~marketing.", jsonMap(t, w)["message"])
-	})
 }
 
 func TestHandleWebappCreate(t *testing.T) {
@@ -1162,32 +1304,6 @@ func TestHandleWebappCreate(t *testing.T) {
 
 		require.Equal(t, "a channel name is required", jsonMap(t, w)["error"])
 		api.AssertNotCalled(t, "GetUser", mock.Anything)
-	})
-
-	t.Run("system admin creates directly", func(t *testing.T) {
-		api := &plugintest.API{}
-		stubLogs(api)
-		defer api.AssertExpectations(t)
-		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})
-
-		aliceID := model.NewId()
-		api.On("GetUserByUsername", "alice").Return(&model.User{Id: aliceID}, nil)
-		api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
-		api.On("GetUser", aliceID).Return(&model.User{Id: aliceID, Username: "alice"}, nil)
-		api.On("CreateChannel", mock.MatchedBy(func(c *model.Channel) bool {
-			return c.TeamId == "team1" && c.Name == "team-marketing" && c.Type == model.ChannelTypePrivate
-		})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
-		api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
-		api.On("AddChannelMember", "ch1", aliceID).Return(&model.ChannelMember{}, nil)
-		// A lone member with no named admins is promoted.
-		api.On("UpdateChannelMemberRoles", "ch1", aliceID, channelAdminRoles).Return(&model.ChannelMember{}, nil)
-		api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
-
-		w := callHandler(p.handleWebappCreate, http.MethodPost, routeCreate, "admin1",
-			`{"team_id":"team1","display_name":"Marketing","prefix":"team-","channel_type":"P","members":["@alice"]}`)
-
-		require.Equal(t, "Created channel ~team-marketing.", jsonMap(t, w)["message"])
 	})
 }
 
@@ -1289,7 +1405,7 @@ func TestHandleDialogSubmit(t *testing.T) {
 }
 
 func TestHandleAction_ErrorPaths(t *testing.T) {
-	pending := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	pending := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(pending)
 	require.NoError(t, err)
 
@@ -1373,7 +1489,7 @@ func TestHandleAction_WelcomeMentionsAddedMembersAndAdmins(t *testing.T) {
 	p.setConfiguration(approvableConfig())
 
 	pending := &channelRequest{
-		ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O",
+		ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O",
 		MemberIDs: []string{"u_mem"}, AdminMemberIDs: []string{"u_adm"},
 	}
 	raw, err := json.Marshal(pending)
@@ -1418,10 +1534,10 @@ func TestHandleAction_DenyWithUnknownRequesterAuditsByID(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{AllowChannelRequests: true, ApprovalTeam: "appteam"})
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
-	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(&model.Channel{Id: "audit"}, nil)
+	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(pluginChannel("audit", "mattermost-audit-requests"), nil)
 	api.On("GetConfig").Return(&model.Config{}).Maybe()
 
-	pending := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	pending := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(pending)
 	require.NoError(t, err)
 
@@ -1453,7 +1569,7 @@ func TestHandleAction_DenyWithUnknownRequesterAuditsByID(t *testing.T) {
 }
 
 func TestHandleAdminAction_ErrorPaths(t *testing.T) {
-	pending := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	pending := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(pending)
 	require.NoError(t, err)
 
@@ -1523,7 +1639,7 @@ func TestHandleAdminAction_ErrorPaths(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{})
+			p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
 			tc.setup(api)
 
 			w := callHandler(func(w http.ResponseWriter, r *http.Request) { p.handleAdminAction(w, r, true) },
@@ -1545,7 +1661,7 @@ func TestHandleAdminAction_DenyAfterChannelDeleted(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{})
 
-	pending := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	pending := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(pending)
 	require.NoError(t, err)
 
@@ -1577,9 +1693,9 @@ func TestHandleAdminAction_ApproveWithNoRemainingNominees(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
 
-	pending := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	pending := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(pending)
 	require.NoError(t, err)
 
@@ -1736,9 +1852,9 @@ func TestHandleAdminAction_StaleClaimBytesAsksRetry(t *testing.T) {
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	areq := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	areq := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(areq)
 	require.NoError(t, err)
 
@@ -1862,8 +1978,8 @@ func expiredMillis() int64 {
 // returns a pointer that captures the last audit card posted.
 func mockAuditCards(api *plugintest.API) **model.MessageAttachment {
 	var audit *model.MessageAttachment
-	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id"}, nil)
-	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(&model.Channel{Id: "audit1"}, nil)
+	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id", Name: "appteam"}, nil)
+	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).Return(pluginChannel("audit1", "mattermost-audit-requests"), nil)
 	api.On("GetConfig").Return(&model.Config{}).Maybe()
 	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "audit1" })).
 		Run(func(args mock.Arguments) { audit = extractFirstAttachment(args.Get(0).(*model.Post)) }).Return(&model.Post{}, nil)
@@ -1882,7 +1998,7 @@ func TestHandleActionExpired(t *testing.T) {
 			config.ApprovalTeam = "appteam"
 			p.setConfiguration(config)
 
-			req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O", CreatedAt: expiredMillis()}
+			req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O", CreatedAt: expiredMillis()}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 			lists := fakePendingLists(api)
@@ -1918,6 +2034,8 @@ func TestHandleActionExpired(t *testing.T) {
 			require.Equal(t, `@admin closed channel request "X" from @req, which was not reviewed within 30 days`, (*audit).Text)
 			require.Empty(t, lists)
 			api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+			// Expiry clears the record of the request's cards.
+			api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"req1")
 			api.AssertNotCalled(t, "GetTeamMember", mock.Anything, mock.Anything)
 		})
 	}
@@ -1929,7 +2047,7 @@ func TestHandleActionExpiredClosesTicketThread(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{expiryDays: 30})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 
 	req := &channelRequest{
 		ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", CreatedAt: expiredMillis(),
@@ -1966,7 +2084,7 @@ func TestHandleActionExpiredClosesTicketThread(t *testing.T) {
 }
 
 func TestHandleActionExpiredClaim(t *testing.T) {
-	req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", CreatedAt: expiredMillis()}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", CreatedAt: expiredMillis()}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -1984,7 +2102,7 @@ func TestHandleActionExpiredClaim(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{expiryDays: 30})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 
 			api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 			api.On("GetUser", "u_req").Return(&model.User{Id: "u_req"}, nil)
@@ -2035,7 +2153,7 @@ func TestHandleActionApproveRechecks(t *testing.T) {
 			p := newTestPlugin(api)
 			p.setConfiguration(approvableConfig())
 
-			req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: tc.reqName, ChannelType: "O"}
+			req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: tc.reqName, ChannelType: "O"}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 
@@ -2065,7 +2183,7 @@ func TestHandleActionApproveSystemAdminRequesterSkipsTeamCheck(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 
-	req := &channelRequest{ID: "req1", RequesterID: "admin2", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "admin2", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -2113,9 +2231,9 @@ func TestHandleAdminActionApproveRechecks(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+			req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 
@@ -2146,9 +2264,9 @@ func TestHandleAdminActionApproveSystemAdminRequesterSkipsChannelCheck(t *testin
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	req := &adminRequest{ID: "areq1", RequesterID: "admin2", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "admin2", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -2179,9 +2297,9 @@ func TestHandleAdminActionDenyInactiveRequester(t *testing.T) {
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{})
+	p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-	req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
+	req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "chX", NomineeIDs: []string{"u_nom"}}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -2226,7 +2344,7 @@ func TestHandleActionFreesPendingSlot(t *testing.T) {
 			p := newTestPlugin(api)
 			p.setConfiguration(approvableConfig())
 
-			req := &channelRequest{ID: "req1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
+			req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 			lists := fakePendingLists(api)
@@ -2281,9 +2399,9 @@ func TestHandleAdminActionExpired(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{expiryDays: 30, ApprovalTeam: "appteam"})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30, ApprovalTeam: "appteam"})
 
-			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
+			req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 			lists := fakePendingLists(api)
@@ -2318,6 +2436,8 @@ func TestHandleAdminActionExpired(t *testing.T) {
 			require.Equal(t, "@admin closed the Channel Admin request for @nom in ~marketing from @req, which was not reviewed within 30 days", (*audit).Text)
 			require.Empty(t, lists)
 			api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
+			// Expiry clears the record of the request's cards.
+			api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"areq1")
 		})
 	}
 }
@@ -2336,9 +2456,9 @@ func TestHandleAdminActionExpiredInactiveRequester(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{expiryDays: 30})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 
-			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
+			req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 			fakePendingLists(api)
@@ -2373,9 +2493,9 @@ func TestHandleAdminActionFreesPendingSlot(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true})
 
-			req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}}
+			req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}}
 			raw, err := json.Marshal(req)
 			require.NoError(t, err)
 			lists := fakePendingLists(api)
@@ -2403,7 +2523,7 @@ func TestHandleAdminActionFreesPendingSlot(t *testing.T) {
 }
 
 func TestHandleActionExpiredChecksPermissionsFirst(t *testing.T) {
-	expired := &channelRequest{ID: "req1", RequesterID: "u_ta", TeamID: "team1", Name: "team-x", DisplayName: "X", CreatedAt: expiredMillis()}
+	expired := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_ta", TeamID: "team1", Name: "team-x", DisplayName: "X", CreatedAt: expiredMillis()}
 	raw, err := json.Marshal(expired)
 	require.NoError(t, err)
 
@@ -2412,7 +2532,7 @@ func TestHandleActionExpiredChecksPermissionsFirst(t *testing.T) {
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{expiryDays: 30})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 		api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
 		api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
 		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{Roles: "team_user"}, nil).Maybe()
@@ -2429,7 +2549,7 @@ func TestHandleActionExpiredChecksPermissionsFirst(t *testing.T) {
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{expiryDays: 30})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 		api.On("GetUser", "u_ta").Return(&model.User{Id: "u_ta", Username: "lead", Roles: "system_user"}, nil)
 		api.On("GetTeamMember", "team1", "u_ta").Return(&model.TeamMember{Roles: "team_user team_admin"}, nil)
 		api.On("KVGet", kvRequestPrefix+"req1").Return(raw, nil)
@@ -2443,7 +2563,7 @@ func TestHandleActionExpiredChecksPermissionsFirst(t *testing.T) {
 }
 
 func TestHandleAdminActionExpiredChecksPermissionsFirst(t *testing.T) {
-	expired := &adminRequest{ID: "areq1", RequesterID: "u_ta", ChannelID: "chX", NomineeIDs: []string{"u_ta"}, CreatedAt: expiredMillis()}
+	expired := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_ta", ChannelID: "chX", NomineeIDs: []string{"u_ta"}, CreatedAt: expiredMillis()}
 	raw, err := json.Marshal(expired)
 	require.NoError(t, err)
 
@@ -2452,7 +2572,7 @@ func TestHandleAdminActionExpiredChecksPermissionsFirst(t *testing.T) {
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{expiryDays: 30})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 		lists := fakePendingLists(api)
 		lists[pendingListKey(pendingKindAdmin, "u_ta")] = recordJSON(t, []pendingEntry{{ID: "areq1", CreatedAt: expired.CreatedAt, Key: "chX/u_ta"}})
 		api.On("GetUser", "u1").Return(&model.User{Id: "u1", Roles: "system_user"}, nil)
@@ -2475,7 +2595,7 @@ func TestHandleAdminActionExpiredChecksPermissionsFirst(t *testing.T) {
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
-		p.setConfiguration(&configuration{expiryDays: 30})
+		p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 		api.On("GetUser", "u_ta").Return(&model.User{Id: "u_ta", Username: "lead", Roles: "system_user"}, nil)
 		api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 		api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", TeamId: "team1"}, nil)
@@ -2490,7 +2610,7 @@ func TestHandleAdminActionExpiredChecksPermissionsFirst(t *testing.T) {
 }
 
 func TestHandleAdminActionExpiredClaim(t *testing.T) {
-	req := &adminRequest{ID: "areq1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
+	req := &adminRequest{ID: "areq1", ApprovalPostID: "post1", RequesterID: "u_req", ChannelID: "ch1", NomineeIDs: []string{"u_nom"}, CreatedAt: expiredMillis()}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -2506,7 +2626,7 @@ func TestHandleAdminActionExpiredClaim(t *testing.T) {
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
-			p.setConfiguration(&configuration{expiryDays: 30})
+			p.setConfiguration(&configuration{AllowChannelRequests: true, AllowChannelAdminRequests: true, expiryDays: 30})
 
 			api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 			api.On("GetUser", "u_req").Return(&model.User{Id: "u_req"}, nil)
@@ -2526,4 +2646,46 @@ func TestHandleAdminActionExpiredClaim(t *testing.T) {
 			api.AssertNotCalled(t, "CreatePost", mock.Anything)
 		})
 	}
+}
+
+func TestActionRequestID(t *testing.T) {
+	cases := []struct {
+		name    string
+		request *model.PostActionIntegrationRequest
+		post    *model.Post
+		postErr *model.AppError
+		want    string
+	}{
+		{name: "no request"},
+		{name: "from click context", request: &model.PostActionIntegrationRequest{PostId: "p1", Context: map[string]any{actionContextRequestID: "r1"}}, want: "r1"},
+		{name: "no context and no post", request: &model.PostActionIntegrationRequest{}},
+		{name: "post can't be loaded", request: &model.PostActionIntegrationRequest{PostId: "p1"}, postErr: testAppErr("gone")},
+		{name: "from the post's buttons", request: &model.PostActionIntegrationRequest{PostId: "p1"}, post: cardPost("bot-user-id", "r2"), want: "r2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			p := newTestPlugin(api)
+			if tc.post != nil || tc.postErr != nil {
+				api.On("GetPost", "p1").Return(tc.post, tc.postErr)
+			}
+
+			require.Equal(t, tc.want, p.actionRequestID(tc.request))
+		})
+	}
+}
+
+func TestPostRequestID(t *testing.T) {
+	withActions := func(actions ...*model.PostAction) *model.Post {
+		post := &model.Post{}
+		model.ParseMessageAttachment(post, []*model.MessageAttachment{{Title: "Request", Actions: actions}})
+		return post
+	}
+	require.Empty(t, postRequestID(&model.Post{}))
+	require.Empty(t, postRequestID(withActions(nil, &model.PostAction{Id: "noop"})))
+	require.Empty(t, postRequestID(withActions(&model.PostAction{Integration: &model.PostActionIntegration{}})))
+	require.Equal(t, "r1", postRequestID(withActions(
+		&model.PostAction{Integration: &model.PostActionIntegration{}},
+		&model.PostAction{Integration: &model.PostActionIntegration{Context: map[string]any{actionContextRequestID: "r1"}}},
+	)))
 }

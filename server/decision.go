@@ -1,17 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/pkg/errors"
 )
-
-// kvApprovalPostsPrefix namespaces the IDs of the direct-message copies of
-// a request's approval card, posted to each System Admin when there is no
-// approval channel, so every copy can be resolved together.
-const kvApprovalPostsPrefix = "approval_dm_posts_"
 
 // decisionResult is what an approve or deny produced.
 type decisionResult struct {
@@ -65,6 +58,19 @@ type decisionCards struct {
 	cardPostID string
 }
 
+// decisionRefusal returns why a decision can't go ahead, or "" when it can:
+// a click must be on one of the request's cards, and Approve needs the
+// request type still turned on. The slash command has no card, so only
+// the second rule applies to it.
+func (p *Plugin) decisionRefusal(clickedPostID, approvalPostID, requestID, requestType string, approve bool) string {
+	if clickedPostID != "" {
+		if msg := p.cardRefusal(clickedPostID, approvalPostID, requestID); msg != "" {
+			return msg
+		}
+	}
+	return p.typeOffRefusal(requestType, approve)
+}
+
 func newDecisionCards(requestID, clickedPostID, approvalPostID string) decisionCards {
 	cardPostID := clickedPostID
 	if cardPostID == "" {
@@ -73,10 +79,19 @@ func newDecisionCards(requestID, clickedPostID, approvalPostID string) decisionC
 	return decisionCards{requestID: requestID, clickedPostID: clickedPostID, cardPostID: cardPostID}
 }
 
-// finish applies a resolved card: a click gets it back as its Update; with
-// no click the stored card is updated in place. Every other recorded copy
-// is resolved with outcome too.
-func (p *Plugin) finish(c decisionCards, reply, outcome string, resolved *model.Post) decisionResult {
+// finish closes the request's ticket and cards with tc. Every other
+// recorded copy of the card is resolved with outcome first, since
+// closeTicket clears the record of the cards.
+func (p *Plugin) finish(c decisionCards, reply, outcome string, tc ticketClose) decisionResult {
+	p.resolveApprovalCards(c.requestID, outcome, c.cardPostID)
+	tc.RequestID = c.requestID
+	tc.ApprovalPostID = c.cardPostID
+	return p.applyResolved(c, reply, outcome, p.closeTicket(tc))
+}
+
+// applyResolved applies a resolved card: a click gets it back as its
+// Update; with no click the stored card is updated in place.
+func (p *Plugin) applyResolved(c decisionCards, reply, outcome string, resolved *model.Post) decisionResult {
 	result := decisionResult{Reply: reply, Outcome: outcome}
 	if c.clickedPostID != "" {
 		result.Update = resolved
@@ -85,7 +100,6 @@ func (p *Plugin) finish(c decisionCards, reply, outcome string, resolved *model.
 			p.API.LogWarn("failed to resolve approval card", "request_id", c.requestID, "post_id", resolved.Id, "error", appErr.Error())
 		}
 	}
-	p.resolveApprovalCards(c.requestID, outcome, c.cardPostID)
 	return result
 }
 
@@ -108,6 +122,9 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 	if req == nil {
 		// Only the decision that wins the claim below updates the cards.
 		return decisionResult{Reply: alreadyHandledText}
+	}
+	if msg := p.decisionRefusal(clickedPostID, req.ApprovalPostID, req.ID, requestTypeChannel, approve); msg != "" {
+		return decisionResult{Reply: msg}
 	}
 
 	// System Admin, primary ApprovalTeam Team Admin (opt-in), or Team Admin of
@@ -191,7 +208,9 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 				p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 				// The request is gone, so no card should offer it any more.
 				lost := fmt.Sprintf("⚠️ Approval by @%s failed and the request could not be kept. Ask the requester to submit it again.", actingUser.Username)
-				return p.finish(cards,
+				p.resolveApprovalCards(req.ID, lost, cards.cardPostID)
+				p.deleteApprovalCards(req.ID)
+				return p.applyResolved(cards,
 					fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error()),
 					lost, p.resolvedPost(cards.cardPostID, lost))
 			}
@@ -209,26 +228,26 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 		}
 		p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s approved channel request \"%s\" (~%s) from %s",
 			actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
-		return p.finish(cards, "", outcome, p.closeTicket(ticketClose{
+		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: cards.cardPostID, Approved: true, ApproverUsername: actingUser.Username,
+			Approved: true, ApproverUsername: actingUser.Username,
 			CardTitle:  exerciseLabel(req.Exercise) + "Channel Request Approved",
 			CardText:   fmt.Sprintf("Approved by @%s. Your request for channel **%s** is now available at ~%s.", actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name),
 			StatusLine: outcome,
-		}))
+		})
 	}
 
 	p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 	outcome := fmt.Sprintf("❌ Denied by @%s for %s. Channel request **%s** (`%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.DisplayName), req.Name)
 	p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied channel request \"%s\" from %s",
 		actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)), cards.cardPostID)
-	return p.finish(cards, "", outcome, p.closeTicket(ticketClose{
+	return p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: cards.cardPostID, Approved: false, ApproverUsername: actingUser.Username,
+		Approved: false, ApproverUsername: actingUser.Username,
 		CardTitle:  exerciseLabel(req.Exercise) + "Channel Request Denied",
 		CardText:   fmt.Sprintf("Denied by @%s. Your request for channel **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, escapeMarkdown(req.DisplayName)),
 		StatusLine: outcome,
-	}))
+	})
 }
 
 // decideAdminRequest approves or denies a Channel Admin request on behalf
@@ -249,6 +268,9 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 	if req == nil {
 		// See decideChannelRequest.
 		return decisionResult{Reply: alreadyHandledText}
+	}
+	if msg := p.decisionRefusal(clickedPostID, req.ApprovalPostID, req.ID, requestTypeChannelAdmin, approve); msg != "" {
+		return decisionResult{Reply: msg}
 	}
 
 	// A channel-admin request is scoped to a specific channel, so the check
@@ -347,25 +369,25 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 			p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s promoted %s to Channel Admin in %s (requested by %s)",
 				actingUser.Username, promoted, channelRef, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 		}
-		return p.finish(cards, "", outcome, p.closeTicket(ticketClose{
+		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: cards.cardPostID, Approved: true, ApproverUsername: actingUser.Username,
+			Approved: true, ApproverUsername: actingUser.Username,
 			CardTitle:  exerciseLabel(req.Exercise) + "Channel Admin Request Approved",
 			CardText:   cardText,
 			StatusLine: outcome,
-		}))
+		})
 	}
 
 	outcome := fmt.Sprintf("❌ Denied by @%s for %s. Channel Admin for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, channelRef)
 	p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied a Channel Admin request for %s in %s",
 		actingUser.Username, nominees, channelRef), cards.cardPostID)
-	return p.finish(cards, "", outcome, p.closeTicket(ticketClose{
+	return p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: cards.cardPostID, Approved: false, ApproverUsername: actingUser.Username,
+		Approved: false, ApproverUsername: actingUser.Username,
 		CardTitle:  exerciseLabel(req.Exercise) + "Channel Admin Request Denied",
 		CardText:   fmt.Sprintf("Denied by @%s. Your request to make %s Channel Admin in %s was not approved. Reply to this thread if you'd like more information.", actingUser.Username, nominees, channelRef),
 		StatusLine: outcome,
-	}))
+	})
 }
 
 // expiredRequest describes a pending channel or Channel Admin request
@@ -400,70 +422,40 @@ func (p *Plugin) expireRequest(cards decisionCards, e expiredRequest) decisionRe
 	p.releasePending(e.kind, e.requesterID, e.requestID)
 	p.logAudit(auditExpired, e.audit, cards.cardPostID)
 	outcome := fmt.Sprintf("⌛ Expired: not reviewed within %d days.", e.days)
-	return p.finish(cards, expiredText, outcome, p.closeTicket(ticketClose{
+	return p.finish(cards, expiredText, outcome, ticketClose{
 		RequesterID: e.requesterID, DMRootPostID: e.dmRootID, DMChannelID: e.dmChannelID,
-		ApprovalPostID: cards.cardPostID, Expired: true,
+		Expired:     true,
 		CardTitle:   e.cardTitle,
 		CardText:    e.cardText,
 		ThreadReply: fmt.Sprintf("⌛ **Expired**: not reviewed within %d days.", e.days),
 		StatusLine:  outcome,
-	}))
+	})
 }
 
-// saveApprovalPosts records the direct-message copies of a request's
-// approval card. A failure is logged: the copies then update only when
-// clicked.
-func (p *Plugin) saveApprovalPosts(kind, requestID string, postIDs []string) {
-	if len(postIDs) == 0 {
-		return
-	}
-	data, _ := json.Marshal(postIDs) // a []string always marshals
-	if appErr := p.API.KVSet(kvApprovalPostsPrefix+requestID, data); appErr != nil {
-		p.API.LogWarn("failed to record approval posts", "request_id", requestID, "error", appErr.Error())
-		return
-	}
-	// An approver can act on the first copy while the rest are still being
-	// posted, before they were recorded here. If the request is already
-	// gone, resolve the copies now, since nothing else will.
+// resolveCardsIfHandled covers a System Admin acting on the first
+// direct-message copy of a card while the rest were still being posted,
+// before they were recorded:
+// if the request is already gone once its cards are recorded, the copies
+// are resolved now, since nothing else will.
+func (p *Plugin) resolveCardsIfHandled(kind, requestID string) {
 	exists, err := p.pendingRequestExists(kind, requestID)
 	if err != nil {
-		p.API.LogWarn("failed to check request after recording approval posts", "request_id", requestID, "error", err.Error())
+		p.API.LogWarn("failed to check request after recording approval cards", "request_id", requestID, "error", err.Error())
 		return
 	}
 	if !exists {
 		p.resolveApprovalCards(requestID, alreadyHandledText, "")
+		p.deleteApprovalCards(requestID)
 	}
-}
-
-func (p *Plugin) deleteApprovalPosts(requestID string) {
-	if appErr := p.API.KVDelete(kvApprovalPostsPrefix + requestID); appErr != nil {
-		p.API.LogWarn("failed to delete approval posts record", "request_id", requestID, "error", appErr.Error())
-	}
-}
-
-// loadApprovalPosts returns the recorded approval post IDs for a request,
-// or nil when none were recorded.
-func (p *Plugin) loadApprovalPosts(requestID string) ([]string, error) {
-	data, appErr := p.API.KVGet(kvApprovalPostsPrefix + requestID)
-	if appErr != nil {
-		return nil, errors.Wrap(appErr, "failed to load approval posts")
-	}
-	if data == nil {
-		return nil, nil
-	}
-	var postIDs []string
-	if err := json.Unmarshal(data, &postIDs); err != nil {
-		return nil, errors.Wrap(err, "failed to read approval posts")
-	}
-	return postIDs, nil
 }
 
 // resolveApprovalCards marks every recorded copy of a request's approval
 // card with outcome and removes its buttons, except skipPostID, which the
-// caller resolves itself. Failures are logged; a card left behind answers
-// a later click with "already handled".
+// caller resolves itself. The record stays; closeTicket clears it.
+// Failures are logged; a card left behind answers a later click with
+// "already handled".
 func (p *Plugin) resolveApprovalCards(requestID, outcome, skipPostID string) {
-	postIDs, err := p.loadApprovalPosts(requestID)
+	postIDs, err := p.loadApprovalCards(requestID)
 	if err != nil {
 		p.API.LogWarn("failed to resolve approval cards", "request_id", requestID, "error", err.Error())
 		return
@@ -487,5 +479,4 @@ func (p *Plugin) resolveApprovalCards(requestID, outcome, skipPostID string) {
 			p.API.LogWarn("failed to resolve approval card", "request_id", requestID, "post_id", postID, "error", appErr.Error())
 		}
 	}
-	p.deleteApprovalPosts(requestID)
 }

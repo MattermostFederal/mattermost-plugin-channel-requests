@@ -219,8 +219,8 @@ func newExerciseFake(t *testing.T) *exerciseFake {
 		api: api, p: newTestPlugin(api),
 		users: map[string]*model.User{"admin1": sysadmin("admin1")},
 		channels: map[string]*model.Channel{
-			"appch":   {Id: "appch", TeamId: "appteam", Name: "mattermost-channel-requests", Type: model.ChannelTypePrivate},
-			"auditch": {Id: "auditch", TeamId: "appteam", Name: "mattermost-audit-requests", Type: model.ChannelTypePrivate},
+			"appch":   {Id: "appch", TeamId: "appteam", Name: "mattermost-channel-requests", Type: model.ChannelTypePrivate, CreatorId: "bot-user-id"},
+			"auditch": {Id: "auditch", TeamId: "appteam", Name: "mattermost-audit-requests", Type: model.ChannelTypePrivate, CreatorId: "bot-user-id"},
 		},
 		posts:          map[string]*model.Post{},
 		teamMembers:    map[string]bool{},
@@ -276,15 +276,6 @@ func (f *exerciseFake) mockServer() {
 	// The approval team is "appteam"; its channels are found and
 	// auto-created like any other.
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam", Name: "appteam", DisplayName: "Approvals"}, nil).Maybe()
-	api.On("GetChannelByNameForTeamName", "appteam", mock.Anything, mock.Anything).Return(func(_, name string, includeDeleted bool) (*model.Channel, *model.AppError) {
-		for _, c := range f.channels {
-			if c.TeamId == "appteam" && c.Name == name && (includeDeleted || c.DeleteAt == 0) {
-				cp := *c
-				return &cp, nil
-			}
-		}
-		return nil, notFoundErr()
-	}).Maybe()
 	api.On("GetUsers", mock.Anything).Return(func(*model.UserGetOptions) ([]*model.User, *model.AppError) {
 		var admins []*model.User
 		for _, u := range f.users {
@@ -683,9 +674,10 @@ func TestExercise_PopulateApproveTeardownRepopulate(t *testing.T) {
 	require.Equal(t, 3, removedCards)
 	require.Equal(t, 3, removedTickets)
 	require.Equal(t, "EXERCISE Channel Request Approved", f.posts[req.DMRootPostID].Attachments()[0].Title)
-	// Nothing but the persona records is left in the KV store.
+	// Nothing but the persona records is left in the KV store, besides the
+	// plugin's own record of the Approval team, which isn't exercise data.
 	for key := range f.kv {
-		require.True(t, strings.HasPrefix(key, kvExercisePersonaPrefix), key)
+		require.True(t, strings.HasPrefix(key, kvExercisePersonaPrefix) || key == kvApprovalTeamKey, key)
 	}
 	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise status"), "No exercise data is recorded")
 	require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "nothing to tear down")
@@ -1300,11 +1292,11 @@ func TestApprovalCardMarkers(t *testing.T) {
 	requester := &model.User{Id: "u1", Username: "u1"}
 
 	for _, exercise := range []bool{false, true} {
-		_, _, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: exercise}, requester)
+		_, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: exercise}, requester)
 		require.NoError(t, err)
 	}
 	channel := &model.Channel{Id: "c1", TeamId: exerciseTeamID, Name: "x", DisplayName: "X"}
-	_, _, _, err := f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
+	_, _, err := f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
 	require.NoError(t, err)
 
 	type card struct{ header, title string }
@@ -1328,10 +1320,10 @@ func TestApprovalCardMarkers_KeepTheTeamLabel(t *testing.T) {
 	f.api.On("GetTeamMembers", exerciseTeamID, mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil)
 	requester := &model.User{Id: "u1", Username: "u1"}
 
-	_, _, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: true}, requester)
+	_, _, err := f.p.postApprovalRequest(&channelRequest{ID: model.NewId(), TeamID: exerciseTeamID, Name: "team-x", DisplayName: "X", Exercise: true}, requester)
 	require.NoError(t, err)
 	channel := &model.Channel{Id: "c1", TeamId: exerciseTeamID, Name: "x", DisplayName: "X"}
-	_, _, _, err = f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
+	_, _, err = f.p.postAdminApprovalRequest(&adminRequest{ID: model.NewId(), Exercise: true}, requester, channel)
 	require.NoError(t, err)
 
 	require.ElementsMatch(t, []string{

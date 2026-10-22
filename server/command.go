@@ -452,7 +452,6 @@ func (p *Plugin) executeChannelCreateCommand(args *model.CommandArgs, params []s
 		MemberIDs:      memberIDs,
 		AdminMemberIDs: adminMemberIDs,
 		CategoryName:   parsed.Category,
-		ForceQueue:     true,
 	})
 	if err != nil {
 		return ephemeralResponse(err.Error())
@@ -476,7 +475,7 @@ func (p *Plugin) executeChannelAdminNominateCommand(args *model.CommandArgs, par
 		return ephemeralResponse(fmt.Sprintf("Name at least one channel member: `/%s channel-admin %s`", commandTrigger, channelAdminArgsHint))
 	}
 
-	message, err := p.submitAdminRequest(args.UserId, args.ChannelId, nomineeIDs, true)
+	message, err := p.submitAdminRequest(args.UserId, args.ChannelId, nomineeIDs)
 	if err != nil {
 		return ephemeralResponse(err.Error())
 	}
