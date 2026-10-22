@@ -89,9 +89,9 @@ func TestSubmitWebhookRequest_RejectsUnknownType(t *testing.T) {
 	require.Contains(t, err.Error(), "unknown webhook type")
 }
 
-// TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses verifies that unlike
-// other request types, System Admins are NOT given a creation bypass for
-// webhooks (the admin session token is only available at approve-time).
+// TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses verifies that, as
+// for every request type, a System Admin's webhook request queues for
+// approval instead of creating the webhook.
 func TestSubmitWebhookRequest_SystemAdminQueuesNotBypasses(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
