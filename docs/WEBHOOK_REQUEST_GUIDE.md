@@ -38,7 +38,9 @@ or group messages (those can't be webhook targets).
 - **Native:** Main Menu → Integrations → **Incoming** or **Outgoing Webhooks** (non–System Admins)
 - **Dropdown:** channel More actions → **Request Incoming/Outgoing Webhook**
 - **Hub:** right App Bar **plug** → Requests → the webhook tile
-- **Slash:** `/mattermost-request-hub webhook-incoming` or `webhook-outgoing`
+- **Slash:** `/mattermost-request-hub webhook-incoming` or `webhook-outgoing` (or skip the form with
+  `webhook-incoming ~channel <Display name> [--description <text>]` or
+  `webhook-outgoing ~channel <Display name> --callback <url> [--description <text>]`)
 
 <p>
 <img src="images/webhook-request/mattermost-webhook-integrations-incoming.png" alt="Integrations (incoming)" width="720">

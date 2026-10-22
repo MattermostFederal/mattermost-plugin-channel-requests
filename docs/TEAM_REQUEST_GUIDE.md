@@ -32,7 +32,8 @@ Same **Request a New Team** form from every entry point.
 - **Team rail +:** the + under teams opens Request a Team for non–System Admins (join-other-teams + is unchanged)
 - **Dropdown:** channel More actions → **Request a Team**
 - **Hub:** right App Bar **plug** → Requests → **Request a Team**
-- **Slash:** `/mattermost-request-hub team`
+- **Slash:** `/mattermost-request-hub team` (or skip the form with
+  `/mattermost-request-hub team <Team name> [options]`)
 
 <p>
 <img src="images/team-request/mattermost-team-native-menu.png" alt="Team sidebar" width="240">
@@ -69,7 +70,8 @@ you're already a Team Admin or System Admin** for that team.
 - **Native:** team sidebar → **Request Team Admin**
 - **Dropdown:** channel More actions → **Request Team Admin**
 - **Hub:** right App Bar **plug** → Requests → **Request Team Admin**
-- **Slash:** `/mattermost-request-hub team-admin`
+- **Slash:** `/mattermost-request-hub team-admin` (or skip the form with
+  `/mattermost-request-hub team-admin @user [@user ...]`)
 
 <p>
 <img src="images/team-admin-request/mattermost-team-admin-native.png" alt="Team sidebar" width="240">
