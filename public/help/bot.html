@@ -79,6 +79,12 @@
         <img src="images/bot-request/mattermost-bot-approval-card.png" alt="Bot approval card">
         <img src="images/bot-request/mattermost-bot-token-dm.png" alt="Bot token DM">
         <p>Tokens in the approval DM auto-delete after <strong>72 hours</strong>. Save them securely.</p>
+        <p>
+            Before either approval step, Approve checks that the requester and any chosen owner are still active,
+            and that any webhook channels still exist, the requester is still in them, and an outgoing webhook's
+            channel is still public. If not, the approver gets a private message and the
+            request stays as it was, so it can be denied (see <a href="approving.html#rechecks">Requests that can't be approved as they stand</a>).
+        </p>
 
         <div class="alert alert-info">
             <div class="alert-title">Limits</div>

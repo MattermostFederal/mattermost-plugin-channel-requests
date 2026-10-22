@@ -212,6 +212,7 @@ func TestCreateIncomingWebhookForBot_OwnedByBotAndLocked(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	url, err := p.createIncomingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		RequesterID: "u_req", Username: "svcbot", IncomingWebhookChannelID: "ch1",
@@ -233,6 +234,7 @@ func TestCreateIncomingWebhookForBot_KeepsRequestedName(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	_, err := p.createIncomingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		Username: "svcbot", IncomingWebhookChannelID: "ch1", IncomingWebhookDisplayName: "Build alerts",
@@ -261,6 +263,7 @@ func TestCreateIncomingWebhookForBot_APIErrorPropagates(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	_, err := p.createIncomingWebhookForBot("tok1", "new-bot-id", &botRequest{IncomingWebhookChannelID: "ch1"})
 
@@ -276,6 +279,7 @@ func TestCreateOutgoingWebhookForBot_OwnedByBot(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		RequesterID: "u_req", Username: "svcbot", OutgoingWebhookChannelID: "ch1",
@@ -297,6 +301,7 @@ func TestCreateOutgoingWebhookForBot_KeepsRequestedName(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		Username: "svcbot", OutgoingWebhookChannelID: "ch1", OutgoingWebhookDisplayName: "Deploy relay",
@@ -326,6 +331,7 @@ func TestCreateOutgoingWebhookForBot_APIErrorPropagates(t *testing.T) {
 	p := newTestPlugin(api)
 	stubSiteURL(api, ts.URL)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
 	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		OutgoingWebhookChannelID: "ch1", OutgoingWebhookCallbackURL: "https://hooks.example.com/out",
@@ -385,7 +391,9 @@ func TestHandleBotAction_BotJoinsChannelBeforeOwningIncomingWebhook(t *testing.T
 	})
 	stubFinalBotApproval(t, api, req)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1", Type: model.ChannelTypePrivate}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("GetChannel", "ch2").Return(&model.Channel{Id: "ch2", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
+	api.On("GetChannelMember", "ch2", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("GetTeamMember", "team1", "new-bot-id").Return(nil, testAppErr("not a member"))
 	api.On("CreateTeamMember", "team1", "new-bot-id").Return(&model.TeamMember{}, nil)
 	api.On("AddChannelMember", "ch1", "new-bot-id").Return(&model.ChannelMember{}, nil)
@@ -421,6 +429,7 @@ func TestHandleBotAction_BotAlreadyOnTeamOnlyJoinsChannel(t *testing.T) {
 	req := finalBotApproval(botRequest{DMChannelID: "dm1", DMRootPostID: "dm-root", IncomingWebhookChannelID: "ch1"})
 	stubFinalBotApproval(t, api, req)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("GetTeamMember", "team1", "new-bot-id").Return(&model.TeamMember{TeamId: "team1", UserId: "new-bot-id"}, nil)
 	api.On("AddChannelMember", "ch1", "new-bot-id").Return(&model.ChannelMember{}, nil)
 	api.On("GetPost", mock.Anything).Return(nil, testAppErr("no post"))
@@ -443,7 +452,11 @@ func TestHandleBotAction_ChannelJoinFailureSkipsIncomingWebhook(t *testing.T) {
 		{
 			name: "channel can't be loaded",
 			stub: func(api *plugintest.API) {
-				api.On("GetChannel", "ch1").Return(nil, testAppErr("gone"))
+				// The channel passes the approve-time check, then can't be
+				// loaded when the webhook is created.
+				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil).Once()
+				api.On("GetChannel", "ch1").Return(nil, testAppErr("gone")).Once()
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 			},
 			error: "load channel",
 		},
@@ -451,6 +464,7 @@ func TestHandleBotAction_ChannelJoinFailureSkipsIncomingWebhook(t *testing.T) {
 			name: "team join fails",
 			stub: func(api *plugintest.API) {
 				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 				api.On("GetTeamMember", "team1", "new-bot-id").Return(nil, testAppErr("not a member"))
 				api.On("CreateTeamMember", "team1", "new-bot-id").Return(nil, testAppErr("join failed"))
 			},
@@ -460,6 +474,7 @@ func TestHandleBotAction_ChannelJoinFailureSkipsIncomingWebhook(t *testing.T) {
 			name: "channel join fails",
 			stub: func(api *plugintest.API) {
 				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 				api.On("GetTeamMember", "team1", "new-bot-id").Return(&model.TeamMember{}, nil)
 				api.On("AddChannelMember", "ch1", "new-bot-id").Return(nil, testAppErr("join failed"))
 			},
@@ -547,6 +562,7 @@ func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 	stubSystemAdmin(api)
 	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
+	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("KVGet", kvWebhookRequestPrefix+"r1").Return(raw, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil) // ticket relay lookups
 	api.On("KVCompareAndDelete", kvWebhookRequestPrefix+"r1", raw).Return(true, nil)
@@ -603,6 +619,7 @@ func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 		stubSystemAdmin(api)
 		api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 		api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
+		api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 		api.On("KVGet", kvWebhookRequestPrefix+"r1").Return(raw, nil)
 		api.On("KVSet", mock.MatchedBy(func(key string) bool { return key != kvWebhookRequestPrefix+"r1" }), mock.Anything).Return(nil)
 		api.On("KVCompareAndDelete", kvWebhookRequestPrefix+"r1", raw).Return(true, nil)

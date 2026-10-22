@@ -336,6 +336,7 @@ type nomineeRules struct {
 	allowBots   bool
 	allowGuests bool
 	teamID      string // when set, nominees must be active members of this team
+	channelID   string // when set, nominees must be members of this channel (approve only)
 }
 
 // checkNominees loads each nominee and returns a user-facing error for the
@@ -838,7 +839,7 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 
 	title := "Channel creation request"
 	if teamName != "" && teamName != "(unknown team)" {
-		title = fmt.Sprintf("Channel creation request — %s", teamName)
+		title = fmt.Sprintf("Channel creation request — %s", escapeMarkdown(teamName))
 	}
 
 	siteURL := "/plugins/" + manifest.Id

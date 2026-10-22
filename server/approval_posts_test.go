@@ -52,6 +52,7 @@ func actionHandlerCases() []actionHandlerCase {
 			stubBeforeClaim: func(api *plugintest.API) {
 				api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 			},
 		},
 		{
@@ -111,6 +112,7 @@ func actionHandlerCases() []actionHandlerCase {
 			stubBeforeClaim: func(api *plugintest.API) {
 				api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 			},
 		},
 	}
@@ -257,6 +259,7 @@ func TestTwoStepActionHandlers_LostFinalClaimRepliesPrivately(t *testing.T) {
 			stub: func(api *plugintest.API) {
 				api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 				api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
+				api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 			},
 		},
 	}
@@ -745,6 +748,7 @@ func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 		api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
 		api.On("KVGet", kvTeamGuestRequestPrefix+"r1").Return(raw, nil)
 		api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Ops"}, nil).Once()
+		stubActiveTeamMember(api, "team1", "u_req")
 		api.On("KVCompareAndDelete", kvTeamGuestRequestPrefix+"r1", raw).Return(true, nil)
 		// The invite can't be sent, and the pending request can't be written back.
 		api.On("GetTeam", "team1").Return(nil, testAppErr("gone")).Once()

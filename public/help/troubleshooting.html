@@ -118,10 +118,15 @@
         </p>
         <ul>
             <li><em>The requester's account is no longer active. Deny this request instead.</em></li>
-            <li><em>The requester is no longer a member of the team. Deny this request instead.</em> (channel requests)</li>
-            <li><em>The requester is no longer a member of the channel. Deny this request instead.</em> (Channel Admin requests)</li>
+            <li><em>The requester is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the channel. Deny this request instead.</em></li>
             <li><em>The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again.</em></li>
         </ul>
+        <p>
+            Every request type is checked, including its team, channels, nominees and bot owner; each message
+            ends <em>Deny this request instead.</em> The full list is in
+            <a href="approving.html#rechecks">Requests that can't be approved as they stand</a>.
+        </p>
         <p>
             <strong>Fix:</strong> deny the request. Deny is never blocked. See <a href="approving.html">Approving</a>.
         </p>
