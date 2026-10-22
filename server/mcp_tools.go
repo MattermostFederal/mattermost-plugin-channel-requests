@@ -10,9 +10,9 @@ import (
 
 // The tools are a third entry point beside the slash command and the
 // webapp modal, and go through the same submitRequest and
-// submitAdminRequest, which own validation, membership checks and the
-// System Admin shortcut. Like the webapp modal, a System Admin's request
-// takes effect at once. Each tool honors the same per-type setting as the
+// submitAdminRequest, which own validation and membership checks. Every
+// request, a System Admin's included, is queued for approval. Each tool
+// honors the same per-type setting as the
 // slash command and the modal. Approving and denying are deliberately not
 // tools: they are the human checkpoint.
 
@@ -45,7 +45,7 @@ type RequestChannelAdminArgs struct {
 }
 
 type MCPMessageOutput struct {
-	Message string `json:"message" jsonschema:"What happened: the request is pending approval, or it took effect at once"`
+	Message string `json:"message" jsonschema:"What happened: the request was submitted for approval"`
 }
 
 var errNoMCPUser = errors.New("no user is associated with this request")
@@ -58,12 +58,12 @@ func (p *Plugin) registerMCPTools(server *pluginmcp.Server) {
 
 	pluginmcp.AddTool(server, &mcp.Tool{
 		Name:        "request_channel",
-		Description: "Request a new channel on the user's behalf. The request is posted for admin approval, unless the user is a System Admin, in which case the channel is created at once. Call list_prefixes first for the prefix.",
+		Description: "Request a new channel on the user's behalf. The request is posted for admin approval. Call list_prefixes first for the prefix.",
 	}, p.requestChannelTool)
 
 	pluginmcp.AddTool(server, &mcp.Tool{
 		Name:        "request_channel_admin",
-		Description: "Request that existing members of a channel be made Channel Admins, on the user's behalf. The request is posted for admin approval, unless the user is a System Admin, in which case they are promoted at once.",
+		Description: "Request that existing members of a channel be made Channel Admins, on the user's behalf. The request is posted for admin approval.",
 	}, p.requestChannelAdminTool)
 }
 
@@ -140,7 +140,7 @@ func (p *Plugin) requestChannelAdminTool(ctx context.Context, _ *mcp.CallToolReq
 		return nil, MCPMessageOutput{}, err
 	}
 
-	message, err := p.submitAdminRequest(userID, in.ChannelID, nomineeIDs, false)
+	message, err := p.submitAdminRequest(userID, in.ChannelID, nomineeIDs)
 	if err != nil {
 		return nil, MCPMessageOutput{}, err
 	}

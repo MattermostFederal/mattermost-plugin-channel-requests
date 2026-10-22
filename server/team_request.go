@@ -42,13 +42,10 @@ type teamCreationInput struct {
 	Description      string
 	Type             string // "O" or "I"
 	RequestTeamAdmin bool
-	// ForceQueue skips System Admin bypass (slash-command dialog path).
-	ForceQueue bool
 }
 
-// submitTeamCreationRequest validates the input and either creates the team
-// immediately (System Admins) or stores a pending request for
-// approval. AllowTeamRequests is enforced here so every entry point is gated.
+// submitTeamCreationRequest validates the input and stores a pending request
+// for approval. AllowTeamRequests is enforced here so every entry point is gated.
 func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error) {
 	config := p.getConfiguration()
 	if !config.RequestEnabled(requestTypeTeam) {
@@ -58,6 +55,12 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 	if strings.TrimSpace(in.DisplayName) == "" {
 		return "", errors.New("a team name is required")
 	}
+	if err := checkTextLen("team name", in.DisplayName, model.TeamDisplayNameMaxRunes); err != nil {
+		return "", err
+	}
+	if err := checkByteLen("description", in.Description, maxTeamDescriptionBytes); err != nil {
+		return "", err
+	}
 
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -65,8 +68,11 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 	} else {
 		name = slugify(name)
 	}
-	if !model.IsValidTeamName(name) {
+	if len(name) > model.TeamNameMaxLength || !model.IsValidTeamName(name) {
 		return "", errors.Errorf("%q is not a valid team URL name; use 2-64 lowercase letters, numbers, and hyphens", name)
+	}
+	if model.IsReservedTeamName(name) {
+		return "", errors.Errorf("%q is reserved by Mattermost; choose a different team URL name", name)
 	}
 
 	teamType := in.Type
@@ -76,7 +82,8 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 
 	requester, appErr := p.API.GetUser(in.RequesterID)
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load requesting user")
+		p.API.LogWarn("failed to load requesting user", "user_id", in.RequesterID, "error", appErr.Error())
+		return "", errors.New("could not load your account; try again")
 	}
 
 	req := &teamCreationRequest{
@@ -87,24 +94,6 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		Description:      strings.TrimSpace(in.Description),
 		Type:             teamType,
 		RequestTeamAdmin: in.RequestTeamAdmin,
-	}
-
-	// Only System Admins bypass the queue for team creation (same as bots),
-	// and only when not ForceQueue (slash-command dialog always queues).
-	if !in.ForceQueue && requester.IsSystemAdmin() {
-		team, err := p.createTeamForRequest(req)
-		if err != nil {
-			return "", err
-		}
-		adminNote := ""
-		if req.RequestTeamAdmin {
-			adminNote = " You've been made Team Admin."
-		}
-		// Announce in the team-requests channel so reviewers still see it.
-		p.postTeamCreationAutoCreatedNotice(req, requester, team, "System Admin")
-		p.logAudit(auditDirect, fmt.Sprintf("@%s created team %s (%s) directly (System Admin)%s",
-			requester.Username, req.DisplayName, team.Name, adminNote), "")
-		return fmt.Sprintf("Created team **%s**.%s", team.DisplayName, adminNote), nil
 	}
 
 	if err := p.storeTeamRequest(req); err != nil {
@@ -181,40 +170,11 @@ func (p *Plugin) postTeamCreationApprovalRequest(req *teamCreationRequest, reque
 	ch := p.ensureTeamCreationApprovalChannel()
 	header := p.systemAdminMentions() + " — a team creation request needs System Admin review."
 	return p.postApprovalAttachment(
+		req.ID,
 		p.teamCreationApprovalAttachment(req, requester),
 		header,
 		ch,
 	)
-}
-
-// postTeamCreationAutoCreatedNotice posts a no-button card into the team
-// requests channel after a bypass create (System Admin). Best-
-// effort — failure is logged; the team itself was already created.
-func (p *Plugin) postTeamCreationAutoCreatedNotice(req *teamCreationRequest, requester *model.User, team *model.Team, reason string) {
-	ch := p.ensureTeamCreationApprovalChannel()
-	if ch == nil {
-		p.API.LogWarn("channel-requests: team created but no team-requests channel to announce into — set Approval team in System Console")
-		return
-	}
-
-	attachment := p.teamCreationApprovalAttachment(req, requester)
-	attachment.Actions = nil
-	attachment.Color = colorApproved
-	attachment.Title = "Team created (no approval required)"
-	attachment.Text = fmt.Sprintf(
-		"**Created by @%s** via %s.\n**Team:** %s (`/%s`)",
-		requester.Username, reason, team.DisplayName, team.Name,
-	)
-
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: ch.Id,
-		Message:   fmt.Sprintf("✅ Team **%s** was created immediately (%s) — no approval needed.", team.DisplayName, reason),
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-	if _, appErr := p.API.CreatePost(post); appErr != nil {
-		p.API.LogWarn("failed to post team auto-create notice", "team_id", team.Id, "error", appErr.Error())
-	}
 }
 
 func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, requester *model.User) *model.MessageAttachment {
@@ -225,7 +185,7 @@ func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, reques
 	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
 		{Title: "Visibility", Value: visibility, Short: true},
-		{Title: "Team name", Value: req.DisplayName, Short: true},
+		{Title: "Team name", Value: escapeMarkdown(req.DisplayName), Short: true},
 		{Title: "URL", Value: req.Name, Short: true},
 	}
 
@@ -248,7 +208,7 @@ func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, reques
 
 	var details []string
 	if req.Description != "" {
-		details = append(details, fmt.Sprintf("**Description:** %s", req.Description))
+		details = append(details, fmt.Sprintf("**Description:** %s", escapeMarkdown(req.Description)))
 	}
 
 	siteURL := "/plugins/" + manifest.Id
@@ -330,7 +290,7 @@ func (p *Plugin) openTeamCreationRequestDialog(triggerID string) error {
 				Name:        fieldDisplayName,
 				Type:        "text",
 				Placeholder: "e.g. Marketing",
-				MaxLength:   64,
+				MaxLength:   model.TeamDisplayNameMaxRunes,
 			},
 			{
 				DisplayName: "URL name",
@@ -338,14 +298,14 @@ func (p *Plugin) openTeamCreationRequestDialog(triggerID string) error {
 				Type:        "text",
 				Optional:    true,
 				HelpText:    "Lowercase letters, numbers, and hyphens. Generated from team name if blank.",
-				MaxLength:   64,
+				MaxLength:   model.TeamNameMaxLength,
 			},
 			{
 				DisplayName: "Description",
 				Name:        fieldPurpose,
 				Type:        "textarea",
 				Optional:    true,
-				MaxLength:   250,
+				MaxLength:   maxTeamDescriptionBytes,
 			},
 			{
 				DisplayName: "Type",
