@@ -105,9 +105,8 @@ themselves. The card names the team the channel will be created in.
 
 <img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel" width="720">
 
-Requests from **System Admins** who submit via the webapp Request Hub / modal
-(not the slash-command dialog) skip this step — the channel is created
-immediately. Slash-command dialogs always queue for approval (`ForceQueue`).
+Requests from **System Admins** are queued for approval too. A System Admin can
+approve their own request.
 
 ---
 

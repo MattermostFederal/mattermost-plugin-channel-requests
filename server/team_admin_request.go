@@ -33,11 +33,13 @@ type teamAdminRequest struct {
 	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
-// submitTeamAdminRequest validates the input and either promotes immediately
-// (System Admins) or stores a pending request and posts
-// it to the root approval channel. forceQueue (slash-command dialog) disables
-// the bypass so an approval card is always posted.
-func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs []string, forceQueue bool) (string, error) {
+// submitTeamAdminRequest validates the input, stores a pending request and
+// posts it to the team-requests approval channel. Requests from System Admins
+// queue too.
+func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs []string) (string, error) {
+	if !p.getConfiguration().RequestEnabled(requestTypeTeamAdmin) {
+		return "", errors.New(teamAdminRequestsDisabledMsg)
+	}
 	if strings.TrimSpace(teamID) == "" {
 		return "", errors.New("a team is required")
 	}
@@ -45,15 +47,20 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 	if len(nominees) == 0 {
 		return "", errors.New("pick at least one person to make a Team Admin")
 	}
+	if err := checkIDList(nominees, "Team Admin nominees"); err != nil {
+		return "", err
+	}
 
 	team, appErr := p.API.GetTeam(teamID)
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load team")
+		p.API.LogWarn("failed to load team for Team Admin request", "team_id", teamID, "error", appErr.Error())
+		return "", errors.New("could not find that team")
 	}
 
 	requester, appErr := p.API.GetUser(requesterID)
 	if appErr != nil {
-		return "", errors.Wrap(appErr, "failed to load requesting user")
+		p.API.LogWarn("failed to load requesting user", "user_id", requesterID, "error", appErr.Error())
+		return "", errors.New("could not load your account; try again")
 	}
 
 	// Requester must be an active member of the team they're nominating into.
@@ -64,19 +71,15 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 			return "", errors.New("you must be a member of the team to request Team Admin access")
 		}
 	}
+	if err := p.checkNominees(nominees, nomineeRules{role: "a Team Admin", teamID: teamID}); err != nil {
+		return "", err
+	}
 
 	req := &teamAdminRequest{
 		ID:          model.NewId(),
 		RequesterID: requesterID,
 		TeamID:      teamID,
 		NomineeIDs:  nominees,
-	}
-
-	if !forceQueue && requester.IsSystemAdmin() {
-		p.promoteTeamAdmins(req)
-		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Team Admin in %s",
-			requester.Username, p.mentionList(req.NomineeIDs), team.DisplayName), "")
-		return fmt.Sprintf("Promoted %s to Team Admin in **%s**.", p.mentionList(req.NomineeIDs), team.DisplayName), nil
 	}
 
 	if err := p.storeTeamAdminRequest(req); err != nil {
@@ -148,6 +151,7 @@ func (p *Plugin) postTeamAdminApprovalRequest(req *teamAdminRequest, requester *
 	ch := p.ensureTeamCreationApprovalChannel()
 	header := p.systemAdminMentions() + " — a Team Admin request needs System Admin review."
 	return p.postApprovalAttachment(
+		req.ID,
 		p.teamAdminApprovalAttachment(req, requester, team),
 		header,
 		ch,
@@ -158,7 +162,7 @@ func (p *Plugin) teamAdminApprovalAttachment(req *teamAdminRequest, requester *m
 	nominees := p.mentionList(req.NomineeIDs)
 	fields := []*model.MessageAttachmentField{
 		{Title: "Requested by", Value: fmt.Sprintf("@%s", requester.Username), Short: true},
-		{Title: "Team", Value: team.DisplayName, Short: true},
+		{Title: "Team", Value: escapeMarkdown(team.DisplayName), Short: true},
 		{Title: "Proposed Team Admins", Value: nominees, Short: false},
 		{
 			Title: "⚠️ Privilege Escalation — Team Admin",
@@ -255,7 +259,7 @@ func (p *Plugin) openTeamAdminRequestDialog(triggerID, teamID string) error {
 		Title:      "Request Team Admin Promotion",
 		IntroductionText: fmt.Sprintf(
 			"Nominate users to become Team Admins in **%s**. System Admin approval is required because Team Admin grants broad permissions across the whole team.",
-			teamName,
+			escapeMarkdown(teamName),
 		),
 		SubmitLabel: "Submit request",
 		State:       teamID,
