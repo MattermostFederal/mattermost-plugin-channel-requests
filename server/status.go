@@ -17,9 +17,9 @@ import (
 // doesn't say which.
 var errNoVisibleRequest = errors.New("no pending request with that ID. It may have been approved, denied or closed; the bot sends the requester the outcome")
 
-// listRequestsDisabledMsg is the list reply when both request types the
-// list covers are turned off.
-const listRequestsDisabledMsg = "Channel and Channel Admin requests are currently disabled by an administrator."
+// listRequestsDisabledMsg is the list reply when every request type is
+// turned off.
+const listRequestsDisabledMsg = "Every request type is currently disabled by an administrator."
 
 // maxListedRequests caps how many requests the list views load and show.
 const maxListedRequests = 50
@@ -28,7 +28,7 @@ const maxListedRequests = 50
 // views.
 type requestSummary struct {
 	ID      string
-	Kind    string // pendingKindChannel or pendingKindAdmin
+	Kind    string // a pendingKind* value
 	Summary string // Markdown: what was requested, and where
 	Expired bool
 	// CreatedAt and ExpiresAt are in milliseconds. ExpiresAt is 0 when
@@ -38,52 +38,66 @@ type requestSummary struct {
 	ExpiresAt int64
 }
 
-// pendingRecord is a stored request of either kind. Exactly one of
-// channel and admin is set.
-type pendingRecord struct {
-	channel *channelRequest
-	admin   *adminRequest
+// allPendingKinds is every request kind, in the order the views try them.
+var allPendingKinds = []string{
+	pendingKindChannel, pendingKindAdmin, pendingKindTeam, pendingKindTeamAdmin,
+	pendingKindTeamMember, pendingKindTeamGuest, pendingKindBot, pendingKindWebhook,
 }
 
-func (r *pendingRecord) requesterID() string {
-	if r.admin != nil {
-		return r.admin.RequesterID
+// pendingKindRequestType returns the request type (requestType*) of a
+// pending kind, for the per-type toggles.
+func pendingKindRequestType(kind string) string {
+	switch kind {
+	case pendingKindChannel:
+		return requestTypeChannel
+	case pendingKindAdmin:
+		return requestTypeChannelAdmin
+	default:
+		return kind
 	}
-	return r.channel.RequesterID
 }
 
 // enabledPendingKinds returns the request kinds the list and status views
 // cover, leaving out any type an administrator turned off.
 func enabledPendingKinds(config *configuration) []string {
 	var kinds []string
-	if config.RequestEnabled(requestTypeChannel) {
-		kinds = append(kinds, pendingKindChannel)
-	}
-	if config.RequestEnabled(requestTypeChannelAdmin) {
-		kinds = append(kinds, pendingKindAdmin)
+	for _, kind := range allPendingKinds {
+		if config.RequestEnabled(pendingKindRequestType(kind)) {
+			kinds = append(kinds, kind)
+		}
 	}
 	return kinds
 }
 
 // loadPendingRecord loads a stored request of the given kind, or returns
 // nil when it isn't stored.
-func (p *Plugin) loadPendingRecord(kind, requestID string) (*pendingRecord, error) {
-	if kind == pendingKindAdmin {
-		req, _, err := p.loadAdminRequest(requestID)
-		if err != nil || req == nil {
-			return nil, err
-		}
-		return &pendingRecord{admin: req}, nil
+func (p *Plugin) loadPendingRecord(kind, requestID string) (storedRequest, error) {
+	info, ok := pendingKinds[kind]
+	if !ok {
+		return nil, errors.Errorf("unknown request kind %q", kind)
 	}
-	req, _, err := p.loadRequest(requestID)
-	if err != nil || req == nil {
-		return nil, err
+	data, appErr := p.API.KVGet(info.kvPrefix + requestID)
+	if appErr != nil {
+		return nil, errors.Wrap(appErr, "failed to load request")
 	}
-	return &pendingRecord{channel: req}, nil
+	if data == nil {
+		return nil, nil
+	}
+	rec := info.newRecord()
+	if err := json.Unmarshal(data, rec); err != nil {
+		return nil, errors.Wrap(err, "failed to read request")
+	}
+	return rec, nil
+}
+
+// recordRequesterID returns who submitted a stored request.
+func recordRequesterID(rec storedRequest) string {
+	_, requesterID, _ := rec.pendingFields()
+	return requesterID
 }
 
 // listOwnRequests returns up to limit of the user's pending requests of
-// both kinds, oldest first, and how many more there are. A kind whose
+// every kind, oldest first, and how many more there are. A kind whose
 // request type is turned off is left out. It reads the pending lists
 // without changing them. Entries whose request no longer
 // exists are skipped, and so are unreadable records, which are logged.
@@ -130,8 +144,8 @@ func (p *Plugin) listOwnRequests(userID string, limit int) ([]requestSummary, in
 		}
 		// A request decided after its entry failed to release is gone, and
 		// its entry is dropped on the next submit.
-		if rec != nil && rec.requesterID() == userID {
-			out = append(out, p.summarize(config, rec))
+		if rec != nil && recordRequesterID(rec) == userID {
+			out = append(out, p.summarize(config, e.kind, rec))
 		}
 	}
 	return out, 0, nil
@@ -146,7 +160,7 @@ func isUnmarshalError(err error) bool {
 }
 
 // requestStatus returns one pending request, if the user may see it: its
-// requester, or someone who can approve it. A request whose type is turned
+// requester, or someone who can decide it. A request whose type is turned
 // off reads as not found.
 func (p *Plugin) requestStatus(userID, requestID string) (*requestSummary, error) {
 	if !model.IsValidId(requestID) {
@@ -161,45 +175,144 @@ func (p *Plugin) requestStatus(userID, requestID string) (*requestSummary, error
 		if rec == nil {
 			continue
 		}
-		if rec.requesterID() != userID && !p.canDecide(userID, rec) {
-			return nil, errNoVisibleRequest
+		if recordRequesterID(rec) != userID {
+			user, appErr := p.API.GetUser(userID)
+			if appErr != nil {
+				p.API.LogWarn("failed to load user for request status", "user_id", userID, "error", appErr.Error())
+				return nil, errNoVisibleRequest
+			}
+			if !p.canDecide(user, rec) {
+				return nil, errNoVisibleRequest
+			}
 		}
-		summary := p.summarize(config, rec)
+		summary := p.summarize(config, kind, rec)
 		return &summary, nil
 	}
 	return nil, errNoVisibleRequest
 }
 
-// canDecide reports whether the user can approve or deny the request, by
-// the same rules the decisions use.
-func (p *Plugin) canDecide(userID string, rec *pendingRecord) bool {
+// listApprovableRequests returns up to limit of the pending requests the
+// user can approve now, oldest first, and how many more there are. It
+// leaves out the user's own requests, types that are turned off, and bot
+// and webhook requests where the user has no step to fill. Finding them
+// reads every stored request, so it runs only when asked.
+func (p *Plugin) listApprovableRequests(userID string, limit int) ([]requestSummary, int, error) {
 	user, appErr := p.API.GetUser(userID)
 	if appErr != nil {
-		p.API.LogWarn("failed to load user for request status", "user_id", userID, "error", appErr.Error())
-		return false
+		return nil, 0, errors.Wrap(appErr, "failed to load user")
 	}
-	if rec.admin != nil {
-		return p.canApproveAdminRequest(user, rec.admin.ChannelID)
+	keys, err := p.listRequestKeys()
+	if err != nil {
+		return nil, 0, err
 	}
-	return p.canApproveChannelRequest(user, rec.channel.TeamID)
+	config := p.getConfiguration()
+	// The same for every request, so looked up once.
+	canSec, canSys := p.twoStepPools(user, "approval queue")
+	var out []requestSummary
+	for _, key := range keys {
+		kind, _ := pendingKindForKey(key)
+		if !config.RequestEnabled(pendingKindRequestType(kind)) {
+			continue
+		}
+		rec, err := p.loadPendingRecord(kind, strings.TrimPrefix(key, pendingKinds[kind].kvPrefix))
+		if err != nil {
+			if isUnmarshalError(err) {
+				p.API.LogWarn("skipping unreadable stored request", "key", key, "error", err.Error())
+				continue
+			}
+			return nil, 0, err
+		}
+		if rec == nil || recordRequesterID(rec) == user.Id || !p.canApproveNow(user, rec, canSec, canSys) {
+			continue
+		}
+		out = append(out, p.summarize(config, kind, rec))
+	}
+	slices.SortStableFunc(out, func(a, b requestSummary) int {
+		return cmp.Compare(a.CreatedAt, b.CreatedAt)
+	})
+	if len(out) > limit {
+		return out[:limit], len(out) - limit, nil
+	}
+	return out, 0, nil
+}
+
+// canDecide reports whether the user can approve or deny the request, by
+// the same rules the decisions use: for bot and webhook requests, being
+// in either approver pool.
+func (p *Plugin) canDecide(user *model.User, rec storedRequest) bool {
+	switch req := rec.(type) {
+	case *channelRequest:
+		return p.canApproveChannelRequest(user, req.TeamID)
+	case *adminRequest:
+		return p.canApproveAdminRequest(user, req.ChannelID)
+	case *botRequest, *webhookRequest:
+		canSec, canSys := p.twoStepPools(user, "request status")
+		return canSec || canSys
+	default:
+		return user.IsSystemAdmin()
+	}
+}
+
+// canApproveNow reports whether Approve by the user would go ahead as far
+// as permissions go: for bot and webhook requests, whether the user, in
+// the approval steps canSec and canSys, has an outstanding step to fill.
+func (p *Plugin) canApproveNow(user *model.User, rec storedRequest, canSec, canSys bool) bool {
+	var state twoStepState
+	switch req := rec.(type) {
+	case *botRequest:
+		state = req.twoStepState
+	case *webhookRequest:
+		state = req.twoStepState
+	default:
+		return p.canDecide(user, rec)
+	}
+	_, fill, _ := planApproval(state, canSec, canSys, user.Id, recordRequesterID(rec))
+	return fill
 }
 
 // summarize describes a stored request for the list and status views.
-func (p *Plugin) summarize(config *configuration, rec *pendingRecord) requestSummary {
-	var s requestSummary
-	if req := rec.admin; req != nil {
-		s.ID, s.Kind, s.CreatedAt = req.ID, pendingKindAdmin, req.CreatedAt
-		s.Summary = fmt.Sprintf("Channel Admin for %s in %s", p.mentionList(req.NomineeIDs), p.channelLabel(req.ChannelID))
-	} else {
-		req := rec.channel
-		s.ID, s.Kind, s.CreatedAt = req.ID, pendingKindChannel, req.CreatedAt
+func (p *Plugin) summarize(config *configuration, kind string, rec storedRequest) requestSummary {
+	id, _, createdAt := rec.pendingFields()
+	s := requestSummary{ID: id, Kind: kind, CreatedAt: *createdAt}
+	switch req := rec.(type) {
+	case *channelRequest:
 		s.Summary = fmt.Sprintf("Channel **%s** (`%s`) in %s", escapeMarkdown(req.DisplayName), req.Name, escapeMarkdown(p.teamDisplayName(req.TeamID)))
+	case *adminRequest:
+		s.Summary = fmt.Sprintf("Channel Admin for %s in %s", p.mentionList(req.NomineeIDs), p.channelLabel(req.ChannelID))
+	case *teamCreationRequest:
+		s.Summary = fmt.Sprintf("Team **%s** (`/%s`)", escapeMarkdown(req.DisplayName), req.Name)
+	case *teamAdminRequest:
+		s.Summary = fmt.Sprintf("Team Admin for %s in %s", p.mentionList(req.NomineeIDs), escapeMarkdown(p.teamDisplayName(req.TeamID)))
+	case *teamMemberRequest:
+		s.Summary = fmt.Sprintf("Add %s to %s", p.mentionList(req.NomineeIDs), escapeMarkdown(p.teamDisplayName(req.TeamID)))
+	case *teamGuestRequest:
+		s.Summary = fmt.Sprintf("Guest invite for **%s** to %s", escapeMarkdown(req.Email), escapeMarkdown(p.teamDisplayName(req.TeamID)))
+	case *botRequest:
+		s.Summary = fmt.Sprintf("Bot **@%s**%s", escapeMarkdown(req.Username), awaitingStep(req.twoStepState))
+	case *webhookRequest:
+		s.Summary = fmt.Sprintf("%s webhook **%s** in %s%s", capitalize(req.WebhookType), escapeMarkdown(req.DisplayName), p.channelLabel(req.ChannelID), awaitingStep(req.twoStepState))
 	}
 	s.Expired = requestExpired(s.CreatedAt, config.ExpiryDays(), model.GetMillis())
 	if days := config.ExpiryDays(); days > 0 && s.CreatedAt > 0 {
 		s.ExpiresAt = s.CreatedAt + int64(days)*millisPerDay
 	}
 	return s
+}
+
+// awaitingStep names the approval a two-step request waits for.
+func awaitingStep(state twoStepState) string {
+	if !state.securityDone() {
+		return ", awaiting security approval"
+	}
+	return ", awaiting system approval"
+}
+
+// capitalize upper-cases the first letter of an ASCII word.
+func capitalize(word string) string {
+	if word == "" {
+		return word
+	}
+	return strings.ToUpper(word[:1]) + word[1:]
 }
 
 // channelLabel renders a channel as ~name for summaries, falling back to

@@ -111,6 +111,10 @@ func (p *Plugin) submitTeamAdminRequest(requesterID, teamID string, nomineeIDs [
 		p.API.LogError("failed to post team admin request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindTeamAdmin, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -192,6 +196,7 @@ func (p *Plugin) teamAdminApprovalAttachment(req *teamAdminRequest, requester *m
 		Title:   "Team Admin request",
 		Color:   "#F4A221",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.teamAdminApprovalActions(req.ID, siteURL),
 	}
 }

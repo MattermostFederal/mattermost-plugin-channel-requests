@@ -400,22 +400,10 @@ func (p *Plugin) migratePendingRequests() error {
 
 	// List every key before changing any, so writes made along the way
 	// can't shift the pages.
-	const perPage = 200
-	var keys []string
-	for page := 0; ; page++ {
-		batch, appErr := p.API.KVList(page, perPage)
-		if appErr != nil {
-			p.releaseMigrationClaim()
-			return errors.Wrap(appErr, "failed to list stored requests")
-		}
-		for _, key := range batch {
-			if _, ok := pendingKindForKey(key); ok {
-				keys = append(keys, key)
-			}
-		}
-		if len(batch) < perPage {
-			break
-		}
+	keys, err := p.listRequestKeys()
+	if err != nil {
+		p.releaseMigrationClaim()
+		return err
 	}
 
 	now := model.GetMillis()
@@ -527,4 +515,25 @@ func backfillRequest(key string, raw []byte, now int64) (backfilledRequest, erro
 	}
 	b.kind, b.requesterID, b.entry = kind, requesterID, newPendingEntry(record)
 	return b, nil
+}
+
+// listRequestKeys returns the KV key of every stored request, of every
+// kind.
+func (p *Plugin) listRequestKeys() ([]string, error) {
+	const perPage = 200
+	var keys []string
+	for page := 0; ; page++ {
+		batch, appErr := p.API.KVList(page, perPage)
+		if appErr != nil {
+			return nil, errors.Wrap(appErr, "failed to list stored requests")
+		}
+		for _, key := range batch {
+			if _, ok := pendingKindForKey(key); ok {
+				keys = append(keys, key)
+			}
+		}
+		if len(batch) < perPage {
+			return keys, nil
+		}
+	}
 }

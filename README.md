@@ -11,14 +11,14 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 ## Features
 
 - Request Hub (App Bar) plus More actions, slash commands, and native menu overrides
-- Slash command arguments for every request type (for example `channel <prefix> <Channel name> [options]` or `channel-admin @user ...`) that skip the form, plus `prefixes` to list the channel prefixes, `list` to see your pending channel and Channel Admin requests, and `approve <request ID>` / `deny <request ID>` for approvers
+- Slash command arguments for every request type (for example `channel <prefix> <Channel name> [options]` or `channel-admin @user ...`) that skip the form, plus `prefixes` to list the channel prefixes, `list` to see your pending requests, and `list approvals`, `approve <request ID>` and `deny <request ID>` for approvers
 - Per-type enable toggles in System Console
 - Per-user limit on pending requests of each type, a duplicate check, and an expiry after which a request can no longer be approved
 - Approval routing: channel requests (root or per-team), team-scope tickets in `mattermost-team-requests`, bots/webhooks in dedicated channels
 - Soft-squash approval cards and DM ticket threads with message relay
 - Bot/webhook two-step approval via User Attributes, User Groups, or System Admins only
 - Exercise mode for training and demonstrations (**Enable exercise mode**, off by default): System Admins seed a team with marked persona accounts, channels and pending requests from a fictional built-in scenario or their own, then remove it all with `exercise teardown`
-- Optional tools for the Mattermost Agents plugin (**Offer tools to Agents**): an agent can list prefixes, file any type of request for the user it's talking to and look up their pending channel and Channel Admin requests, under the same rules and per-type toggles. Agents can't approve or deny.
+- Optional tools for the Mattermost Agents plugin (**Offer tools to Agents**): an agent can list prefixes, file any type of request for the user it's talking to and look up pending requests, under the same rules and per-type toggles. Agents can't approve or deny.
 
 ## Documentation
 

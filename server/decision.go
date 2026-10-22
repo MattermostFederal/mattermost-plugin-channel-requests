@@ -14,9 +14,15 @@ type decisionResult struct {
 	// Outcome is the status line for the approval cards; "" when nothing
 	// was resolved.
 	Outcome string
-	// Update is the clicked approval card, resolved; nil when there was no
-	// click or nothing was resolved.
+	// Update is the clicked approval card, resolved or redrawn; nil when
+	// there was no click or the card didn't change.
 	Update *model.Post
+	// Blocked marks Reply as a two-step Approve refusal on a click, which
+	// is also shown under the card, with Banner painted on the card under
+	// BannerHeader when set.
+	Blocked      bool
+	Banner       *model.MessageAttachment
+	BannerHeader string
 }
 
 // replyText is the private reply for the slash command, which has no
@@ -32,7 +38,7 @@ func (d decisionResult) replyText() string {
 // while the request is still pending.
 func requestUpdatedText(clicked bool) string {
 	if clicked {
-		return "This request was just updated. Please click Approve or Deny again."
+		return claimLostPendingText
 	}
 	return "This request was just updated. Please run the command again."
 }
@@ -176,22 +182,9 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 		}
 	}
 
-	// Atomically claim the request before acting on it. Two admins
-	// clicking Approve (or one Approve + one Deny) at nearly the same
-	// time both load a non-nil req; without an atomic claim both would
-	// proceed, creating duplicate channels or approving-and-denying the
-	// same request. Compare against the exact bytes we read so the claim
-	// is robust regardless of how the request struct is marshaled.
-	// Whoever wins owns the outcome; the loser is told it was already
-	// handled.
-	claimed, claimErr := p.API.KVCompareAndDelete(kvRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim channel request", "error", claimErr.Error())
-		return decisionResult{Reply: "Could not process that request."}
-	}
-	if !claimed {
-		still, _, loadErr := p.loadRequest(req.ID)
-		return claimLost(loadErr != nil || still != nil, clickedPostID != "")
+	// Atomically claim the request before acting on it; see claimRecord.
+	if res, ok := p.claimRecord(kvRequestPrefix+req.ID, rawReq, cards, "channel request"); !ok {
+		return res
 	}
 
 	if approve {
@@ -205,14 +198,8 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 			// requester resubmit rather than implying a retry will work.
 			if restoreErr := p.storeRequest(req); restoreErr != nil {
 				p.API.LogError("failed to restore request after create failure", "error", restoreErr.Error())
-				p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
-				// The request is gone, so no card should offer it any more.
-				lost := fmt.Sprintf("⚠️ Approval by @%s failed and the request could not be kept. Ask the requester to submit it again.", actingUser.Username)
-				p.resolveApprovalCards(req.ID, lost, cards.cardPostID)
-				p.deleteApprovalCards(req.ID)
-				return p.applyResolved(cards,
-					fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error()),
-					lost, p.resolvedPost(cards.cardPostID, lost))
+				return p.lostRequest(cards, pendingKindChannel, req.RequesterID, actingUser.Username,
+					fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error()))
 			}
 			return decisionResult{Reply: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())}
 		}
@@ -330,16 +317,9 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 		}
 	}
 
-	// Atomically claim the request before acting. Mirrors
-	// decideChannelRequest.
-	claimed, claimErr := p.API.KVCompareAndDelete(kvAdminRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim channel-admin request", "error", claimErr.Error())
-		return decisionResult{Reply: "Could not process that request."}
-	}
-	if !claimed {
-		still, _, loadErr := p.loadAdminRequest(req.ID)
-		return claimLost(loadErr != nil || still != nil, clickedPostID != "")
+	// Atomically claim the request before acting on it; see claimRecord.
+	if res, ok := p.claimRecord(kvAdminRequestPrefix+req.ID, rawReq, cards, "channel-admin request"); !ok {
+		return res
 	}
 
 	// The KV key was already removed by the atomic claim above.
@@ -384,6 +364,37 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 	})
 }
 
+// claimRecord atomically takes a pending request's record, comparing
+// against the exact bytes that were read, before the decision acts on it.
+// Two approvers deciding at nearly the same time both load the request;
+// only the one that wins the claim goes on, so a request is never fulfilled
+// twice or both approved and denied. It reports false with the reply for
+// the loser, or when the claim couldn't be made. what names the record in
+// the log.
+func (p *Plugin) claimRecord(kvKey string, raw []byte, cards decisionCards, what string) (decisionResult, bool) {
+	claimed, claimErr := p.API.KVCompareAndDelete(kvKey, raw)
+	if claimErr != nil {
+		p.API.LogError("failed to claim "+what, "error", claimErr.Error())
+		return decisionResult{Reply: "Could not process that request."}, false
+	}
+	if !claimed {
+		still, loadErr := p.API.KVGet(kvKey)
+		return claimLost(loadErr != nil || still != nil, cards.clickedPostID != ""), false
+	}
+	return decisionResult{}, true
+}
+
+// lostRequest answers an approval that failed after the claim when the
+// request couldn't be put back either: the request is gone, so it leaves
+// the requester's pending list and no card offers it any more.
+func (p *Plugin) lostRequest(cards decisionCards, kind, requesterID, actingUsername, reply string) decisionResult {
+	p.releasePending(kind, requesterID, cards.requestID)
+	lost := fmt.Sprintf("⚠️ Approval by @%s failed and the request could not be kept. Ask the requester to submit it again.", actingUsername)
+	p.resolveApprovalCards(cards.requestID, lost, cards.cardPostID)
+	p.deleteApprovalCards(cards.requestID)
+	return p.applyResolved(cards, reply, lost, p.resolvedPost(cards.cardPostID, lost))
+}
+
 // expiredRequest describes a pending request that was approved or denied
 // after it expired.
 type expiredRequest struct {
@@ -404,14 +415,8 @@ type expiredRequest struct {
 // approve or deny would, closes the requester's ticket as expired, and
 // marks the approval cards expired.
 func (p *Plugin) expireRequest(cards decisionCards, e expiredRequest) decisionResult {
-	claimed, claimErr := p.API.KVCompareAndDelete(e.kvKey, e.raw)
-	if claimErr != nil {
-		p.API.LogError("failed to claim expired request", "error", claimErr.Error())
-		return decisionResult{Reply: "Could not process that request."}
-	}
-	if !claimed {
-		still, loadErr := p.API.KVGet(e.kvKey)
-		return claimLost(loadErr != nil || still != nil, cards.clickedPostID != "")
+	if res, ok := p.claimRecord(e.kvKey, e.raw, cards, "expired request"); !ok {
+		return res
 	}
 	p.releasePending(e.kind, e.requesterID, e.requestID)
 	p.logAudit(auditExpired, e.audit, cards.cardPostID)

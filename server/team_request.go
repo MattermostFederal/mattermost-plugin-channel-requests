@@ -124,6 +124,10 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		p.API.LogError("failed to post team request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindTeam, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -230,6 +234,7 @@ func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, reques
 		Title:   "Team creation request",
 		Color:   "#6A33C2",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Text:    strings.Join(details, "\n"),
 		Actions: p.teamCreationApprovalActions(req.ID, siteURL),
 	}

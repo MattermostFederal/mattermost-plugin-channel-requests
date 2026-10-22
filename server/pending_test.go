@@ -49,6 +49,14 @@ func stubSubmittedRequestExists(api *plugintest.API, prefix string) {
 	api.On("KVGet", mock.MatchedBy(func(key string) bool { return strings.HasPrefix(key, prefix) })).Return([]byte("{}"), nil).Maybe()
 }
 
+// stubNewerSubmittedRequestsExist is stubSubmittedRequestExists for every
+// request type other than channel and Channel Admin.
+func stubNewerSubmittedRequestsExist(api *plugintest.API) {
+	for _, prefix := range []string{kvTeamRequestPrefix, kvTeamAdminRequestPrefix, kvTeamMemberRequestPrefix, kvTeamGuestRequestPrefix, kvBotRequestPrefix, kvWebhookRequestPrefix} {
+		stubSubmittedRequestExists(api, prefix)
+	}
+}
+
 // storedRequests makes the given request IDs exist (and only those) under
 // prefix.
 func storedRequests(api *plugintest.API, prefix string, ids ...string) {

@@ -68,6 +68,7 @@ func newQueuePlugin(t *testing.T) (*Plugin, *plugintest.API) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
+	stubNewerSubmittedRequestsExist(api)
 	p := newTestPlugin(api)
 	return p, api
 }

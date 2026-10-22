@@ -157,7 +157,7 @@
                 "display_name": "Offer tools to Agents",
                 "type": "bool",
                 "default": false,
-                "help_text": "When true, the Mattermost Agents plugin can list prefixes, file requests of every type on a user's behalf and look up pending channel and Channel Admin ones, under the same rules and per-type settings as the request forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
+                "help_text": "When true, the Mattermost Agents plugin can list prefixes, file requests of every type on a user's behalf and look up pending ones, under the same rules and per-type settings as the request forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
             },
             {
                 "key": "MaxPendingRequestsPerUser",

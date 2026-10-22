@@ -135,6 +135,10 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 		p.API.LogError("failed to post team guest request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindTeamGuest, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -218,6 +222,7 @@ func (p *Plugin) teamGuestApprovalAttachment(req *teamGuestRequest, requester *m
 		Title:   "Team guest invite request",
 		Color:   "#F4A221",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.teamGuestApprovalActions(req.ID, siteURL),
 	}
 }

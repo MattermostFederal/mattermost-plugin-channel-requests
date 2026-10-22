@@ -61,7 +61,7 @@ Create and assign attributes in **System Console → User Management → Attribu
 |---------|---------|
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can also approve or deny **channel creation** requests. Team Admins of the team a channel is requested in can always act on that request, and Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team, whatever this is set to. |
 | **Per-team approval channels** | Default **on**. Auto-creates `mattermost-channel-requests` in each team that has a Team Admin or System Admin member. Channel / Channel Admin requests from that team go there (not the primary approval team's root channel). All ticket channels (including **Mattermost: Team Requests**) are kept in a managed sidebar category **Mattermost: Request Hub**. |
-| **Offer tools to Agents** | Default **off**. Lets the Mattermost Agents plugin list prefixes, file requests of every type on a user's behalf and look up pending channel and Channel Admin ones (see [Agents tools](#agents-tools)). Takes effect on save. |
+| **Offer tools to Agents** | Default **off**. Lets the Mattermost Agents plugin list prefixes, file requests of every type on a user's behalf and look up pending ones (see [Agents tools](#agents-tools)). Takes effect on save. |
 | **Pending requests per user** | Default **5**, up to 1000; 0 means no limit. How many requests of each type one user can have waiting for review; each type is counted separately. A second pending request for the same thing is refused: the same channel name in a team, the same nominees in the same channel or team (Channel Admin, Team Admin, team members), the same team URL, the same guest email in a team, the same bot username, or a webhook of the same type and name in the same channel. |
 | **Request expiry (days)** | Default **30**, at most 3650; 0 means requests never expire. Pending requests of any type older than this can no longer be approved: clicking Approve or Deny marks the card expired and closes the requester's ticket. Bot and webhook requests count from submission, even after one approval step. Applies to requests already pending too. |
 | **Enable exercise mode** | Default **off**. **Do not enable in production.** Lets System Admins run `/mattermost-request-hub exercise populate`, `teardown` and `status` to seed and remove marked exercise data in a team: persona accounts nobody can sign in as, channels, and pending channel and Channel Admin requests on real approval cards. Populate needs **Allow channel requests** and at least one prefix (and **Allow channel admin requests** when the scenario has Channel Admin requests). Approving a seeded request creates a real channel marked EXERCISE; teardown archives it. Personas use `exercise.invalid` email addresses, so a server or team that restricts email domains must allow that domain. |
@@ -82,8 +82,9 @@ Create and assign attributes in **System Console → User Management → Attribu
 | `request_team_guest` | Requests a guest invite to channels of a team |
 | `request_bot` | Requests a bot account (account fields only; tokens and webhooks for the bot are in the form) |
 | `request_webhook` | Requests an incoming or outgoing webhook |
-| `list_my_requests` | Lists the user's pending channel and Channel Admin requests |
-| `get_request_status` | Looks up one pending channel or Channel Admin request by ID |
+| `list_my_requests` | Lists the user's pending requests of every type |
+| `list_requests_to_approve` | Lists the pending requests the user can approve now (read only) |
+| `get_request_status` | Looks up one pending request of any type by ID |
 
 ### Locking down native channel creation
 
@@ -124,7 +125,7 @@ People who aren't members of a channel can't see its cards. The requester gets t
 - **Bot:** `mattermost-bot-requests`. **Webhook:** `mattermost-webhook-requests`.
 - **No channel available** (for example, **Approval team** is blank, missing or archived): the card is DM'd to every System Admin instead, and the message relay isn't available for that request. The requester sees an error only if no System Admin could be reached.
 
-The Approve and Deny buttons work only on the cards the plugin posted for that request. For channel and Channel Admin requests, approvers can also use `/mattermost-request-hub approve <request ID>` or `deny <request ID>` from any channel, with the same checks as the buttons.
+The Approve and Deny buttons work only on the cards the plugin posted for that request. Approvers can also use `/mattermost-request-hub approve <request ID>` or `deny <request ID>` from any channel, for every request type, with the same checks as the buttons. `/mattermost-request-hub list approvals` lists the requests they can approve, with their IDs.
 
 ### Who can approve
 
