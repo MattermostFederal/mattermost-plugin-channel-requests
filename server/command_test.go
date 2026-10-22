@@ -336,7 +336,7 @@ func TestExecuteCommand_ChannelAdminRejectedBySubmit(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{AllowChannelAdminRequests: true})
 
-	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom"}, nil)
+	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID}, nil)
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "req", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "chX", "u1").Return(nil, testAppErr("not a member"))
 
@@ -354,11 +354,11 @@ func TestExecuteCommand_ChannelAdminQueuesForCurrentChannel(t *testing.T) {
 	p.setConfiguration(&configuration{AllowChannelAdminRequests: true, ApprovalTeam: "appteam"})
 
 	// Even a System Admin's command queues for approval, like the dialog.
-	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom"}, nil)
+	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID}, nil)
 	api.On("GetUser", "u1").Return(sysadmin("u1"), nil)
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
-	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
-	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
+	api.On("GetUser", testNomineeID).Return(&model.User{Id: testNomineeID, Username: "nommy"}, nil)
+	api.On("GetChannelMember", "chX", testNomineeID).Return(&model.ChannelMember{}, nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
 	mockApprovalChannel(api)
