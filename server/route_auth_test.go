@@ -175,6 +175,7 @@ func TestHandleAction_ClickContextOnlySelectsTheRequest(t *testing.T) {
 	stubLogs(api)
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
+	stubLiveTeam(api, "team1")
 	p := newTestPlugin(api)
 	p.setConfiguration(approvableConfig())
 

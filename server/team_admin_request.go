@@ -18,8 +18,9 @@ const (
 
 // teamAdminRequest is a pending request to promote one or more users to Team
 // Admin on a specific team. Because Team Admin grants broad permissions across
-// the whole team, these requests always route to the root approval channel and
-// can only be approved by System Admins.
+// the whole team, these requests go to the team requests channel in the root
+// approval team (or to every System Admin by direct message when that channel
+// isn't available) and can only be approved by System Admins.
 type teamAdminRequest struct {
 	ID          string   `json:"id"`
 	RequesterID string   `json:"requester_id"`
@@ -284,7 +285,7 @@ func (p *Plugin) openTeamAdminRequestDialog(triggerID, teamID string) error {
 				Type:        "select",
 				DataSource:  "users",
 				MultiSelect: true,
-				HelpText:    "Select one or more users to nominate for Team Admin. They will be added to the team if not already members.",
+				HelpText:    "Select one or more users to nominate for Team Admin. Nominees must already be members of the team.",
 			},
 		},
 	}

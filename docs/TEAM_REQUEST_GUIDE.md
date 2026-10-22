@@ -144,6 +144,10 @@ System Admins see **Approve** and **Deny**.
   box) promotes them to Team Admin. The requester is notified by DM.
 - **Deny**: closes the request and notifies the requester by DM.
 
+Approve first checks that the requester's account is still active. If it isn't,
+you'll get a private message (*The requester's account is no longer active. Deny
+this request instead.*) and the request stays pending, so deny it.
+
 Requests from System Admins are queued for approval too.
 
 ### Team Admin
@@ -158,6 +162,13 @@ creation requests), not the root channel-request queue. System Admins Approve or
   command and its form can nominate other members of the team. Nominees must already
   be on the team.
 - **Deny**: closes the request and notifies the requester by DM.
+
+Approve first checks that the team still exists and isn't archived, that the
+requester is still active and on the team (System Admins excepted), and that
+every nominee is still an active member of the team and not a bot or guest. If
+not, you'll get a private message saying so (for example *@bob is no longer a
+member of the team. Deny this request instead.*) and the request stays pending,
+so deny it.
 
 ---
 

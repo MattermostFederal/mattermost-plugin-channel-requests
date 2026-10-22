@@ -86,16 +86,18 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 		if chErr != nil || ch == nil || ch.TeamId != teamID {
 			return "", errors.New("all guest channels must belong to the selected team")
 		}
+		// Check membership first, so someone outside the channel gets the
+		// same reply whatever state the channel is in.
+		if !requester.IsSystemAdmin() {
+			if _, memErr := p.API.GetChannelMember(chID, requesterID); memErr != nil {
+				return "", errors.New("you can only invite guests to channels you're a member of")
+			}
+		}
 		if ch.Type != model.ChannelTypeOpen && ch.Type != model.ChannelTypePrivate {
 			return "", errors.New("guests can only be invited to public or private channels")
 		}
 		if ch.DeleteAt != 0 {
 			return "", errors.Errorf("~%s is archived", ch.Name)
-		}
-		if !requester.IsSystemAdmin() {
-			if _, memErr := p.API.GetChannelMember(chID, requesterID); memErr != nil {
-				return "", errors.New("you can only invite guests to channels you're a member of")
-			}
 		}
 	}
 
