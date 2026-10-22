@@ -146,7 +146,7 @@ If a token is suspected compromised, revoke it in **System Console → User Mana
 
 Webhook requests use the same two-step engine as bots. The final approver's session is used for a single create call — never stored.
 
-**System Admins are not single-step bypassed for webhooks.** They can fill the system step; a security approver must still approve. If creation fails after both steps, the card stays pending for retry. If an incoming webhook URL cannot be DM'd to the requester, the hook is deleted.
+**Webhook requests from System Admins get both steps too.** A System Admin can fill the system step; a security approver must still approve. If creation fails after both steps, the card stays pending for retry. If an incoming webhook URL cannot be DM'd to the requester, the hook is deleted.
 
 ---
 
@@ -195,17 +195,19 @@ present).
 
 ## Request type reference
 
-| Request type | Entry points | Approval channel | Bypass? |
+| Request type | Entry points | Approval channel | Approved by |
 |---|---|---|---|
-| Channel creation | Sidebar +, channel header button, More actions, slash cmd | Root channel or per-team channel | System Admins |
-| Channel Admin | More actions, Members panel button, slash cmd | Root channel or per-team channel | System Admins |
+| Channel creation | Sidebar +, channel header button, More actions, slash cmd | Root channel or per-team channel | Team Admins or System Admins |
+| Channel Admin | More actions, Members panel button, slash cmd | Root channel or per-team channel | Team Admins of the channel's team or System Admins |
 | Team Admin | More actions, slash cmd | `mattermost-team-requests` | System Admins |
 | Team creation | More actions, team sidebar menu | `mattermost-team-requests` | System Admins |
 | Team member add | More actions, Request Hub, slash | `mattermost-team-requests` | System Admins |
 | Guest invite | More actions, Request Hub, slash | `mattermost-team-requests` | System Admins |
-| Bot account (+ token + webhooks) | More actions, Integrations page | `mattermost-bot-requests` | Two-step: security + system attributes |
-| Incoming webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | **None** — always queued |
-| Outgoing webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | **None** — always queued |
+| Bot account (+ token + webhooks) | More actions, Integrations page | `mattermost-bot-requests` | Two-step: security, then system |
+| Incoming webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | Two-step: security, then system |
+| Outgoing webhook (standalone) | More actions, Integrations page | `mattermost-webhook-requests` | Two-step: security, then system |
+
+Every request is queued for approval, including requests from System Admins.
 
 ---
 

@@ -103,8 +103,8 @@ teams, including the approval team, can't act on it.
   A bot message in the channel announces who can now manage it.
 - **Deny** — the request is closed and the requester is notified by DM.
 
-Requests from **System Admins** skip this
-step — the nominees are promoted immediately.
+Requests from **System Admins** are queued for approval too. A System Admin can
+approve their own request.
 
 ---
 
