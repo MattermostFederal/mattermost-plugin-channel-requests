@@ -43,15 +43,16 @@
 
 
         <h1>AI agents</h1>
-        <p class="tagline">Ask an agent from the Mattermost Agents plugin to request a channel or Channel Admin for you.</p>
+        <p class="tagline">Ask an agent from the Mattermost Agents plugin to file any type of request for you.</p>
 
         <p>
             When a System Admin turns on <em>Offer tools to Agents</em>, an agent can file requests for you.
             Ask it in plain words, for example "request a private channel called Marketing Team under
-            <code>team-</code> and add @alice". The agent acts as you, so the request follows the same rules as
-            the form: you must be a member of the team or channel, the prefix must be one your admin configured,
-            and the request type must be turned on. As with the webapp form, the request goes to the approvers,
-            even when you are a System Admin.
+            <code>team-</code> and add @alice" or "ask for a webhook in ~alerts called Build alerts". The agent
+            acts as you, so the request follows the same rules as the form for its type: for example, you must be
+            a member of the team or channel where the form asks for that, a channel prefix must be one your admin
+            configured, and the request type must be turned on. As with the webapp forms, the request goes to the
+            approvers, even when you are a System Admin.
         </p>
 
         <table class="field-table">
@@ -60,6 +61,12 @@
                 <tr><td><code>list_prefixes</code></td><td>Lists the channel prefixes you can use, like <code>/mattermost-request-hub prefixes</code>.</td></tr>
                 <tr><td><code>request_channel</code></td><td>Requests a new channel, like the <a href="channel.html">form</a> or <a href="slash.html#channel-without-form"><code>/mattermost-request-hub channel &lt;prefix&gt; &lt;Channel name&gt; ...</code></a>.</td></tr>
                 <tr><td><code>request_channel_admin</code></td><td>Asks for channel members to be made Channel Admins, like the <a href="channel-admin.html">form</a> or <a href="slash.html#channel-admin-without-form"><code>/mattermost-request-hub channel-admin @user ...</code></a>.</td></tr>
+                <tr><td><code>request_team</code></td><td>Requests a new team, like the <a href="team.html#new-team-open">form</a> or <a href="slash.html#team"><code>/mattermost-request-hub team &lt;Team name&gt; ...</code></a>.</td></tr>
+                <tr><td><code>request_team_admin</code></td><td>Asks for team members to be made Team Admins, like the <a href="team.html#team-admin-open">form</a> or <a href="slash.html#team-admin"><code>/mattermost-request-hub team-admin @user ...</code></a>.</td></tr>
+                <tr><td><code>request_team_member</code></td><td>Asks for people to be added to a team, like the <a href="team-member.html">form</a> or <a href="slash.html#team-member"><code>/mattermost-request-hub team-member @user ...</code></a>.</td></tr>
+                <tr><td><code>request_team_guest</code></td><td>Asks for a guest invite to channels of a team, like the <a href="team-guest.html">form</a> or <a href="slash.html#team-guest"><code>/mattermost-request-hub team-guest &lt;email&gt; ...</code></a>.</td></tr>
+                <tr><td><code>request_bot</code></td><td>Requests a bot account, like <a href="slash.html#bot"><code>/mattermost-request-hub bot &lt;username&gt; &lt;Display name&gt; ...</code></a>. Like the slash command, it covers the account only; ask for an access token or webhooks for the bot in the <a href="bot.html">form</a>.</td></tr>
+                <tr><td><code>request_webhook</code></td><td>Requests an incoming or outgoing webhook for a channel, like the <a href="webhook.html">forms</a> or <a href="slash.html#webhook-incoming"><code>/mattermost-request-hub webhook-incoming ...</code></a>.</td></tr>
             </tbody>
         </table>
 
@@ -79,9 +86,9 @@
         <p>
             Turn on <strong>Offer tools to Agents</strong> in System Console → Plugins → Mattermost Request Hub.
             It is off by default and takes effect on save. It needs the Mattermost Agents plugin and Mattermost
-            11.3 or later. Once it's on, the three tools above appear in the Agents plugin's own settings, where
-            you choose which of them agents may use. The tools follow the <em>Allow channel requests</em> and
-            <em>Allow channel admin requests</em> toggles. If an agent doesn't offer them, see
+            11.3 or later. Once it's on, the tools above appear in the Agents plugin's own settings, where
+            you choose which of them agents may use. Each tool follows its request type's toggle, so a type
+            that is turned off can't be requested through an agent either. If an agent doesn't offer them, see
             <a href="troubleshooting.html#agents-missing">Agents tools not showing</a>.
         </p>
 
