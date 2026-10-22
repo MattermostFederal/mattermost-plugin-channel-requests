@@ -84,10 +84,10 @@ func TestRequestExpired(t *testing.T) {
 
 func TestPendingRequestKeys(t *testing.T) {
 	require.Equal(t, "pending_channel_u1", pendingListKey(pendingKindChannel, "u1"))
-	require.Equal(t, "team1/team-x", channelRequestKey(&channelRequest{TeamID: "team1", Name: "team-x"}))
+	require.Equal(t, "team1/team-x", (&channelRequest{TeamID: "team1", Name: "team-x"}).pendingKey())
 
 	req := &adminRequest{ChannelID: "ch1", NomineeIDs: []string{"b", "a"}}
-	require.Equal(t, "ch1/a,b", adminRequestKey(req))
+	require.Equal(t, "ch1/a,b", req.pendingKey())
 	require.Equal(t, []string{"b", "a"}, req.NomineeIDs, "the request's own order is left alone")
 }
 

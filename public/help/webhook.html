@@ -81,6 +81,21 @@
         <img src="images/webhook-request/mattermost-webhook-approval-card.png" alt="Webhook approval card">
         <img src="images/webhook-request/mattermost-webhook-dm.png" alt="Webhook URL DM">
 
+        <div class="alert alert-info">
+            <div class="alert-title">Limits</div>
+            <p>
+                A System Admin sets how many webhook requests you can have waiting for review at once
+                (<em>Pending requests per user</em>; each request type is counted separately). At the limit,
+                you'll see <em>you have N pending requests waiting for review; you can submit more once some are
+                approved, denied or expire</em>.
+            </p>
+            <p>
+                Asking again for a webhook of the same type with the same name in the same channel shows <em>you
+                already have a pending incoming webhook request with this name in this channel</em> (or
+                <em>outgoing</em>). Requests that aren't reviewed within <em>Request expiry (days)</em> of being submitted expire, even
+                if one approval step is done, and your ticket DM says so.
+            </p>
+        </div>
     </main>
 </div>
 </body>

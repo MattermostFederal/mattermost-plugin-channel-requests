@@ -43,6 +43,7 @@ func TestSubmitTeamAdminRequest_RequesterMustBeTeamMember(t *testing.T) {
 
 func TestSubmitTeamAdminRequest_StoresAndPostsRequest(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)

@@ -372,6 +372,7 @@ func TestHandleBotAction_BotJoinsChannelBeforeOwningIncomingWebhook(t *testing.T
 	capture := &hookCapture{}
 	ts := capture.server(t)
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -411,6 +412,7 @@ func TestHandleBotAction_BotAlreadyOnTeamOnlyJoinsChannel(t *testing.T) {
 	capture := &hookCapture{}
 	ts := capture.server(t)
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogs(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -469,6 +471,7 @@ func TestHandleBotAction_ChannelJoinFailureSkipsIncomingWebhook(t *testing.T) {
 			capture := &hookCapture{}
 			ts := capture.server(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
@@ -500,6 +503,7 @@ func TestHandleBotAction_UndeliverableTokenClearsCards(t *testing.T) {
 			capture := &hookCapture{}
 			ts := capture.server(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogLevels(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
@@ -527,6 +531,7 @@ func TestHandleBotAction_UndeliverableTokenClearsCards(t *testing.T) {
 
 func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 	api := &plugintest.API{}
+	stubPendingLists(api)
 	stubLogLevels(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -559,6 +564,7 @@ func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 	t.Run("bot", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogLevels(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -582,6 +588,7 @@ func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 	})
 	t.Run("webhook", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogLevels(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)

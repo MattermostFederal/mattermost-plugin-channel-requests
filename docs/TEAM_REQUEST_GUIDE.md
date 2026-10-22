@@ -94,6 +94,15 @@ You'll get a DM when a System Admin responds.
 
 ---
 
+**Limits.** A System Admin sets how many team requests and how many Team Admin requests you can have waiting for review
+at once (each request type is counted separately). At the limit you'll see *you
+have N pending requests waiting for review; you can submit more once some are
+approved, denied or expire*. Asking again for a team URL you're already waiting on shows *you already have a
+pending request for a team named name*; asking again for the same people in the
+same team shows *you already have a pending Team Admin request for these people
+in this team*. Requests that aren't reviewed within the configured number of days expire, and
+you'll get a direct message saying so.
+
 ## Messaging while a request is pending
 
 Every request opens a **linked pair of threads**: one in the approval channel

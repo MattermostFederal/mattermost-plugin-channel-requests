@@ -429,7 +429,7 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		CreatedAt:      model.GetMillis(),
 	}
 
-	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}
+	entry := newPendingEntry(req)
 	if err = p.reservePending(pendingKindChannel, req.RequesterID, entry, config); err != nil {
 		return "", err
 	}
