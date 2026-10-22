@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -203,10 +202,6 @@ type exerciseFake struct {
 	serverConfig   *model.Config
 	fail           map[string]bool
 	created        int
-}
-
-func notFoundErr() *model.AppError {
-	return model.NewAppError("test", "test.not_found", nil, "", http.StatusNotFound)
 }
 
 func newExerciseFake(t *testing.T) *exerciseFake {

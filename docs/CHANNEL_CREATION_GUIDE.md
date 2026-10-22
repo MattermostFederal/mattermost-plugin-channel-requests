@@ -105,7 +105,12 @@ replies are only visible to you:
   marked exercise data for training and demonstrations, when exercise mode is on.
 - `help` lists every subcommand and its arguments.
 
-The full reference, with every `channel` option and what each error means, is the
+Put quotes around text that should stay as typed, such as a purpose with a word
+that starts with `--`: `--purpose "--draft-- plans"`. Users can be separated by
+spaces or commas. Every other request type can be filed from the command line
+too.
+
+The full reference, with every option and what each error means, is the
 plugin's built-in `slash.html` page.
 
 ### Requesting through an AI agent

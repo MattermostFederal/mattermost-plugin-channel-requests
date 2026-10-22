@@ -18,7 +18,7 @@ const exerciseUsage = "Usage: `/mattermost-request-hub exercise populate|teardow
 // executeExercise routes `/mattermost-request-hub exercise`. The setting is
 // checked first, then that the caller is a System Admin, so nobody learns
 // more than that exercise mode is off.
-func (p *Plugin) executeExercise(args *model.CommandArgs, params []string) *model.CommandResponse {
+func (p *Plugin) executeExercise(args *model.CommandArgs, params []commandArg) *model.CommandResponse {
 	if !p.getConfiguration().EnableExercise {
 		return ephemeralResponse("Exercise mode is off. A System Admin can turn on **Enable exercise mode** in System Console → Plugins → Mattermost Request Hub.")
 	}
@@ -37,11 +37,12 @@ func (p *Plugin) executeExercise(args *model.CommandArgs, params []string) *mode
 		return ephemeralResponse(exerciseUsage)
 	}
 
+	sub := params[0].Text
 	var (
 		reply string
 		err   error
 	)
-	switch params[0] {
+	switch sub {
 	case exercisePopulate:
 		reply, err = p.populateExercise(args.TeamId, args.UserId)
 	case exerciseTeardown:
@@ -49,11 +50,11 @@ func (p *Plugin) executeExercise(args *model.CommandArgs, params []string) *mode
 	case exerciseStatus:
 		reply, err = p.exerciseStatus(args.TeamId)
 	default:
-		return ephemeralResponse(fmt.Sprintf("Unknown exercise subcommand `%s`. %s", params[0], exerciseUsage))
+		return ephemeralResponse(fmt.Sprintf("Unknown exercise subcommand `%s`. %s", sub, exerciseUsage))
 	}
 	if err != nil {
-		p.API.LogWarn("exercise command failed", "subcommand", params[0], "team_id", args.TeamId, "error", err.Error())
-		return ephemeralResponse(fmt.Sprintf("Exercise %s failed: %s.", params[0], strings.TrimRight(err.Error(), ".")))
+		p.API.LogWarn("exercise command failed", "subcommand", sub, "team_id", args.TeamId, "error", err.Error())
+		return ephemeralResponse(fmt.Sprintf("Exercise %s failed: %s.", sub, strings.TrimRight(err.Error(), ".")))
 	}
 	return ephemeralResponse(reply)
 }
