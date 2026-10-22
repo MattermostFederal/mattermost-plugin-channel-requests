@@ -124,8 +124,10 @@ If an incoming webhook URL can't be delivered to the requester, the hook is
 
 ### System Admin note
 
-Requests from System Admins are queued like any other. A System Admin can fill
-the system step, but a security approver must fill the other.
+Requests from System Admins are queued like any other. Nobody can approve
+either step of their own request, so a System Admin's request needs a security
+approver and a different system approver (or one other System Admin when the
+approver mode is System Admins only).
 
 If webhook creation fails after both steps, the card stays pending with an error
 so the final approver can retry.

@@ -3,7 +3,7 @@
 Mattermost Request Hub lets members **request a new team** (and, separately,
 **request Team Admin** on a team they already belong to) instead of creating or
 promoting themselves directly. Requests go to System Admins; on approval the team
-is created (or the requester is promoted) and the requester is notified by DM.
+is created (or the nominees are promoted) and the requester is notified by DM.
 
 > Companion guides: [new channels](CHANNEL_CREATION_GUIDE.md) ·
 > [Channel Admin](CHANNEL_ADMIN_GUIDE.md) ·
@@ -138,7 +138,10 @@ creation requests), not the root channel-request queue. System Admins Approve or
 
 <img src="images/team-admin-request/mattermost-team-admin-approval-card.png" alt="Team Admin approval card" width="720">
 
-- **Approve**: promotes the requester to Team Admin on that team and notifies them by DM.
+- **Approve**: promotes the nominees to Team Admin on that team and notifies the requester by DM.
+  A request from the Request Hub or More actions nominates the requester; the slash
+  command and its form can nominate other members of the team. Nominees must already
+  be on the team.
 - **Deny**: closes the request and notifies the requester by DM.
 
 ---
