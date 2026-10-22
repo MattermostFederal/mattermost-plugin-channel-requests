@@ -170,6 +170,10 @@ func (p *Plugin) submitBotRequest(requesterID string, input botRequestInput) (st
 		p.API.LogError("failed to post bot request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindBot, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -276,6 +280,7 @@ func (p *Plugin) botApprovalAttachment(req *botRequest, requester *model.User) *
 		Title:   "Bot account request",
 		Color:   "#8B008B",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Text:    strings.Join(details, "\n"),
 		Actions: p.botApprovalActions(req.ID, siteURL),
 	}

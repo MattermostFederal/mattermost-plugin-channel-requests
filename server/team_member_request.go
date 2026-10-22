@@ -104,6 +104,10 @@ func (p *Plugin) submitTeamMemberRequest(requesterID, teamID string, nomineeIDs 
 		p.API.LogError("failed to post team member request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindTeamMember, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -189,6 +193,7 @@ func (p *Plugin) teamMemberApprovalAttachment(req *teamMemberRequest, requester 
 		Title:   "Team member request",
 		Color:   "#F4A221",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.teamMemberApprovalActions(req.ID, siteURL),
 	}
 }
