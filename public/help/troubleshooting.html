@@ -155,15 +155,22 @@
         </p>
 
         <h2 id="agents-missing">Agents tools not showing</h2>
-        <p>If an agent doesn't offer to file channel requests, check, in order:</p>
+        <p>If an agent doesn't offer to file requests, check, in order:</p>
         <ul>
             <li><em>Offer tools to Agents</em> is on in the Mattermost Request Hub settings. It's off by default.</li>
             <li>The Mattermost Agents plugin is installed and enabled, on Mattermost 11.3 or later.</li>
-            <li><em>Allow channel requests</em> and <em>Allow channel admin requests</em> are on; a tool for a type that's off refuses with the disabled message.</li>
+            <li>The setting for the request type is on; a tool for a type that's off refuses with the disabled message.</li>
             <li>
                 The tools are allowed in the Agents plugin's settings. They're listed with this plugin's prefix:
-                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_prefixes</code>, <code>com_mattermostfederal_mattermost-plugin-request-hub__request_channel</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_prefixes</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_channel</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_channel_admin</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_admin</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_member</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_guest</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_bot</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_webhook</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests</code> and
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__get_request_status</code>.
             </li>
