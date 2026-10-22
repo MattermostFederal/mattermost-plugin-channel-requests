@@ -61,11 +61,23 @@ Create and assign attributes in **System Console → User Management → Attribu
 |---------|---------|
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can also approve or deny **channel creation** requests. Team Admins of the team a channel is requested in can always act on that request, and Channel Admin requests are always reviewed by System Admins and the Team Admins of the channel's own team, whatever this is set to. |
 | **Per-team approval channels** | Default **on**. Auto-creates `mattermost-channel-requests` in each team that has a Team Admin or System Admin member. Channel / Channel Admin requests from that team go there (not the primary approval team's root channel). All ticket channels (including **Mattermost: Team Requests**) are kept in a managed sidebar category **Mattermost: Request Hub**. |
-| **Offer tools to Agents** | Default **off**. Lets the Mattermost Agents plugin list prefixes and file channel and Channel Admin requests on a user's behalf (see [Agents tools](#agents-tools)). Takes effect on save. |
+| **Offer tools to Agents** | Default **off**. Lets the Mattermost Agents plugin list prefixes and file requests of every type on a user's behalf (see [Agents tools](#agents-tools)). Takes effect on save. |
 
 ### Agents tools
 
-**Offer tools to Agents** needs the Mattermost Agents plugin and Mattermost 11.3 or later. Once it's on, the tools `list_prefixes`, `request_channel` and `request_channel_admin` appear in the Agents plugin's own settings, where you choose which of them agents may use. Each tool acts as the user the agent is talking to, with the same checks as the forms, and follows the **Channel requests** and **Channel admin requests** toggles. Every request goes to the approvers, System Admins' included. There are no approve or deny tools.
+**Offer tools to Agents** needs the Mattermost Agents plugin and Mattermost 11.3 or later. Once it's on, its tools appear in the Agents plugin's own settings, where you choose which of them agents may use. Each tool acts as the user the agent is talking to, with the same checks as the form for its type, and follows that type's toggle. Every request goes to the approvers, System Admins' included. There are no approve or deny tools.
+
+| Tool | Requests |
+|------|----------|
+| `list_prefixes` | Nothing; lists the channel prefixes for `request_channel` |
+| `request_channel` | A new channel |
+| `request_channel_admin` | Channel Admin for members of a channel |
+| `request_team` | A new team |
+| `request_team_admin` | Team Admin for members of a team |
+| `request_team_member` | People added to a team |
+| `request_team_guest` | A guest invite to channels of a team |
+| `request_bot` | A bot account (account fields only; tokens and webhooks for the bot are in the form) |
+| `request_webhook` | An incoming or outgoing webhook |
 
 ### Locking down native channel creation
 

@@ -258,6 +258,24 @@ func TestMCPTools_HonorRequestTypeSettings(t *testing.T) {
 		{"request_channel_admin", map[string]any{
 			"channel_id": "ch1", "nominees": []string{"nommy"},
 		}, func(c *configuration) { c.AllowChannelAdminRequests = false }, channelAdminRequestsDisabledMsg},
+		{"request_team", map[string]any{
+			"display_name": "Field Ops",
+		}, func(c *configuration) { c.AllowTeamRequests = false }, teamRequestsDisabledMsg},
+		{"request_team_admin", map[string]any{
+			"team_id": "team1", "nominees": []string{"nommy"},
+		}, func(c *configuration) { c.AllowTeamAdminRequests = false }, teamAdminRequestsDisabledMsg},
+		{"request_team_member", map[string]any{
+			"team_id": "team1", "nominees": []string{"nommy"},
+		}, func(c *configuration) { c.AllowTeamMemberRequests = false }, teamMemberRequestsDisabledMsg},
+		{"request_team_guest", map[string]any{
+			"team_id": "team1", "email": "guest@example.com", "channel_ids": []string{testChannelID},
+		}, func(c *configuration) { c.AllowTeamGuestRequests = false }, teamGuestRequestsDisabledMsg},
+		{"request_bot", map[string]any{
+			"username": "svcbot", "display_name": "Service Bot", "owner": "owner",
+		}, func(c *configuration) { c.AllowBotTokenRequests = false }, botRequestsDisabledMsg},
+		{"request_webhook", map[string]any{
+			"webhook_type": "incoming", "channel_id": "ch1", "display_name": "Alerts",
+		}, func(c *configuration) { c.AllowWebhookRequests = false }, webhookRequestsDisabledMsg},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			stubMCP(t)
@@ -303,4 +321,281 @@ func TestRequestChannelTool_QueuesForRegularMember(t *testing.T) {
 	require.Equal(t, "u1", stored.RequesterID)
 	require.Equal(t, "team-marketing", stored.Name)
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+}
+
+// mcpRequestCases are the tools added beside the channel ones, each with
+// arguments that queue a request from team1 and the fields it stores.
+type mcpRequestCase struct {
+	tool     string
+	args     map[string]any
+	stub     func(api *plugintest.API)
+	kvPrefix string
+	want     map[string]any
+}
+
+func mcpRequestCases() map[string]mcpRequestCase {
+	return map[string]mcpRequestCase{
+		"request_team": {
+			tool: "request_team",
+			args: map[string]any{
+				"display_name": "Field Ops", "name": "field-ops", "description": "Weekly sync",
+				"invite_only": true, "request_team_admin": true,
+			},
+			kvPrefix: kvTeamRequestPrefix,
+			want: map[string]any{
+				"display_name": "Field Ops", "name": "field-ops", "description": "Weekly sync",
+				"type": model.TeamInvite, "request_team_admin": true,
+			},
+		},
+		"request_team open by default": {
+			tool:     "request_team",
+			args:     map[string]any{"display_name": "Field Ops"},
+			kvPrefix: kvTeamRequestPrefix,
+			want:     map[string]any{"name": "field-ops", "type": model.TeamOpen, "request_team_admin": false},
+		},
+		"request_team_admin": {
+			tool: "request_team_admin",
+			args: map[string]any{"team_id": "team1", "nominees": []string{"@nommy"}},
+			stub: func(api *plugintest.API) {
+				stubTeamAdminQueue(testNomineeID)(api)
+				api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID}, nil)
+			},
+			kvPrefix: kvTeamAdminRequestPrefix,
+			want:     map[string]any{"team_id": "team1", "nominee_ids": []any{testNomineeID}},
+		},
+		"request_team_member": {
+			tool: "request_team_member",
+			args: map[string]any{"team_id": "team1", "nominees": []string{"nommy"}, "reason": "Ops cell"},
+			stub: func(api *plugintest.API) {
+				stubTeamMemberQueue(api)
+				api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID}, nil)
+			},
+			kvPrefix: kvTeamMemberRequestPrefix,
+			want:     map[string]any{"team_id": "team1", "nominee_ids": []any{testNomineeID}, "reason": "Ops cell"},
+		},
+		"request_team_guest": {
+			tool: "request_team_guest",
+			args: map[string]any{
+				"team_id": "team1", "email": "Guest@Example.com", "channel_ids": []string{testChannelID}, "reason": "Vendor access",
+			},
+			stub:     stubTeamGuestQueue,
+			kvPrefix: kvTeamGuestRequestPrefix,
+			want: map[string]any{
+				"team_id": "team1", "email": "guest@example.com", "channel_ids": []any{testChannelID}, "reason": "Vendor access",
+			},
+		},
+		"request_bot": {
+			tool: "request_bot",
+			args: map[string]any{
+				"username": "svcbot", "display_name": "Service Bot", "description": "Posts build results", "owner": "@owner",
+			},
+			stub: func(api *plugintest.API) {
+				api.On("GetUserByUsername", "owner").Return(&model.User{Id: testOwnerID}, nil)
+				api.On("GetUser", testOwnerID).Return(&model.User{Id: testOwnerID, Username: "owner"}, nil)
+			},
+			kvPrefix: kvBotRequestPrefix,
+			want: map[string]any{
+				"username": "svcbot", "display_name": "Service Bot", "description": "Posts build results", "owner_user_id": testOwnerID,
+			},
+		},
+		"request_bot no owner": {
+			tool:     "request_bot",
+			args:     map[string]any{"username": "svcbot", "display_name": "Service Bot"},
+			kvPrefix: kvBotRequestPrefix,
+			want:     map[string]any{"username": "svcbot", "owner_user_id": nil},
+		},
+		"request_webhook incoming": {
+			tool: "request_webhook",
+			args: map[string]any{
+				"webhook_type": "Incoming", "channel_id": "ch1", "display_name": "Build alerts", "description": "CI results",
+			},
+			stub:     stubWebhookQueue,
+			kvPrefix: kvWebhookRequestPrefix,
+			want: map[string]any{
+				"webhook_type": webhookTypeIncoming, "channel_id": "ch1", "display_name": "Build alerts", "description": "CI results",
+			},
+		},
+		"request_webhook outgoing": {
+			tool: "request_webhook",
+			args: map[string]any{
+				"webhook_type": " Outgoing ", "channel_id": "ch1", "display_name": "Relay", "callback_url": "https://hooks.example.com/out",
+			},
+			stub:     stubWebhookQueue,
+			kvPrefix: kvWebhookRequestPrefix,
+			want: map[string]any{
+				"webhook_type": webhookTypeOutgoing, "channel_id": "ch1", "display_name": "Relay", "callback_url": "https://hooks.example.com/out",
+			},
+		},
+	}
+}
+
+func TestMCPRequestTools_QueueForSystemAdmin(t *testing.T) {
+	for name, tc := range mcpRequestCases() {
+		t.Run(name, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			stubLogs(api)
+			p := newMCPTestPlugin(t, api, &configuration{})
+			stubSystemAdminQueue(api)
+			if tc.stub != nil {
+				tc.stub(api)
+			}
+
+			out := mcpToolOutput[MCPMessageOutput](t, callMCPTool(t, p, testSysAdminID, tc.tool, tc.args))
+
+			require.Contains(t, out.Message, "approval")
+			requireQueued(t, api, tc.kvPrefix)
+			stored := storedFields(t, api, tc.kvPrefix)
+			require.Equal(t, testSysAdminID, stored["requester_id"])
+			for field, value := range tc.want {
+				require.Equal(t, value, stored[field], field)
+			}
+			if tc.want["owner_user_id"] == testOwnerID {
+				api.AssertCalled(t, "GetUser", testOwnerID)
+			}
+		})
+	}
+}
+
+func TestMCPRequestTools_QueueForRegularUser(t *testing.T) {
+	requester := regularUser()
+	for name, tc := range mcpRequestCases() {
+		t.Run(name, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			stubLogs(api)
+			p := newMCPTestPlugin(t, api, &configuration{})
+			api.On("GetUser", requester.Id).Return(requester, nil)
+			api.On("GetTeamMember", "team1", requester.Id).Return(&model.TeamMember{TeamId: "team1", UserId: requester.Id}, nil).Maybe()
+			for _, channelID := range []string{"ch1", testChannelID} {
+				api.On("GetChannelMember", channelID, requester.Id).Return(&model.ChannelMember{UserId: requester.Id}, nil).Maybe()
+			}
+			stubSystemAdminQueue(api)
+			if tc.stub != nil {
+				tc.stub(api)
+			}
+
+			out := mcpToolOutput[MCPMessageOutput](t, callMCPTool(t, p, requester.Id, tc.tool, tc.args))
+
+			require.Contains(t, out.Message, "approval")
+			requireQueued(t, api, tc.kvPrefix)
+			require.Equal(t, requester.Id, storedFields(t, api, tc.kvPrefix)["requester_id"])
+			// A regular requester's membership is checked where the form checks it.
+			switch tc.tool {
+			case "request_team_admin":
+				api.AssertCalled(t, "GetTeamMember", "team1", requester.Id)
+			case "request_team_guest":
+				api.AssertCalled(t, "GetTeamMember", "team1", requester.Id)
+				api.AssertCalled(t, "GetChannelMember", testChannelID, requester.Id)
+			case "request_webhook":
+				api.AssertCalled(t, "GetChannelMember", "ch1", requester.Id)
+			}
+		})
+	}
+}
+
+func TestMCPRequestTools_RefuseWithoutUserID(t *testing.T) {
+	for name, tc := range mcpRequestCases() {
+		t.Run(name, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			p := newMCPTestPlugin(t, api, &configuration{})
+
+			result := callMCPTool(t, p, "", tc.tool, tc.args)
+
+			require.Equal(t, errNoMCPUser.Error(), mcpToolError(t, result))
+			require.Empty(t, api.Calls)
+		})
+	}
+}
+
+func TestMCPRequestTools_ReturnValidationErrors(t *testing.T) {
+	for name, tc := range map[string]struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		"unknown team admin nominee": {"request_team_admin", map[string]any{"team_id": "team1", "nominees": []string{"ghost"}}, "unknown user: ghost"},
+		"unknown team member":        {"request_team_member", map[string]any{"team_id": "team1", "nominees": []string{"ghost"}}, "unknown user: ghost"},
+		"unknown bot owner":          {"request_bot", map[string]any{"username": "svcbot", "display_name": "Svc", "owner": "ghost"}, "unknown user: ghost"},
+		"no team admin nominees":     {"request_team_admin", map[string]any{"team_id": "team1", "nominees": []string{}}, "pick at least one person to make a Team Admin"},
+		"reserved team name":         {"request_team", map[string]any{"display_name": "Ops", "name": "signup-team"}, "reserved by Mattermost"},
+		"bad guest email":            {"request_team_guest", map[string]any{"team_id": "team1", "email": "not-an-email", "channel_ids": []string{testChannelID}}, "valid guest email"},
+		"bad bot username":           {"request_bot", map[string]any{"username": "ab", "display_name": "Svc"}, "3-22 characters"},
+		"unknown webhook type":       {"request_webhook", map[string]any{"webhook_type": "slash", "channel_id": "ch1", "display_name": "A"}, `unknown webhook type "slash"`},
+		"outgoing without callback":  {"request_webhook", map[string]any{"webhook_type": "outgoing", "channel_id": "ch1", "display_name": "A"}, "callback URL is required"},
+		"incoming with callback": {"request_webhook", map[string]any{
+			"webhook_type": "incoming", "channel_id": "ch1", "display_name": "A", "callback_url": "https://hooks.example.com",
+		}, "a callback URL is only for outgoing webhooks"},
+		"blank bot owner": {"request_bot", map[string]any{"username": "svcbot", "display_name": "Svc", "owner": " @ "}, "name the owner by username"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			stubLogLevels(api)
+			p := newMCPTestPlugin(t, api, &configuration{})
+			api.On("GetUserByUsername", "ghost").Return(nil, testAppErr("not found")).Maybe()
+
+			result := callMCPTool(t, p, "u1", tc.tool, tc.args)
+
+			require.Contains(t, mcpToolError(t, result), tc.want)
+			api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestMCPRequestTools_NonMemberIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		tool     string
+		args     map[string]any
+		want     string
+		teamMate bool
+	}{
+		"team admin": {
+			tool: "request_team_admin",
+			args: map[string]any{"team_id": "team1", "nominees": []string{"nommy"}},
+			want: "you must be a member of the team to request Team Admin access",
+		},
+		"team guest": {
+			tool: "request_team_guest",
+			args: map[string]any{"team_id": "team1", "email": "guest@example.com", "channel_ids": []string{testChannelID}},
+			want: "you must be a member of the team to request a guest invite",
+		},
+		"guest channel": {
+			tool:     "request_team_guest",
+			args:     map[string]any{"team_id": "team1", "email": "guest@example.com", "channel_ids": []string{testChannelID}},
+			want:     "you can only invite guests to channels you're a member of",
+			teamMate: true,
+		},
+		"webhook": {
+			tool: "request_webhook",
+			args: map[string]any{"webhook_type": "incoming", "channel_id": "ch1", "display_name": "Alerts"},
+			want: "you must be a member of the channel to request a webhook for it",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubMCP(t)
+			api := &plugintest.API{}
+			stubLogs(api)
+			p := newMCPTestPlugin(t, api, &configuration{})
+			requester := regularUser()
+			api.On("GetUser", requester.Id).Return(requester, nil)
+			api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID}, nil).Maybe()
+			if tc.teamMate {
+				api.On("GetTeamMember", "team1", requester.Id).Return(&model.TeamMember{TeamId: "team1", UserId: requester.Id}, nil)
+			} else {
+				api.On("GetTeamMember", "team1", requester.Id).Return(nil, testAppErr("not a member")).Maybe()
+			}
+			for _, channelID := range []string{"ch1", testChannelID} {
+				api.On("GetChannelMember", channelID, requester.Id).Return(nil, testAppErr("not a member")).Maybe()
+			}
+			stubTeamGuestQueue(api)
+			stubWebhookQueue(api)
+
+			result := callMCPTool(t, p, requester.Id, tc.tool, tc.args)
+
+			require.Equal(t, tc.want, mcpToolError(t, result))
+			api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		})
+	}
 }
