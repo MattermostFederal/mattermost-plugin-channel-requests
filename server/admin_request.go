@@ -101,7 +101,7 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		CreatedAt:   model.GetMillis(),
 	}
 
-	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: adminRequestKey(req)}
+	entry := newPendingEntry(req)
 	if err := p.reservePending(pendingKindAdmin, req.RequesterID, entry, p.getConfiguration()); err != nil {
 		return "", err
 	}

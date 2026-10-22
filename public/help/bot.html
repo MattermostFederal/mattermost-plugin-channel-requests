@@ -79,6 +79,21 @@
         <img src="images/bot-request/mattermost-bot-token-dm.png" alt="Bot token DM">
         <p>Tokens in the approval DM auto-delete after <strong>72 hours</strong> — save them securely.</p>
 
+        <div class="alert alert-info">
+            <div class="alert-title">Limits</div>
+            <p>
+                A System Admin sets how many bot requests you can have waiting for review at once
+                (<em>Pending requests per user</em>; each request type is counted separately). At the limit,
+                you'll see <em>you have N pending requests waiting for review; you can submit more once some are
+                approved, denied or expire</em>.
+            </p>
+            <p>
+                Asking again for a bot username you're already waiting on shows <em>you already have a pending
+                request for bot @username</em>. Requests that aren't reviewed within <em>Request expiry (days)</em> of being submitted expire, even
+                if one approval step is done, and your ticket DM says so.
+            </p>
+        </div>
+
         <h2 id="add-to-team">Add the bot to a team</h2>
         <p>
             Creating a bot does not put it on a team. After the bot exists, use

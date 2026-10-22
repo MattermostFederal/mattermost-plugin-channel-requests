@@ -91,7 +91,7 @@ error only if none of them could be reached; pass that message along to a
 System Admin.
 
 **Limits.** A System Admin sets how many Channel Admin requests you can have
-waiting for review at once. At the limit you'll see *you have N pending requests
+waiting for review at once (each request type is counted separately). At the limit you'll see *you have N pending requests
 waiting for review; you can submit more once some are approved, denied or
 expire*. Asking again for the same people in the same channel while that request
 is pending shows *you already have a pending Channel Admin request for these
@@ -158,8 +158,8 @@ requests, in **System Console → Plugins → Mattermost Request Hub**:
 | **Allow channel admin requests** | Enables Channel Admin entry points. |
 | **Team Admins can approve requests** | Applies to channel-creation requests only. Channel Admin requests are always reviewed by System Admins and the Team Admins of the *requested channel's* team, whatever this is set to. |
 | **Per-team approval channels** | Default on. Same per-team routing as channel creation — requests go to that team's `mattermost-channel-requests` when it has a Team Admin or System Admin. |
-| **Pending requests per user** | How many Channel Admin requests one user can have waiting for review (counted separately from channel requests), up to `1000`. Default `5`; `0` means no limit. |
-| **Request expiry (days)** | Pending Channel Admin requests older than this can no longer be approved. At most `3650`. Default `30`; `0` means requests never expire. |
+| **Pending requests per user** | How many Channel Admin requests one user can have waiting for review (each request type is counted separately), up to `1000`. Default `5`; `0` means no limit. |
+| **Request expiry (days)** | Pending requests older than this can no longer be approved. At most `3650`. Default `30`; `0` means requests never expire. |
 
 See the [channel-creation guide](CHANNEL_CREATION_GUIDE.md#admin-setup) for the full settings
 reference, or run **`/mattermost-request-hub docs`** in Mattermost.
