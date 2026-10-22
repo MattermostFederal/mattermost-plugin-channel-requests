@@ -322,6 +322,7 @@ func TestTwoStepActionHandlers_PartialApprovalRecordsStepAndRepaintsCard(t *test
 			api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 			api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "progress"}, nil)
 			api.On("GetPost", "post1").Return(requestCardPost(), nil)
+			api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
 
 			resp := runAsAdmin(t, p, tc.handler, true)
 
@@ -378,6 +379,7 @@ func TestHandleBotAction_CreateFailureRestoresAndRepaintsCard(t *testing.T) {
 	api.On("CreateBot", mock.Anything).Return(nil, testAppErr("name taken"))
 	api.On("KVSet", kvBotRequestPrefix+"r1", raw).Return(nil).Once()
 	api.On("GetPost", "post1").Return(requestCardPost(), nil)
+	api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
 
 	resp := runAsAdmin(t, p, botActionHandler, true)
 
@@ -655,6 +657,7 @@ func TestHandleWebhookAction_CreateFailureRestoresAndRepaintsCard(t *testing.T) 
 	api.On("KVSet", kvWebhookRequestPrefix+"r1", raw).Return(nil).Once()
 	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 
+	api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil).Maybe()
 	resp := runAsAdmin(t, p, webhookActionHandler, true)
 
 	require.Contains(t, resp.EphemeralText, "Couldn't create the webhook: hooks are off.")

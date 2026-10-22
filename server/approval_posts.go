@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"net/http"
 	"slices"
 
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pkg/errors"
 )
 
@@ -122,18 +120,4 @@ func (p *Plugin) typeOffRefusal(requestType string, approve bool) string {
 		return requestTypeOffText
 	}
 	return ""
-}
-
-// refuseAction answers an Approve or Deny click that can't go ahead (see
-// cardRefusal and typeOffRefusal) and reports whether it did.
-func (p *Plugin) refuseAction(w http.ResponseWriter, postID, approvalPostID, requestID, requestType string, approve bool) bool {
-	msg := p.cardRefusal(postID, approvalPostID, requestID)
-	if msg == "" {
-		msg = p.typeOffRefusal(requestType, approve)
-	}
-	if msg == "" {
-		return false
-	}
-	writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-	return true
 }

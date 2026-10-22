@@ -734,9 +734,13 @@ func (p *Plugin) handleRequestAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"message": message})
 }
 
-// handleAction handles Approve/Deny clicks on a channel request card. The
-// checks live in decideChannelRequest, which the slash command shares.
-func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {
+// decider approves or denies one request type on behalf of a user; see
+// decideChannelRequest. The card buttons and the slash command share it.
+type decider func(actingUserID, requestID, clickedPostID string, approve bool) decisionResult
+
+// handleDecisionClick handles an Approve or Deny click on an approval card.
+// The checks live in decide, which the slash command shares.
+func (p *Plugin) handleDecisionClick(w http.ResponseWriter, r *http.Request, approve bool, decide decider) {
 	// Identity comes from the authenticated header, NOT request.UserId in
 	// the body — trusting the body would let anyone who can read a pending
 	// request_id forge a System Admin user_id and approve/deny requests.
@@ -758,32 +762,52 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 	requestID, _ := request.Context[actionContextRequestID].(string)
-	writeDecision(w, p.decideChannelRequest(userID, requestID, request.PostId, approve))
+	writeDecision(w, decide(userID, requestID, request.PostId, approve))
+}
+
+// handleAction handles Approve/Deny clicks on a channel request card.
+func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bool) {
+	p.handleDecisionClick(w, r, approve, p.decideChannelRequest)
 }
 
 // handleAdminAction handles Approve/Deny clicks on a Channel Admin request
-// card. The checks live in decideAdminRequest.
+// card.
 func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	// Same rule as handleAction: the acting user comes from the session, not
-	// the client-supplied body.
+	p.handleDecisionClick(w, r, approve, p.decideAdminRequest)
+}
+
+// handleTwoStepClick handles an Approve or Deny click on a bot or webhook
+// request card. Unlike handleDecisionClick, a card whose buttons predate
+// the request ID in the click context is still recognized by its buttons,
+// and a refused Approve is also shown under the card.
+func (p *Plugin) handleTwoStepClick(w http.ResponseWriter, r *http.Request, approve bool, decide decider) {
 	userID, ok := requireActionUserID(w, r)
 	if !ok {
 		return
 	}
-
 	var request model.PostActionIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
 		return
 	}
-
+	requestID := p.actionRequestID(&request)
+	if requestID == "" {
+		writeJSON(w, model.PostActionIntegrationResponse{
+			EphemeralText: "Could not identify that request. Refresh the channel and try Approve again.",
+		})
+		return
+	}
 	if request.PostId == "" {
 		// The decide functions treat a missing post as the slash command.
 		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: buttonNotOnCardText})
 		return
 	}
-	requestID, _ := request.Context[actionContextRequestID].(string)
-	writeDecision(w, p.decideAdminRequest(userID, requestID, request.PostId, approve))
+	d := decide(userID, requestID, request.PostId, approve)
+	if d.Blocked {
+		p.respondTwoStepApproveBlocked(w, userID, request.PostId, d.Reply, d.BannerHeader, d.Banner)
+		return
+	}
+	writeDecision(w, d)
 }
 
 // writeDecision answers a card click: the private reply, and the clicked
@@ -906,131 +930,11 @@ func (p *Plugin) handleTeamCreationDialogSubmit(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleTeamAdminAction handles Approve/Deny on a team admin promotion request.
-// Only System Admins may approve — team admin grants broad permissions.
+// handleTeamAdminAction handles Approve/Deny on a Team Admin request card.
 func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-	if !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Only System Admins can approve or deny Team Admin requests."})
-		return
-	}
-
-	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadTeamAdminRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load team admin request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeTeamAdmin, approve) {
-		return
-	}
-
-	team, teamErr := p.API.GetTeam(req.TeamID)
-	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeTeamAdmin,
-	})
-
-	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		requester, _ := p.API.GetUser(req.RequesterID)
-		nominees := p.mentionList(req.NomineeIDs)
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       kvTeamAdminRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindTeamAdmin,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Team Admin Request Expired",
-			cardText:    fmt.Sprintf("Your request to make %s Team Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, teamRef),
-			audit: fmt.Sprintf("@%s closed the Team Admin request for %s in %s from %s, which was not reviewed within %d days",
-				actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	// Re-check what submit checked. A failed check leaves the request
-	// pending so it can be denied.
-	if approve {
-		if msg := p.teamAdminApprovalBlocker(req, team, teamErr); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamAdminRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim team admin request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		still, _, loadErr := p.loadTeamAdminRequest(req.ID)
-		p.respondClaimLost(w, loadErr != nil || still != nil)
-		return
-	}
-	// The KV key was already removed by the atomic claim above.
-	p.releasePending(pendingKindTeamAdmin, req.RequesterID, req.ID)
-
-	requester, _ := p.API.GetUser(req.RequesterID)
-	nominees := p.mentionList(req.NomineeIDs)
-
-	if approve {
-		p.promoteTeamAdmins(req)
-		outcome := fmt.Sprintf("✅ Approved by @%s for %s. %s promoted to Team Admin in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
-		p.logAudit(auditApproved, fmt.Sprintf("@%s promoted %s to Team Admin in %s (requested by %s)",
-			actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Team Admin Request Approved",
-			CardText:   fmt.Sprintf("Approved by @%s. %s is now Team Admin in %s.", actingUser.Username, nominees, teamRef),
-			StatusLine: outcome,
-		})})
-		return
-	}
-	outcome := fmt.Sprintf("❌ Denied by @%s for %s. Team Admin for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied a Team Admin request for %s in %s",
-		actingUser.Username, nominees, teamRef), request.PostId)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-		RequestID:   req.ID,
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Team Admin Request Denied",
-		CardText:   fmt.Sprintf("Denied by @%s. Your request to make %s Team Admin in %s was not approved. Reply to this thread if you'd like more information.", actingUser.Username, nominees, teamRef),
-		StatusLine: outcome,
-	})})
+	p.handleDecisionClick(w, r, approve, p.decideTeamAdminRequest)
 }
 
-// handleTeamAction handles Approve/Deny on a team creation request.
-// Only System Admins may approve.
 func (p *Plugin) handleTeamMemberDialogSubmit(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -1069,147 +973,9 @@ func (p *Plugin) handleTeamMemberDialogSubmit(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleTeamMemberAction handles Approve/Deny on a team member request card.
 func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-	if !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Only System Admins can approve or deny team member requests."})
-		return
-	}
-
-	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadTeamMemberRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load team member request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeTeamMember, approve) {
-		return
-	}
-
-	team, teamErr := p.API.GetTeam(req.TeamID)
-	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeTeamMember,
-	})
-
-	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		requester, _ := p.API.GetUser(req.RequesterID)
-		nominees := p.mentionList(req.NomineeIDs)
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       kvTeamMemberRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindTeamMember,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Team Member Request Expired",
-			cardText:    fmt.Sprintf("Your request to add %s to %s expired before it was reviewed. Submit it again if you still need it.", nominees, teamRef),
-			audit: fmt.Sprintf("@%s closed the request to add %s to %s from %s, which was not reviewed within %d days",
-				actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	// Re-check what submit checked. A failed check leaves the request
-	// pending so it can be denied.
-	if approve {
-		if msg := p.teamMemberApprovalBlocker(req, team, teamErr); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamMemberRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim team member request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		still, _, loadErr := p.loadTeamMemberRequest(req.ID)
-		p.respondClaimLost(w, loadErr != nil || still != nil)
-		return
-	}
-	// The KV key was already removed by the atomic claim above.
-	p.releasePending(pendingKindTeamMember, req.RequesterID, req.ID)
-
-	requester, _ := p.API.GetUser(req.RequesterID)
-	nominees := p.mentionList(req.NomineeIDs)
-
-	var outcome string
-	if approve {
-		failed := p.addTeamMembers(req)
-		added := exceptIDs(req.NomineeIDs, failed)
-		addedMentions := p.mentionList(added)
-		failedMentions := p.mentionList(failed)
-		switch {
-		case len(added) > 0 && len(failed) > 0:
-			outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s. Failed for %s.",
-				actingUser.Username, requesterUsername(requester, req.RequesterID), addedMentions, teamRef, failedMentions)
-		case len(added) > 0:
-			outcome = fmt.Sprintf("✅ Approved by @%s for %s. Added %s to %s.",
-				actingUser.Username, requesterUsername(requester, req.RequesterID), addedMentions, teamRef)
-		case len(failed) > 0:
-			outcome = fmt.Sprintf("⚠️ Approved by @%s for %s, but could not add %s to %s.",
-				actingUser.Username, requesterUsername(requester, req.RequesterID), failedMentions, teamRef)
-		default:
-			outcome = fmt.Sprintf("✅ Approved by @%s for %s. No users were added to %s.",
-				actingUser.Username, requesterUsername(requester, req.RequesterID), teamRef)
-		}
-		if len(added) > 0 {
-			p.logAudit(auditApproved, fmt.Sprintf("@%s added %s to %s (requested by %s)",
-				actingUser.Username, addedMentions, teamRef, requesterUsername(requester, req.RequesterID)), request.PostId)
-		} else if len(failed) > 0 {
-			p.logAudit(auditApproved, fmt.Sprintf("@%s approved team member request for %s but adds failed for %s",
-				actingUser.Username, teamRef, failedMentions), request.PostId)
-		}
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Team Member Request Approved",
-			CardText:   outcome,
-			StatusLine: outcome,
-		})})
-		return
-	}
-	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team member add for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, teamRef)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied adding %s to %s",
-		actingUser.Username, nominees, teamRef), request.PostId)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-		RequestID:   req.ID,
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Team Member Request Denied",
-		CardText:   fmt.Sprintf("Denied by @%s. Your request to add %s to %s was not approved.", actingUser.Username, nominees, teamRef),
-		StatusLine: outcome,
-	})})
+	p.handleDecisionClick(w, r, approve, p.decideTeamMemberRequest)
 }
 
 func (p *Plugin) handleTeamGuestDialogSubmit(w http.ResponseWriter, r *http.Request) {
@@ -1251,263 +1017,14 @@ func (p *Plugin) handleTeamGuestDialogSubmit(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleTeamGuestAction handles Approve/Deny on a guest invite request card.
 func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-	if !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Only System Admins can approve or deny guest invite requests."})
-		return
-	}
-
-	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadTeamGuestRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load team guest request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeTeamGuest, approve) {
-		return
-	}
-
-	team, teamErr := p.API.GetTeam(req.TeamID)
-	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeTeamGuest,
-	})
-
-	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		requester, _ := p.API.GetUser(req.RequesterID)
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       kvTeamGuestRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindTeamGuest,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Guest Invite Request Expired",
-			cardText:    fmt.Sprintf("Your request to invite **%s** to %s as a guest expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.Email), teamRef),
-			audit: fmt.Sprintf("@%s closed the guest invite request for %s from %s, which was not reviewed within %d days",
-				actingUser.Username, teamRef, requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	// Re-check what submit checked. A failed check leaves the request
-	// pending so it can be denied.
-	if approve {
-		if msg := p.teamGuestApprovalBlocker(req, team, teamErr); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamGuestRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim team guest request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		still, _, loadErr := p.loadTeamGuestRequest(req.ID)
-		p.respondClaimLost(w, loadErr != nil || still != nil)
-		return
-	}
-
-	requester, _ := p.API.GetUser(req.RequesterID)
-
-	var outcome string
-	if approve {
-		if fulfillErr := p.fulfillTeamGuestRequest(req, actingUser.Id); fulfillErr != nil {
-			if restoreErr := p.API.KVSet(kvTeamGuestRequestPrefix+req.ID, rawReq); restoreErr != nil {
-				p.API.LogError("failed to restore team guest request", "error", restoreErr.Error())
-				p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
-				p.deleteApprovalCards(req.ID)
-			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fulfillErr.Error()})
-			return
-		}
-		p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
-		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Guest invitation emailed to %s for %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.Email), teamRef)
-		p.logAudit(auditApproved, fmt.Sprintf("@%s guest invite for %s email \"%s\" (requested by %s)",
-			actingUser.Username, teamRef, escapeMarkdown(req.Email), requesterUsername(requester, req.RequesterID)), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Guest Invite Request Approved",
-			CardText:   fmt.Sprintf("Approved by @%s. A guest invitation was emailed to **%s** for %s (channel-scoped guest access).", actingUser.Username, escapeMarkdown(req.Email), teamRef),
-			StatusLine: outcome,
-		})})
-		return
-	}
-	p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
-	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Guest invite for %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), teamRef)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied guest invite for %s",
-		actingUser.Username, teamRef), request.PostId)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-		RequestID:   req.ID,
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Guest Invite Request Denied",
-		CardText:   fmt.Sprintf("Denied by @%s. Your guest invite request for %s was not approved.", actingUser.Username, teamRef),
-		StatusLine: outcome,
-	})})
+	p.handleDecisionClick(w, r, approve, p.decideTeamGuestRequest)
 }
 
+// handleTeamAction handles Approve/Deny on a team creation request card.
 func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-	if !actingUser.IsSystemAdmin() {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Only System Admins can approve or deny team creation requests."})
-		return
-	}
-
-	requestID, _ := request.Context[actionContextRequestID].(string)
-	req, rawReq, err := p.loadTeamRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load team request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeTeam, approve) {
-		return
-	}
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeTeam,
-	})
-
-	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		requester, _ := p.API.GetUser(req.RequesterID)
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       kvTeamRequestPrefix + req.ID,
-			raw:         rawReq,
-			kind:        pendingKindTeam,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Team Creation Request Expired",
-			cardText:    fmt.Sprintf("Your request to create team **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("@%s closed the team creation request for %s from %s, which was not reviewed within %d days",
-				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	if approve {
-		if msg := p.teamApprovalBlocker(req); msg != "" {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-			return
-		}
-	}
-
-	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamRequestPrefix+req.ID, rawReq)
-	if claimErr != nil {
-		p.API.LogError("failed to claim team request", "error", claimErr.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	if !claimed {
-		still, _, loadErr := p.loadTeamRequest(req.ID)
-		p.respondClaimLost(w, loadErr != nil || still != nil)
-		return
-	}
-
-	requester, _ := p.API.GetUser(req.RequesterID)
-
-	var outcome string
-	if approve {
-		team, createErr := p.createTeamForRequest(req)
-		if createErr != nil {
-			p.API.LogError("failed to create team on approval", "error", createErr.Error())
-			if restoreErr := p.storeTeamRequest(req); restoreErr != nil {
-				p.API.LogError("failed to restore team request after create failure", "error", restoreErr.Error())
-				p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
-				p.deleteApprovalCards(req.ID)
-				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
-				return
-			}
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team: %s. The request is still pending.", createErr.Error())})
-			return
-		}
-		p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
-		adminNote := ""
-		if req.RequestTeamAdmin {
-			adminNote = " Requester promoted to Team Admin."
-		}
-		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Team **%s** created.%s", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(team.DisplayName), adminNote)
-		p.logAudit(auditApproved, fmt.Sprintf("@%s approved team %s (%s) requested by %s",
-			actingUser.Username, escapeMarkdown(req.DisplayName), team.Name, requesterUsername(requester, req.RequesterID)), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Team Creation Request Approved",
-			CardText:   fmt.Sprintf("Approved by @%s. Team **%s** has been created.%s", actingUser.Username, escapeMarkdown(req.DisplayName), adminNote),
-			StatusLine: outcome,
-		})})
-		return
-	}
-	p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
-	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team **%s** (`/%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.DisplayName), req.Name)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied a team creation request for %s",
-		actingUser.Username, escapeMarkdown(req.DisplayName)), request.PostId)
-	writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-		RequestID:   req.ID,
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Team Creation Request Denied",
-		CardText:   fmt.Sprintf("Denied by @%s. Your request to create team **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, escapeMarkdown(req.DisplayName)),
-		StatusLine: outcome,
-	})})
+	p.handleDecisionClick(w, r, approve, p.decideTeamRequest)
 }
 
 func (p *Plugin) handleBotDialogSubmit(w http.ResponseWriter, r *http.Request) {
@@ -1543,324 +1060,9 @@ func (p *Plugin) handleBotDialogSubmit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleBotAction handles Approve/Deny on a bot account request via the
-// two-step engine. Approve records the clicker's step; when both steps are
-// filled by two distinct users the bot (and optional extras) are created.
+// handleBotAction handles Approve/Deny on a bot account request card.
 func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-
-	requestID := p.actionRequestID(&request)
-	if requestID == "" {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			EphemeralText: "Could not identify that request. Refresh the channel and try Approve again.",
-		})
-		return
-	}
-	key := kvBotRequestPrefix + requestID
-	req, rawReq, err := p.loadBotRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load bot request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeBot, approve) {
-		return
-	}
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeBot,
-	})
-
-	canSec, errSec := p.canApproveStep(actingUser, stepSecurity)
-	canSys, errSys := p.canApproveStep(actingUser, stepSystem)
-	if errSec != nil {
-		p.API.LogWarn("bot security approver check failed; treating as not eligible", "user_id", userID, "error", errSec.Error())
-		canSec = false
-	}
-	if errSys != nil {
-		p.API.LogWarn("bot system approver check failed; treating as not eligible", "user_id", userID, "error", errSys.Error())
-		canSys = false
-	}
-
-	// Best-effort for cards and audit; approve checks requesterErr.
-	requester, requesterErr := p.API.GetUser(req.RequesterID)
-
-	// Expiry counts from submission, even when one step is already approved.
-	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       key,
-			raw:         rawReq,
-			kind:        pendingKindBot,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Bot Account Request Expired",
-			cardText:    fmt.Sprintf("Your request for bot **@%s** expired before it was reviewed. Submit it again if you still need it.", req.Username),
-			audit: fmt.Sprintf("@%s closed the bot request for @%s from %s, which was not reviewed within %d days",
-				actingUser.Username, req.Username, requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	if !approve {
-		if !canSec && !canSys {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to deny this request."})
-			return
-		}
-		claimed, claimErr := p.API.KVCompareAndDelete(key, rawReq)
-		if claimErr != nil {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-			return
-		}
-		if !claimed {
-			still, _, loadErr := p.loadBotRequest(req.ID)
-			p.respondClaimLost(w, loadErr != nil || still != nil)
-			return
-		}
-		p.releasePending(pendingKindBot, req.RequesterID, req.ID)
-		outcome := fmt.Sprintf("❌ Denied by @%s for %s. Bot **@%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.Username)
-		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a bot request for @%s",
-			actingUser.Username, req.Username), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-			CardTitle:  "Bot Account Request Denied",
-			CardText:   fmt.Sprintf("Denied by @%s. Your request for bot **@%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.Username),
-			StatusLine: outcome,
-		})})
-		return
-	}
-
-	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
-	if !fill {
-		cardRequester := requester
-		if cardRequester == nil {
-			cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-		}
-		title, cardNotice, ephemeral, paintCard := twoStepApproveBlock(actingUser.Username, reason)
-		var att *model.MessageAttachment
-		if paintCard {
-			att = p.botApprovalAttachmentWithTitledNotice(req, cardRequester, title, cardNotice)
-		}
-		p.respondTwoStepApproveBlocked(w, userID, request.PostId, ephemeral, p.botApprovalHeader(), att)
-		return
-	}
-
-	// Re-check what submit checked, before either step, so neither step is
-	// filled on a request that can no longer be carried out. A failed check
-	// leaves the request and its steps as they are, so it can be denied.
-	if msg := p.botApprovalBlocker(req, requester, requesterErr); msg != "" {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-		return
-	}
-
-	newState := p.applyTwoStepApproval(req.twoStepState, step, actingUser, model.GetMillis())
-
-	if newState.complete() {
-		claimed, claimErr := p.API.KVCompareAndDelete(key, rawReq)
-		if claimErr != nil {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-			return
-		}
-		if !claimed {
-			still, _, loadErr := p.loadBotRequest(req.ID)
-			p.respondClaimLost(w, loadErr != nil || still != nil)
-			return
-		}
-
-		bot, createErr := p.createBotForRequest(req)
-		if createErr != nil {
-			p.API.LogError("failed to create bot on approval", "error", createErr.Error())
-			if restoreErr := p.API.KVSet(key, rawReq); restoreErr != nil {
-				p.API.LogError("failed to restore bot request after create failure", "error", restoreErr.Error())
-				p.releasePending(pendingKindBot, req.RequesterID, req.ID)
-				p.deleteApprovalCards(req.ID)
-				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the bot (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
-				return
-			}
-			notice := fmt.Sprintf("Couldn't create the bot: %s. The request is still pending — click **Approve** again to retry, or **Deny** it.", createErr.Error())
-			writeJSON(w, model.PostActionIntegrationResponse{
-				EphemeralText: notice,
-				Update: p.repaintedApprovalPost(
-					request.PostId,
-					"@channel — a bot account request needs review (a previous approval attempt failed).",
-					p.botApprovalAttachmentWithNotice(req, requester, notice),
-				),
-			})
-			return
-		}
-		p.releasePending(pendingKindBot, req.RequesterID, req.ID)
-
-		authToken := ""
-		siteURL := p.siteURL()
-		if adminSession, sessErr := p.createUserSession(actingUser.Id); sessErr != nil {
-			p.API.LogWarn("failed to create admin session — token/webhook extras will be skipped", "error", sessErr.Error())
-		} else {
-			authToken = adminSession.Token
-			defer func() {
-				if revErr := p.API.RevokeSession(adminSession.Id); revErr != nil {
-					p.API.LogWarn("failed to revoke admin session after bot extras", "error", revErr.Error())
-				}
-			}()
-		}
-
-		var tokenValue string
-		var incomingWebhookURL string
-		var outgoingWebhookCreated bool
-		var partialErrors []string
-
-		wantsToken := req.RequestToken
-		wantsIncoming := req.IncomingWebhookChannelID != ""
-		wantsOutgoing := req.OutgoingWebhookChannelID != ""
-		if (wantsToken || wantsIncoming || wantsOutgoing) && authToken == "" {
-			partialErrors = append(partialErrors, "token/webhook extras were skipped because an admin session could not be created")
-		}
-		if (wantsIncoming || wantsOutgoing) && siteURL == "" {
-			partialErrors = append(partialErrors, "webhook extras were skipped because SiteURL is not configured")
-		}
-
-		if wantsToken && authToken != "" {
-			tok, tokErr := p.createBotToken(authToken, bot.UserId, "API token for @"+req.Username)
-			if tokErr != nil {
-				partialErrors = append(partialErrors, fmt.Sprintf("token generation failed: %s", tokErr.Error()))
-				p.API.LogError("failed to create bot token", "bot_user_id", bot.UserId, "error", tokErr.Error())
-			} else {
-				tokenValue = tok
-			}
-		}
-
-		if wantsIncoming && authToken != "" && siteURL != "" {
-			// The hook's owner is the bot, which must be able to read the channel.
-			if joinErr := p.addBotToWebhookChannel(bot.UserId, req.IncomingWebhookChannelID); joinErr != nil {
-				partialErrors = append(partialErrors, fmt.Sprintf("incoming webhook creation failed: %s", joinErr.Error()))
-				p.API.LogError("failed to add bot to incoming webhook channel", "bot_user_id", bot.UserId, "error", joinErr.Error())
-			} else {
-				var whErr error
-				incomingWebhookURL, whErr = p.createIncomingWebhookForBot(authToken, bot.UserId, req)
-				if whErr != nil {
-					partialErrors = append(partialErrors, fmt.Sprintf("incoming webhook creation failed: %s", whErr.Error()))
-					p.API.LogError("failed to create incoming webhook for bot", "error", whErr.Error())
-				}
-			}
-		}
-
-		if wantsOutgoing && authToken != "" && siteURL != "" {
-			if outErr := p.createOutgoingWebhookForBot(authToken, bot.UserId, req); outErr != nil {
-				partialErrors = append(partialErrors, fmt.Sprintf("outgoing webhook creation failed: %s", outErr.Error()))
-				p.API.LogError("failed to create outgoing webhook for bot", "error", outErr.Error())
-			} else {
-				outgoingWebhookCreated = true
-			}
-		}
-
-		// Best-effort: reopen the requester DM if submit-time open failed.
-		if req.DMChannelID == "" && (tokenValue != "" || incomingWebhookURL != "") {
-			if dm, dmErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID); dmErr != nil {
-				p.API.LogWarn("failed to open DM for bot extras delivery", "user_id", req.RequesterID, "error", dmErr.Error())
-			} else {
-				req.DMChannelID = dm.Id
-			}
-		}
-
-		// If a token was requested but delivery of the extras reply would leave
-		// an undeliverable secret, delete the bot when token creation succeeded
-		// but we cannot open the DM channel. sendBotExtrasReply logs failures;
-		// permanent-delete is reserved for total delivery failure of a token.
-		if req.RequestToken && tokenValue != "" && req.DMChannelID == "" {
-			p.API.LogError("bot token created but no DM channel for delivery; deleting bot", "bot_user_id", bot.UserId)
-			p.deleteApprovalCards(req.ID)
-			if delErr := p.API.PermanentDeleteBot(bot.UserId); delErr != nil {
-				p.API.LogError("failed to delete bot after token delivery failure", "bot_user_id", bot.UserId, "error", delErr.Error())
-				writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId,
-					fmt.Sprintf("⚠️ Fully approved, but the token could not be delivered and bot @%s could not be removed automatically — an admin should delete it.", bot.Username))})
-				return
-			}
-			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId,
-				fmt.Sprintf("⚠️ Fully approved, but the token could not be delivered, so bot @%s was removed. Ask the requester to submit again.", bot.Username))})
-			return
-		}
-
-		// Incoming webhook URL is also a secret — delete the hook if undeliverable.
-		if incomingWebhookURL != "" && req.DMChannelID == "" {
-			p.API.LogError("bot incoming webhook created but no DM channel for URL delivery")
-			if hookID := hookIDFromPublicURL(incomingWebhookURL); hookID != "" {
-				if delErr := p.deleteWebhook(webhookTypeIncoming, hookID, actingUser.Id); delErr != nil {
-					p.API.LogError("failed to delete undeliverable bot incoming webhook", "hook_id", hookID, "error", delErr.Error())
-					partialErrors = append(partialErrors, "incoming webhook URL could not be delivered and the hook could not be removed automatically")
-				} else {
-					partialErrors = append(partialErrors, "incoming webhook URL could not be delivered, so the hook was removed")
-				}
-			} else {
-				partialErrors = append(partialErrors, "incoming webhook URL could not be delivered (no DM channel)")
-			}
-			incomingWebhookURL = ""
-		}
-
-		outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. Bot **@%s** created.", requesterUsername(requester, req.RequesterID), bot.Username)
-		p.logAudit(auditApproved, fmt.Sprintf("@%s gave final approval; bot @%s created for %s",
-			actingUser.Username, bot.Username, requesterUsername(requester, req.RequesterID)), request.PostId)
-		closed := p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Bot Account Request Approved",
-			CardText:   fmt.Sprintf("Fully approved (security + system). Bot **@%s** has been created.", bot.Username),
-			StatusLine: outcome,
-		})
-		p.sendBotExtrasReply(req, tokenValue, incomingWebhookURL, outgoingWebhookCreated, partialErrors)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: closed})
-		return
-	}
-
-	newReq := *req
-	newReq.twoStepState = newState
-	newBytes, marshalErr := json.Marshal(&newReq)
-	if marshalErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	set, setErr := p.API.KVCompareAndSet(key, rawReq, newBytes)
-	if setErr != nil || !set {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "This request was just updated by someone else. Please try again."})
-		return
-	}
-	p.notifyTicketProgress(ticketProgress{
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		Title: "Bot Account Request Update",
-		Text:  fmt.Sprintf("Your bot request for **@%s** received the %s approval; awaiting the other approval.", req.Username, step),
-	})
-	writeJSON(w, model.PostActionIntegrationResponse{
-		Update: p.repaintedApprovalPost(
-			request.PostId,
-			p.botApprovalHeader(),
-			p.botApprovalAttachment(&newReq, requester),
-		),
-	})
+	p.handleTwoStepClick(w, r, approve, p.decideBotRequest)
 }
 
 func (p *Plugin) handleIncomingWebhookDialogSubmit(w http.ResponseWriter, r *http.Request) {
@@ -1933,252 +1135,9 @@ func (p *Plugin) handleOutgoingWebhookDialogSubmit(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleWebhookAction handles Approve/Deny on a webhook request via the
-// two-step engine. On final approval it creates the webhook and DMs the
-// result; undelivered incoming-hook URLs are deleted as unowned secrets.
+// handleWebhookAction handles Approve/Deny on a webhook request card.
 func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, approve bool) {
-	userID, ok := requireActionUserID(w, r)
-	if !ok {
-		return
-	}
-
-	var request model.PostActionIntegrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Invalid action request. Please try again."})
-		return
-	}
-
-	actingUser, appErr := p.API.GetUser(userID)
-	if appErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not verify your identity."})
-		return
-	}
-
-	requestID := p.actionRequestID(&request)
-	if requestID == "" {
-		writeJSON(w, model.PostActionIntegrationResponse{
-			EphemeralText: "Could not identify that request. Refresh the channel and try Approve again.",
-		})
-		return
-	}
-	key := kvWebhookRequestPrefix + requestID
-	req, rawReq, err := p.loadWebhookRequest(requestID)
-	if err != nil {
-		p.API.LogError("failed to load webhook request", "error", err.Error())
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load that request."})
-		return
-	}
-	if req == nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-		return
-	}
-	if p.refuseAction(w, request.PostId, req.ApprovalPostID, req.ID, requestTypeWebhook, approve) {
-		return
-	}
-
-	p.refreshTicketThread(ticketThread{
-		ApprovalPostID:    req.ApprovalPostID,
-		ApprovalChannelID: req.ApprovalChannelID,
-		DMRootPostID:      req.DMRootPostID,
-		DMChannelID:       req.DMChannelID,
-		Kind:              requestTypeWebhook,
-	})
-
-	canSec, errSec := p.canApproveStep(actingUser, stepSecurity)
-	canSys, errSys := p.canApproveStep(actingUser, stepSystem)
-	if errSec != nil {
-		p.API.LogWarn("webhook security approver check failed; treating as not eligible", "user_id", userID, "error", errSec.Error())
-		canSec = false
-	}
-	if errSys != nil {
-		p.API.LogWarn("webhook system approver check failed; treating as not eligible", "user_id", userID, "error", errSys.Error())
-		canSys = false
-	}
-
-	// Best-effort for cards and audit; approve checks requesterErr.
-	requester, requesterErr := p.API.GetUser(req.RequesterID)
-	channel, channelErr := p.API.GetChannel(req.ChannelID)
-
-	// Expiry counts from submission, even when one step is already approved.
-	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
-		writeDecision(w, p.expireRequest(newDecisionCards(req.ID, request.PostId, req.ApprovalPostID), expiredRequest{
-			kvKey:       key,
-			raw:         rawReq,
-			kind:        pendingKindWebhook,
-			requestID:   req.ID,
-			requesterID: req.RequesterID,
-			dmRootID:    req.DMRootPostID,
-			dmChannelID: req.DMChannelID,
-			days:        days,
-			cardTitle:   "Webhook Request Expired",
-			cardText:    fmt.Sprintf("Your request for a %s webhook **%s** expired before it was reviewed. Submit it again if you still need it.", req.WebhookType, escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("@%s closed the %s webhook request for %s from %s, which was not reviewed within %d days",
-				actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
-		}))
-		return
-	}
-
-	if !approve {
-		if !canSec && !canSys {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to deny this request."})
-			return
-		}
-		claimed, claimErr := p.API.KVCompareAndDelete(key, rawReq)
-		if claimErr != nil {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-			return
-		}
-		if !claimed {
-			still, _, loadErr := p.loadWebhookRequest(req.ID)
-			p.respondClaimLost(w, loadErr != nil || still != nil)
-			return
-		}
-		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
-		outcome := fmt.Sprintf("❌ Denied by @%s for %s. %s webhook **%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.WebhookType, escapeMarkdown(req.DisplayName))
-		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a %s webhook request for %s",
-			actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName)), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: false, ApproverUsername: actingUser.Username,
-			CardTitle:  "Webhook Request Denied",
-			CardText:   fmt.Sprintf("Denied by @%s. Your request for a %s webhook **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName)),
-			StatusLine: outcome,
-		})})
-		return
-	}
-
-	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, userID, req.RequesterID)
-	if !fill {
-		cardRequester := requester
-		if cardRequester == nil {
-			cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-		}
-		cardChannel := channel
-		if cardChannel == nil {
-			cardChannel = &model.Channel{Name: req.ChannelID}
-		}
-		title, cardNotice, ephemeral, paintCard := twoStepApproveBlock(actingUser.Username, reason)
-		var att *model.MessageAttachment
-		if paintCard {
-			att = p.webhookApprovalAttachmentWithTitledNotice(req, cardRequester, cardChannel, title, cardNotice)
-		}
-		p.respondTwoStepApproveBlocked(w, userID, request.PostId, ephemeral, p.webhookApprovalHeader(), att)
-		return
-	}
-
-	// Re-check what submit checked, before either step, so neither step is
-	// filled on a request that can no longer be carried out. A failed check
-	// leaves the request and its steps as they are, so it can be denied.
-	if msg := p.webhookApprovalBlocker(req, requester, requesterErr, channel, channelErr); msg != "" {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
-		return
-	}
-
-	newState := p.applyTwoStepApproval(req.twoStepState, step, actingUser, model.GetMillis())
-
-	if newState.complete() {
-		claimed, claimErr := p.API.KVCompareAndDelete(key, rawReq)
-		if claimErr != nil {
-			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-			return
-		}
-		if !claimed {
-			still, _, loadErr := p.loadWebhookRequest(req.ID)
-			p.respondClaimLost(w, loadErr != nil || still != nil)
-			return
-		}
-
-		dmMsg, hookID, createErr := p.createWebhookForRequest(req, actingUser.Id)
-		if createErr != nil {
-			p.API.LogError("failed to create webhook on approval", "error", createErr.Error())
-			if restoreErr := p.API.KVSet(key, rawReq); restoreErr != nil {
-				p.API.LogError("failed to restore webhook request after create failure", "error", restoreErr.Error())
-				p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
-				p.deleteApprovalCards(req.ID)
-				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the webhook (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
-				return
-			}
-			notice := fmt.Sprintf("Couldn't create the webhook: %s. The request is still pending — click **Approve** again to retry, or **Deny** it.", createErr.Error())
-			writeJSON(w, model.PostActionIntegrationResponse{
-				EphemeralText: notice,
-				Update: p.repaintedApprovalPost(
-					request.PostId,
-					"@channel — a webhook request needs review (a previous approval attempt failed).",
-					p.webhookApprovalAttachmentWithNotice(req, requester, channel, notice),
-				),
-			})
-			return
-		}
-		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
-
-		// Best-effort: reopen the requester DM if submit-time open failed.
-		if req.DMChannelID == "" {
-			if dm, dmErr := p.API.GetDirectChannel(req.RequesterID, p.botUserID); dmErr != nil {
-				p.API.LogWarn("failed to open DM for webhook URL delivery", "user_id", req.RequesterID, "error", dmErr.Error())
-			} else {
-				req.DMChannelID = dm.Id
-			}
-		}
-
-		// Deliver via the existing ticket thread. If DM channel is missing for
-		// an incoming webhook (secret URL), delete the hook.
-		if req.WebhookType == webhookTypeIncoming && req.DMChannelID == "" {
-			p.API.LogError("webhook created but no DM channel for URL delivery", "hook_id", hookID)
-			p.deleteApprovalCards(req.ID)
-			removed := true
-			if delErr := p.deleteWebhook(req.WebhookType, hookID, actingUser.Id); delErr != nil {
-				p.API.LogError("failed to delete webhook after URL delivery failure", "hook_id", hookID, "error", delErr.Error())
-				removed = false
-			}
-			var outcome string
-			if removed {
-				outcome = fmt.Sprintf("⚠️ Fully approved, but the URL could not be delivered, so the %s webhook **%s** was removed. Ask the requester to submit again.", req.WebhookType, escapeMarkdown(req.DisplayName))
-			} else {
-				outcome = fmt.Sprintf("⚠️ Fully approved, but the URL could not be delivered and the %s webhook **%s** could not be removed automatically — an admin should delete it.", req.WebhookType, escapeMarkdown(req.DisplayName))
-			}
-			writeJSON(w, model.PostActionIntegrationResponse{Update: p.resolvedPost(request.PostId, outcome)})
-			return
-		}
-
-		outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. %s webhook **%s** created.", requesterUsername(requester, req.RequesterID), req.WebhookType, escapeMarkdown(req.DisplayName))
-		p.logAudit(auditApproved, fmt.Sprintf("@%s gave final approval; %s webhook \"%s\" created for %s",
-			actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)), request.PostId)
-		writeJSON(w, model.PostActionIntegrationResponse{Update: p.closeTicket(ticketClose{
-			RequestID:   req.ID,
-			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-			ApprovalPostID: request.PostId, Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Webhook Request Approved",
-			CardText:   fmt.Sprintf("Fully approved (security + system). %s", dmMsg),
-			StatusLine: outcome,
-		})})
-		return
-	}
-
-	newReq := *req
-	newReq.twoStepState = newState
-	newBytes, marshalErr := json.Marshal(&newReq)
-	if marshalErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
-		return
-	}
-	set, setErr := p.API.KVCompareAndSet(key, rawReq, newBytes)
-	if setErr != nil || !set {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "This request was just updated by someone else. Please try again."})
-		return
-	}
-	p.notifyTicketProgress(ticketProgress{
-		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-		Title: "Webhook Request Update",
-		Text:  fmt.Sprintf("Your %s webhook request for **%s** received the %s approval; awaiting the other approval.", req.WebhookType, escapeMarkdown(req.DisplayName), step),
-	})
-	writeJSON(w, model.PostActionIntegrationResponse{
-		Update: p.repaintedApprovalPost(
-			request.PostId,
-			p.webhookApprovalHeader(),
-			p.webhookApprovalAttachment(&newReq, requester, channel),
-		),
-	})
+	p.handleTwoStepClick(w, r, approve, p.decideWebhookRequest)
 }
 
 // handleListSidebarCategories returns the caller's sidebar categories for a
@@ -2394,17 +1353,6 @@ const ownRequestText = "You can't approve your own request. Another approver has
 // claimLostPendingText is the private reply to a click that lost the claim
 // on a request that is still pending.
 const claimLostPendingText = "This request was just updated. Please click Approve or Deny again."
-
-// respondClaimLost answers a click that lost the claim on a request. It
-// never updates the card: the click that won the claim already did, and
-// overwriting it here would erase that outcome.
-func (p *Plugin) respondClaimLost(w http.ResponseWriter, stillPending bool) {
-	if stillPending {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: claimLostPendingText})
-		return
-	}
-	writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: alreadyHandledText})
-}
 
 // resolvedPost soft-squashes a finished approval card into a one-line
 // tombstone: strips Approve/Deny buttons and all attachments, keeps the post
