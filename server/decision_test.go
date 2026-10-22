@@ -17,15 +17,6 @@ var (
 	testAdminRequestID   = model.NewId()
 )
 
-// runCommandAs runs a slash command as userID.
-func runCommandAs(p *Plugin, userID, command string) *model.CommandResponse {
-	resp, appErr := p.ExecuteCommand(nil, &model.CommandArgs{Command: command, UserId: userID, TeamId: "team1", ChannelId: "chX"})
-	if appErr != nil {
-		panic(appErr)
-	}
-	return resp
-}
-
 // approvalCard is a bot-authored approval post with buttons.
 func approvalCard(id string) *model.Post {
 	post := &model.Post{Id: id, ChannelId: "ch-" + id, UserId: "bot-user-id", Message: "header"}
