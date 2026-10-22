@@ -26,7 +26,7 @@ func TestResolveApprovalChannel_UsesPerTeamChannelWhenEnabled(t *testing.T) {
 
 	// Fast path: channel already exists in this team.
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
-		Return(&model.Channel{Id: "ch-team1"}, nil)
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "ch-team1"}, nil)
 
 	ch, label := p.resolveApprovalChannel("team1")
 	require.NotNil(t, ch)
@@ -47,7 +47,7 @@ func TestResolveApprovalChannel_UsesPerTeamWhenSystemAdminOnTeam(t *testing.T) {
 		Return([]*model.TeamMember{{TeamId: "team1", UserId: "u_sys", Roles: "team_user"}}, nil)
 
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
-		Return(&model.Channel{Id: "ch-team1"}, nil)
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "ch-team1"}, nil)
 
 	ch, label := p.resolveApprovalChannel("team1")
 	require.NotNil(t, ch)
@@ -78,8 +78,10 @@ func TestResolveApprovalChannel_FallsBackToGlobalWhenPerTeamFails(t *testing.T) 
 		Return(nil, testAppErr("team not found"))
 
 	// Global fallback succeeds.
-	api.On("GetChannelByNameForTeamName", "globalteam", "mattermost-channel-requests", false).
-		Return(&model.Channel{Id: "ch-global"}, nil)
+	api.On("GetTeamByName", "globalteam").Return(&model.Team{Id: "globalteam-id", Name: "globalteam"}, nil)
+	stubApprovalTeamRecord(api)
+	api.On("GetChannelByName", "globalteam-id", "mattermost-channel-requests", false).
+		Return(pluginChannel("ch-global", "mattermost-channel-requests"), nil)
 
 	ch, label := p.resolveApprovalChannel("team1")
 	require.NotNil(t, ch)
@@ -107,7 +109,7 @@ func TestEnsureTeamApprovalChannel_FastPathReturnsExisting(t *testing.T) {
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{})
 
-	existing := &model.Channel{Id: "existing-ch"}
+	existing := &model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "existing-ch"}
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).Return(existing, nil)
 
 	ch, err := p.ensureTeamApprovalChannel("team1")
@@ -131,6 +133,7 @@ func TestEnsureTeamApprovalChannel_CreatesAndSeeds(t *testing.T) {
 	api.On("GetTeam", "team1").Return(team, nil)
 
 	// Bot must be a team member before the channel can be created.
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(nil, testAppErr("not a member"))
 	api.On("CreateTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{}, nil)
 
 	created := &model.Channel{Id: "new-ch"}
@@ -185,11 +188,12 @@ func TestEnsureTeamApprovalChannel_RaceRetryOnCreateConflict(t *testing.T) {
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
 		Return(nil, testAppErr("not found")).Once()
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Eng"}, nil)
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(nil, testAppErr("not a member"))
 	api.On("CreateTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{}, nil)
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("already exists"))
 	// Retry lookup after CreateChannel fails.
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
-		Return(&model.Channel{Id: "already-created"}, nil).Once()
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "already-created"}, nil).Once()
 
 	ch, err := p.ensureTeamApprovalChannel("team1")
 	require.NoError(t, err)
@@ -207,6 +211,7 @@ func TestEnsureTeamApprovalChannel_UsesFixedChannelName(t *testing.T) {
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
 		Return(nil, testAppErr("not found"))
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Acme"}, nil)
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{DeleteAt: 1}, nil)
 	api.On("CreateTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{}, nil)
 	api.On("CreateChannel", mock.MatchedBy(func(c *model.Channel) bool {
 		return c.Name == "mattermost-channel-requests"
@@ -220,6 +225,117 @@ func TestEnsureTeamApprovalChannel_UsesFixedChannelName(t *testing.T) {
 	require.Equal(t, "fixed-ch", ch.Id)
 }
 
+func TestEnsureTeamApprovalChannel_CreateFailureWithNoChannelIsAnError(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
+		Return(nil, testAppErr("not found"))
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Acme"}, nil)
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{}, nil)
+	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("create failed"))
+
+	ch, err := p.ensureTeamApprovalChannel("team1")
+	require.Error(t, err)
+	require.Nil(t, ch)
+}
+
+func TestEnsureTeamApprovalChannel_BotAlreadyOnTeamIsNotAddedAgain(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
+		Return(nil, testAppErr("not found"))
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Acme"}, nil)
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(&model.TeamMember{TeamId: "team1", UserId: "bot-user-id"}, nil)
+	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "new-ch"}, nil)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	ch, err := p.ensureTeamApprovalChannel("team1")
+	require.NoError(t, err)
+	require.Equal(t, "new-ch", ch.Id)
+	api.AssertNotCalled(t, "CreateTeamMember", mock.Anything, mock.Anything)
+}
+
+func TestEnsureTeamApprovalChannel_BotTeamJoinFailureStillCreates(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
+		Return(nil, testAppErr("not found"))
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", DisplayName: "Acme"}, nil)
+	api.On("GetTeamMember", "team1", "bot-user-id").Return(nil, testAppErr("not a member"))
+	api.On("CreateTeamMember", "team1", "bot-user-id").Return(nil, testAppErr("join failed"))
+	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "new-ch"}, nil)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", "team1", 0, 200).Return([]*model.TeamMember{}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+
+	ch, err := p.ensureTeamApprovalChannel("team1")
+	require.NoError(t, err)
+	require.Equal(t, "new-ch", ch.Id)
+	api.AssertCalled(t, "LogWarn", "failed to add bot to team before creating approval channel",
+		"team_id", "team1", "bot_user_id", "bot-user-id", "error", mock.Anything)
+}
+
+func TestEnsureTeamApprovalChannel_NameTakenByPrivateChannelOfSomeoneElse(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	defer api.AssertExpectations(t)
+	p := newTestPlugin(api)
+	p.setConfiguration(&configuration{})
+
+	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
+		Return(&model.Channel{Id: "theirs", Type: model.ChannelTypePrivate, CreatorId: "u_other"}, nil)
+
+	ch, err := p.ensureTeamApprovalChannel("team1")
+	require.Error(t, err)
+	require.Nil(t, ch)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
+	api.AssertNotCalled(t, "CreateTeamMember", mock.Anything, mock.Anything)
+}
+
+func TestEnsureTeamMember(t *testing.T) {
+	t.Run("active member is left alone", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{}, nil)
+
+		require.NoError(t, p.ensureTeamMember("team1", "u1"))
+		api.AssertNotCalled(t, "CreateTeamMember", mock.Anything, mock.Anything)
+	})
+	t.Run("someone who left is added back", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetTeamMember", "team1", "u1").Return(&model.TeamMember{DeleteAt: 5}, nil)
+		api.On("CreateTeamMember", "team1", "u1").Return(&model.TeamMember{}, nil)
+
+		require.NoError(t, p.ensureTeamMember("team1", "u1"))
+	})
+	t.Run("add failure is returned", func(t *testing.T) {
+		api := &plugintest.API{}
+		defer api.AssertExpectations(t)
+		p := newTestPlugin(api)
+		api.On("GetTeamMember", "team1", "u1").Return(nil, testAppErr("not found"))
+		api.On("CreateTeamMember", "team1", "u1").Return(nil, testAppErr("join failed"))
+
+		require.Error(t, p.ensureTeamMember("team1", "u1"))
+	})
+}
+
 // --- UserHasJoinedTeam ---
 
 func TestUserHasJoinedTeam_AddsTeamAdminToApprovalChannel(t *testing.T) {
@@ -230,7 +346,7 @@ func TestUserHasJoinedTeam_AddsTeamAdminToApprovalChannel(t *testing.T) {
 	p.setConfiguration(&configuration{PerTeamApprovalChannels: true})
 
 	api.On("GetChannelByName", "team1", "mattermost-channel-requests", false).
-		Return(&model.Channel{Id: "ch-team1"}, nil)
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "ch-team1"}, nil)
 	api.On("AddChannelMember", "ch-team1", "u_ta").Return(&model.ChannelMember{}, nil)
 
 	// Already in managed category — no update needed.
@@ -302,7 +418,7 @@ func TestSubmitRequest_RoutesToPerTeamChannel(t *testing.T) {
 		Return([]*model.TeamMember{{TeamId: "t1", UserId: "u_admin", SchemeAdmin: true}}, nil)
 
 	// Per-team channel already exists — fast path.
-	teamCh := &model.Channel{Id: "team-ch-t1"}
+	teamCh := &model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "team-ch-t1"}
 	api.On("GetChannelByName", "t1", "mattermost-channel-requests", false).Return(teamCh, nil)
 	api.On("GetTeam", "t1").Return(&model.Team{Id: "t1", Name: "t1", DisplayName: "Team One"}, nil)
 

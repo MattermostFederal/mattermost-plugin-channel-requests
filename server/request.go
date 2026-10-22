@@ -46,6 +46,19 @@ const (
 	maxDisplayNameLen = 64
 	maxPurposeLen     = 250
 
+	// Bounds for the other request types' free-text fields.
+	maxDescriptionLen = 500
+	maxReasonLen      = 500
+	maxEmailLen       = 128
+
+	// Mattermost limits these in bytes, not characters.
+	maxWebhookNameBytes        = 64
+	maxWebhookDescriptionBytes = 500
+	maxTeamDescriptionBytes    = model.TeamDescriptionMaxLength
+	// Mattermost checks an outgoing webhook's callback list as printed,
+	// "[url]", against 1024 bytes, leaving 1022 for a single URL.
+	maxCallbackURLLen = 1022
+
 	// maxMembersPerList caps the regular-member and channel-admin lists
 	// independently so a single request can't fan out into thousands of
 	// synchronous user-lookup and add-member API calls.
@@ -123,10 +136,6 @@ type requestInput struct {
 	// CategoryName is the optional sidebar category name to place the channel
 	// in on approval. Passed through to channelRequest unchanged.
 	CategoryName string
-	// ForceQueue skips System Admin bypass so the request
-	// always posts to the approval channel. Set by slash-command dialogs —
-	// those are explicitly a "request" flow and must produce the card.
-	ForceQueue bool
 }
 
 // promoteSoleMember applies the orphaned-channel guard: when no Channel
@@ -277,9 +286,87 @@ func validateRequestInput(in requestInput) error {
 	return nil
 }
 
-// submitRequest validates the input and either creates the channel immediately (if the requester is
-// a System Admin) or stores a pending request and posts it to the approval channel. It returns a
-// message suitable for showing to the requester.
+// checkTextLen returns a user-facing error when the trimmed s is longer
+// than limit characters.
+func checkTextLen(field, s string, limit int) error {
+	if utf8.RuneCountInString(strings.TrimSpace(s)) > limit {
+		return errors.Errorf("%s must be %d characters or fewer", field, limit)
+	}
+	return nil
+}
+
+// checkByteLen is checkTextLen for fields Mattermost limits in bytes, where
+// a character outside basic Latin counts as more than one.
+func checkByteLen(field, s string, limit int) error {
+	if len(strings.TrimSpace(s)) > limit {
+		return errors.Errorf("%s must be %d bytes or fewer (some characters count as more than one)", field, limit)
+	}
+	return nil
+}
+
+// checkIDList bounds a caller-supplied list of user or channel IDs and
+// rejects anything that isn't an ID. noun names the list in the error.
+func checkIDList(ids []string, noun string) error {
+	if len(ids) > maxMembersPerList {
+		return errors.Errorf("too many %s: at most %d per request", noun, maxMembersPerList)
+	}
+	for _, id := range ids {
+		if !model.IsValidId(id) {
+			return errors.Errorf("%s must be picked from the list", noun)
+		}
+	}
+	return nil
+}
+
+// checkCallbackURL requires an outgoing webhook callback to be an http or
+// https address Mattermost accepts.
+func checkCallbackURL(raw string) error {
+	if err := checkByteLen("the callback URL", raw, maxCallbackURLLen); err != nil {
+		return err
+	}
+	if !model.IsValidHTTPURL(strings.TrimSpace(raw)) {
+		return errors.New("the callback URL must be an http or https address")
+	}
+	return nil
+}
+
+// nomineeRules says who may be nominated by a request.
+type nomineeRules struct {
+	role        string // what nominees become, for messages ("a Team Admin")
+	allowBots   bool
+	allowGuests bool
+	teamID      string // when set, nominees must be active members of this team
+}
+
+// checkNominees loads each nominee and returns a user-facing error for the
+// first who can't be nominated: unknown, deactivated, or excluded by rules.
+func (p *Plugin) checkNominees(ids []string, rules nomineeRules) error {
+	for _, id := range ids {
+		user, appErr := p.API.GetUser(id)
+		if appErr != nil || user == nil {
+			return errors.New("one of the people you picked could not be found")
+		}
+		if user.DeleteAt != 0 {
+			return errors.Errorf("@%s is deactivated and can't be made %s", user.Username, rules.role)
+		}
+		if user.IsBot && !rules.allowBots {
+			return errors.Errorf("@%s is a bot and can't be made %s", user.Username, rules.role)
+		}
+		if user.IsGuest() && !rules.allowGuests {
+			return errors.Errorf("@%s is a guest and can't be made %s", user.Username, rules.role)
+		}
+		if rules.teamID != "" {
+			member, appErr := p.API.GetTeamMember(rules.teamID, id)
+			if appErr != nil || member == nil || member.DeleteAt != 0 {
+				return errors.Errorf("@%s isn't a member of this team", user.Username)
+			}
+		}
+	}
+	return nil
+}
+
+// submitRequest validates the input, stores a pending request and posts it to the approval channel.
+// It returns a message suitable for showing to the requester.
 func (p *Plugin) submitRequest(in requestInput) (string, error) {
 	config := p.getConfiguration()
 
@@ -340,21 +427,6 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		AdminMemberIDs: in.AdminMemberIDs,
 		CategoryName:   strings.TrimSpace(in.CategoryName),
 		CreatedAt:      model.GetMillis(),
-	}
-
-	// Bypass approval for System Admins — unless ForceQueue (slash-command
-	// dialog) which always produces an approval card.
-	if !in.ForceQueue && requester.IsSystemAdmin() {
-		channel, createErr := p.createChannelForRequest(req)
-		if createErr != nil {
-			return "", createErr
-		}
-		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
-		p.postWelcomeMessage(channel, req, requester, requester)
-		p.postChannelAutoCreatedNotice(req, requester, channel, "System Admin")
-		p.logAudit(auditDirect, fmt.Sprintf("@%s created channel \"%s\" (~%s) directly (System Admin)",
-			requester.Username, escapeMarkdown(req.DisplayName), channel.Name), "")
-		return fmt.Sprintf("Created channel ~%s.", channel.Name), nil
 	}
 
 	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: channelRequestKey(req)}
@@ -450,7 +522,6 @@ type auditOutcome int
 const (
 	auditApproved auditOutcome = iota // green ✅
 	auditDenied                       // red ❌
-	auditDirect                       // blue — System Admin bypass / immediate fulfill
 	auditExpired                      // gray: closed unreviewed after the expiry period
 )
 
@@ -469,8 +540,8 @@ func (p *Plugin) logAudit(kind auditOutcome, body, threadPostID string) {
 		text = text + "\n\n[Open ticket thread](" + link + ")"
 	}
 
-	// Leave Message empty — the attachment Title already carries Approved/Denied/
-	// Direct. Duplicating it as the post body made every audit card show the
+	// Leave Message empty — the attachment Title already carries Approved or
+	// Denied. Duplicating it as the post body made every audit card show the
 	// status twice.
 	post := &model.Post{
 		UserId:    p.botUserID,
@@ -492,8 +563,6 @@ func auditCardStyle(kind auditOutcome) (color, title string) {
 		return colorApproved, "✅ Approved"
 	case auditDenied:
 		return colorDenied, "❌ Denied"
-	case auditDirect:
-		return colorDirect, "⚡ Direct"
 	case auditExpired:
 		return colorExpired, "⌛ Expired"
 	default:
@@ -642,34 +711,11 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) (postID, channelID string, err error) {
 	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
 	return p.postApprovalAttachment(
+		req.ID,
 		p.approvalAttachment(req, requester),
 		teamLabel+"@channel — a new channel request needs your review.",
 		approvalChannel,
 	)
-}
-
-// postChannelAutoCreatedNotice posts a no-button card into the approval channel
-// after a System Admin / allow-list bypass create so reviewers still see it.
-func (p *Plugin) postChannelAutoCreatedNotice(req *channelRequest, requester *model.User, channel *model.Channel, reason string) {
-	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
-	if approvalChannel == nil {
-		p.API.LogWarn("channel-requests: channel created but no approval channel to announce into — set Approval team in System Console")
-		return
-	}
-	attachment := p.approvalAttachment(req, requester)
-	attachment.Actions = nil
-	attachment.Color = colorApproved
-	attachment.Title = "Channel created (no approval required)"
-	post := &model.Post{
-		UserId:    p.botUserID,
-		ChannelId: approvalChannel.Id,
-		Message: fmt.Sprintf("%s✅ Channel ~%s was created immediately by @%s (%s) — no approval needed.",
-			teamLabel, channel.Name, requester.Username, reason),
-	}
-	model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-	if _, appErr := p.API.CreatePost(post); appErr != nil {
-		p.API.LogWarn("failed to post channel auto-create notice", "channel_id", channel.Id, "error", appErr.Error())
-	}
 }
 
 // postApprovalAttachment delivers an approval attachment to the reviewers. When approvalChannel is
@@ -678,8 +724,11 @@ func (p *Plugin) postChannelAutoCreatedNotice(req *channelRequest, requester *mo
 //
 // Returns (postID, channelID, error). postID and channelID are empty in fallback mode — in that case
 // the ticket messaging features (thread reply forwarding) are unavailable, but approve/deny notifications
-// still reach the requester via a new DM root post.
-func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, headerMessage string, approvalChannel *model.Channel) (postID, channelID string, err error) {
+// still reach the requester via a new DM root post. Every card posted is recorded under requestID so
+// its buttons are recognized as the request's cards; if that record can't be saved, the cards are
+// deleted again and the error is returned so the caller drops the request.
+func (p *Plugin) postApprovalAttachment(requestID string, attachment *model.MessageAttachment, headerMessage string, approvalChannel *model.Channel) (postID, channelID string, err error) {
+	var cardIDs []string
 	if approvalChannel != nil {
 		post := &model.Post{
 			UserId:    p.botUserID,
@@ -691,21 +740,33 @@ func (p *Plugin) postApprovalAttachment(attachment *model.MessageAttachment, hea
 		if postErr != nil {
 			return "", "", errors.Wrap(postErr, "failed to post approval request")
 		}
-		return created.Id, approvalChannel.Id, nil
+		postID, channelID = created.Id, approvalChannel.Id
+		cardIDs = []string{created.Id}
+	} else {
+		cardIDs, err = p.postApprovalToSystemAdmins(attachment)
+		if err != nil {
+			return "", "", err
+		}
 	}
 
-	return "", "", p.postApprovalToSystemAdmins(attachment)
+	if err := p.saveApprovalCards(requestID, cardIDs); err != nil {
+		p.API.LogError("failed to record approval cards", "request_id", requestID, "error", err.Error())
+		p.deleteApprovalCardPosts(cardIDs)
+		return "", "", err
+	}
+	return postID, channelID, nil
 }
 
 // postApprovalToSystemAdmins DMs the approval request to every System Admin. Any admin can act on
-// it; once one does, the others' copies resolve to an "already handled" message.
-func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) error {
+// it; once one does, the others' copies resolve to an "already handled" message. Returns the IDs of
+// the posts it created.
+func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment) ([]string, error) {
 	admins, appErr := p.API.GetUsers(&model.UserGetOptions{Role: model.SystemAdminRoleId, Active: true, Page: 0, PerPage: 100})
 	if appErr != nil {
-		return errors.Wrap(appErr, "failed to list System Admins")
+		return nil, errors.Wrap(appErr, "failed to list System Admins")
 	}
 
-	posted := 0
+	var posted []string
 	for _, admin := range admins {
 		if !isNotifiableUser(admin) || admin.Id == p.botUserID {
 			continue
@@ -717,17 +778,18 @@ func (p *Plugin) postApprovalToSystemAdmins(attachment *model.MessageAttachment)
 		}
 		post := &model.Post{UserId: p.botUserID, ChannelId: dm.Id}
 		model.ParseMessageAttachment(post, []*model.MessageAttachment{attachment})
-		if _, appErr := p.API.CreatePost(post); appErr != nil {
+		created, appErr := p.API.CreatePost(post)
+		if appErr != nil {
 			p.API.LogWarn("failed to DM approval request to System Admin", "user_id", admin.Id, "error", appErr.Error())
 			continue
 		}
-		posted++
+		posted = append(posted, created.Id)
 	}
 
-	if posted == 0 {
-		return errors.New("no System Admins are available to receive the approval request")
+	if len(posted) == 0 {
+		return nil, errors.New("no System Admins are available to receive the approval request")
 	}
-	return nil
+	return posted, nil
 }
 
 // isNotifiableUser reports whether u should receive approval notifications:
