@@ -54,6 +54,12 @@ func newMCPTestPlugin(t *testing.T, api *plugintest.API, config *configuration) 
 	config.EnableMCP = true
 	config.AllowChannelRequests = true
 	config.AllowChannelAdminRequests = true
+	config.AllowTeamRequests = true
+	config.AllowTeamAdminRequests = true
+	config.AllowTeamMemberRequests = true
+	config.AllowTeamGuestRequests = true
+	config.AllowBotTokenRequests = true
+	config.AllowWebhookRequests = true
 	p.setConfiguration(config)
 	p.mcpActive = true
 	require.NoError(t, p.syncMCPServer())
@@ -362,15 +368,26 @@ func TestMCP_ListsOnlyTheRequestTools(t *testing.T) {
 		require.True(t, ok, tool.Name)
 		properties, _ := schema["properties"].(map[string]any)
 		for property := range properties {
+			// The bot's own username is the one property about a user that
+			// is not about who is asking.
+			if tool.Name == mcpToolPrefix+"request_bot" && property == "username" {
+				continue
+			}
 			require.NotContains(t, property, "user", tool.Name)
 			require.NotContains(t, property, "requester", tool.Name)
 		}
 	}
 	require.ElementsMatch(t, []string{
-		"com_mattermostfederal_mattermost-plugin-request-hub__list_prefixes",
-		"com_mattermostfederal_mattermost-plugin-request-hub__request_channel",
-		"com_mattermostfederal_mattermost-plugin-request-hub__request_channel_admin",
-		"com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests",
-		"com_mattermostfederal_mattermost-plugin-request-hub__get_request_status",
+		mcpToolPrefix + "list_prefixes",
+		mcpToolPrefix + "request_channel",
+		mcpToolPrefix + "request_channel_admin",
+		mcpToolPrefix + "request_team",
+		mcpToolPrefix + "request_team_admin",
+		mcpToolPrefix + "request_team_member",
+		mcpToolPrefix + "request_team_guest",
+		mcpToolPrefix + "request_bot",
+		mcpToolPrefix + "request_webhook",
+		mcpToolPrefix + "list_my_requests",
+		mcpToolPrefix + "get_request_status",
 	}, names)
 }
