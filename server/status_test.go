@@ -332,10 +332,10 @@ func TestExecuteCommand_List(t *testing.T) {
 		p.setConfiguration(listConfig())
 		fakeKV(api)
 
-		require.Equal(t, "You have no pending channel or Channel Admin requests.", runCommand(p, "/mattermost-request-hub list").Text)
+		require.Equal(t, "You have no pending requests.", runCommand(p, "/mattermost-request-hub list").Text)
 	})
 
-	t.Run("both types turned off", func(t *testing.T) {
+	t.Run("every type turned off", func(t *testing.T) {
 		api := &plugintest.API{}
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -374,7 +374,7 @@ func TestExecuteCommand_List(t *testing.T) {
 		p.setConfiguration(listConfig())
 		api.On("KVGet", mock.Anything).Return(nil, testAppErr("kv down"))
 
-		require.Equal(t, "Could not load your requests. Please try again.", runCommand(p, "/mattermost-request-hub list").Text)
+		require.Equal(t, "Could not load the requests. Please try again.", runCommand(p, "/mattermost-request-hub list").Text)
 	})
 }
 
@@ -400,7 +400,7 @@ func TestListMyRequestsTool(t *testing.T) {
 		require.Zero(t, out.More)
 	})
 
-	t.Run("both types turned off", func(t *testing.T) {
+	t.Run("every type turned off", func(t *testing.T) {
 		stubMCP(t)
 		p := newMCPTestPlugin(t, &plugintest.API{}, &configuration{})
 		p.setConfiguration(&configuration{EnableMCP: true})
@@ -416,6 +416,50 @@ func TestListMyRequestsTool(t *testing.T) {
 		p := newMCPTestPlugin(t, api, &configuration{})
 
 		require.Equal(t, "could not load your requests; try again", mcpToolError(t, callMCPTool(t, p, "u1", "list_my_requests", nil)))
+	})
+}
+
+func TestListRequestsToApproveTool(t *testing.T) {
+	t.Run("no user", func(t *testing.T) {
+		stubMCP(t)
+		p := newMCPTestPlugin(t, &plugintest.API{}, &configuration{})
+
+		require.Equal(t, errNoMCPUser.Error(), mcpToolError(t, callMCPTool(t, p, "", "list_requests_to_approve", nil)))
+	})
+
+	t.Run("requests the caller can approve", func(t *testing.T) {
+		stubMCP(t)
+		api, _, store, _ := newerTypeFixture(t)
+		p := newMCPTestPlugin(t, api, &configuration{})
+		id := model.NewId()
+		record := newerTypeRecord(pendingKindTeam, id, twoStepState{}).(*teamCreationRequest)
+		record.CreatedAt = oct3
+		store[kvTeamRequestPrefix+id] = recordJSON(t, record)
+
+		out := mcpToolOutput[ListRequestsToApproveOutput](t, callMCPTool(t, p, "admin1", "list_requests_to_approve", nil))
+
+		require.Equal(t, []MCPRequest{
+			{ID: id, Kind: "team", Summary: "Team **Field Ops** (`/field-ops`)", State: "pending", CreatedAt: "2026-10-03T00:00:00Z"},
+		}, out.Requests)
+		require.Zero(t, out.More)
+	})
+
+	t.Run("every type turned off", func(t *testing.T) {
+		stubMCP(t)
+		p := newMCPTestPlugin(t, &plugintest.API{}, &configuration{})
+		p.setConfiguration(&configuration{EnableMCP: true})
+
+		require.Equal(t, listRequestsDisabledMsg, mcpToolError(t, callMCPTool(t, p, "u1", "list_requests_to_approve", nil)))
+	})
+
+	t.Run("a load failure", func(t *testing.T) {
+		stubMCP(t)
+		api := &plugintest.API{}
+		stubLogs(api)
+		api.On("GetUser", "u1").Return(nil, testAppErr("gone"))
+		p := newMCPTestPlugin(t, api, &configuration{})
+
+		require.Equal(t, "could not load the requests; try again", mcpToolError(t, callMCPTool(t, p, "u1", "list_requests_to_approve", nil)))
 	})
 }
 

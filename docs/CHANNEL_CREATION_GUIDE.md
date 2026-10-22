@@ -96,11 +96,11 @@ replies are only visible to you:
 - `channel-admin @user [@user ...]` asks for channel members to be made Channel
   Admins. See the [Channel Admin guide](CHANNEL_ADMIN_GUIDE.md#from-the-slash-command).
 - `prefixes` lists the channel prefixes you can use.
-- `list` lists your pending channel and Channel Admin requests, with their IDs
-  and expiry dates.
-- `approve <request ID>` and `deny <request ID>` let approvers act on a channel
-  or Channel Admin request without clicking its card. The ID is at the bottom of
-  the approval card.
+- `list` lists your pending requests of every type, with their IDs and expiry
+  dates. `list approvals` lists the requests you can approve.
+- `approve <request ID>` and `deny <request ID>` let approvers act on a request
+  of any type without clicking its card. The ID is at the bottom of the
+  approval card.
 - `help` lists every subcommand and its arguments.
 
 Put quotes around text that should stay as typed, such as a purpose with a word
@@ -115,7 +115,7 @@ plugin's built-in `slash.html` page.
 
 When a System Admin turns on **Offer tools to Agents**, an agent from the
 Mattermost Agents plugin can list prefixes, file requests of every type for
-you, and tell you what channel and Channel Admin requests you have pending,
+you, and tell you what requests you have pending or can approve,
 under the same rules as the form. As with the webapp form, the
 request goes to the approvers, even when you are a System Admin. No agent can approve or deny a request. The tools are
 listed on the built-in `agents.html` page.
@@ -200,7 +200,7 @@ Configure the plugin in **System Console → Plugins → Mattermost Request Hub*
 | **Channel domain prefixes** | **Required.** The prefix list requesters pick from (see below). An empty list rejects every channel request. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Per-team approval channels** | Default on. Creates `mattermost-channel-requests` in teams with a Team Admin or System Admin; those teams' channel requests go there (not the primary approval team). Ticket channels (including team-creation) live under sidebar category **Mattermost: Request Hub**. |
-| **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes, file requests of every type on a user's behalf and look up pending channel and Channel Admin ones, under the same rules and per-type toggles as the forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. Needs Mattermost 11.3 or later. |
+| **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes, file requests of every type on a user's behalf and look up pending ones, under the same rules and per-type toggles as the forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. Needs Mattermost 11.3 or later. |
 | **Pending requests per user** | How many requests of each type one user can have waiting for review (each type is counted separately), up to `1000`. Default `5`; `0` means no limit. |
 | **Request expiry (days)** | Pending requests of any type older than this can no longer be approved, and stop counting toward the per-user limit. At most `3650`. Default `30`; `0` means requests never expire. A change applies to requests already pending too. |
 

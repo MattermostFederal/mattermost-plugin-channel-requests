@@ -112,7 +112,6 @@ func TestExecuteDecision_UnknownIDIsAlreadyHandled(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	fakeKV(api)
-	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 
 	resp := runCommandAs(p, "admin1", "/mattermost-request-hub deny "+model.NewId())
 

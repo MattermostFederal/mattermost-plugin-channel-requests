@@ -24,7 +24,7 @@ Mattermost Request Hub ships documentation in two places, both edited by hand:
 - After changing the prefix rules, suffix rules or preset packs (`server/configuration.go`, `webapp/src/PrefixEditor.tsx`)
 - After changing the `/mattermost-request-hub` command or how the form opens (`server/command.go`, `webapp/src/channelCreationOverride.ts`, `webapp/src/HeaderIcon.tsx`, `webapp/src/membersPanelButton.ts`)
 - After changing the request form (`webapp/src/RequestChannelModal.tsx`, the dialog in `server/http.go`)
-- After changing who can approve, what approval does, or what gets posted (`server/request.go`, `server/decision.go`, `server/http.go`)
+- After changing who can approve, what approval does, or what gets posted (`server/request.go`, `server/decision*.go`, `server/http.go`)
 - After changing the Channel Admin request flow (`server/admin_request.go`, `webapp/src/RequestChannelAdminModal.tsx`)
 - After changing any user-visible message text
 - Before cutting a release
@@ -73,7 +73,7 @@ heading structure.
 | `public/help/open.html` | Every way to open each request form | `webapp/src/index.tsx` and the override files it registers |
 | `public/help/messaging.html` | The two-way ticket thread relay | `server/messaging.go`, `server/ticket.go` |
 | `public/help/channel.html`, `channel-admin.html`, `team.html`, `team-member.html`, `team-guest.html`, `bot.html`, `webhook.html` | One page per request type: how to open, the form, limits, what approve does | That type's `server/*_request.go` and `webapp/src/Request*Modal.tsx` |
-| `public/help/approving.html` | Who can approve, the approve re-checks, expiry, approving from the slash command, two-step approval | `server/decision.go` (`decideChannelRequest`, `decideAdminRequest`), `server/http.go`, `server/approvers.go`, `server/approval_engine.go` |
+| `public/help/approving.html` | Who can approve, the approve re-checks, expiry, approving from the slash command, two-step approval | `server/decision.go`, `server/decision_team.go`, `server/decision_two_step.go` (one `decide*Request` per type), `server/http.go`, `server/approvers.go`, `server/approval_engine.go` |
 | `public/help/slash.html` | Every `/mattermost-request-hub` subcommand (a section with `id="<subcommand>"`), the `channel` options and the replies `channel`, `channel-admin`, `approve` and `deny` give when they refuse | `server/command.go`, `server/request.go`, `server/admin_request.go`, `server/pending.go`, `server/decision.go`, `server/status.go` |
 | `public/help/agents.html` | The Agents tools | `server/mcp.go`, `server/mcp_tools.go`, `server/status.go` |
 | `public/help/troubleshooting.html` | One section per symptom: the message, its cause and the fix | Every user-visible error and log warning it quotes |

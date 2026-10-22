@@ -167,6 +167,11 @@
                 didn't record for that request. Use the buttons on the request's own card.</li>
         </ul>
         <p>
+            <code>/mattermost-request-hub approve</code> gives the same replies for every request type. From the
+            command, the bot and webhook replies start with ⚠️ and give the reason in full, and no card is
+            changed.
+        </p>
+        <p>
             <strong>Fix:</strong> ask an approver who can act on it.
         </p>
 
@@ -176,7 +181,7 @@
             request right now. Try again in a moment.</em>, <em>Couldn't check this card. Try again in a
             moment.</em>, <em>could not load your account; try again</em> and <em>could not save your request; try
             again</em> mean a lookup or save failed for a moment. <em>This request was just updated. Please click
-            Approve or Deny again.</em> and <em>This request was just updated by someone else. Please try
+            Approve or Deny again.</em>, <em>This request was just updated. Please run the command again.</em> and <em>This request was just updated by someone else. Please try
             again.</em> mean another approver acted at the same moment; the request may already be handled.
         </p>
         <p>
@@ -215,7 +220,8 @@
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_guest</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_bot</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_webhook</code>,
-                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests</code> and
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_requests_to_approve</code> and
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__get_request_status</code>.
             </li>
         </ul>

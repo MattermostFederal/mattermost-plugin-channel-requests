@@ -84,8 +84,9 @@
 
         <h2 id="slash-command">Approving from the slash command</h2>
         <p>
-            Every channel and Channel Admin approval card ends with <em>Request ID:</em> and the request's ID.
-            You can approve or deny from any channel with
+            Every approval card ends with <em>Request ID:</em> and the request's ID.
+            <code>/mattermost-request-hub list approvals</code> lists the requests you can approve, with their
+            IDs. You can approve or deny a request of any type from any channel with
             <code>/mattermost-request-hub approve &lt;request ID&gt;</code> or
             <code>/mattermost-request-hub deny &lt;request ID&gt;</code>. The command makes the same checks as
             the buttons, in the same order, and replies only to you. See
@@ -94,8 +95,9 @@
         <p>
             Once a request is approved, denied or expired, its card is closed with the outcome and the buttons
             are removed, however the decision was made. When the request went to System Admins by direct
-            message, every copy is closed, not only the one that was clicked. Copies sent before the plugin was
-            upgraded to this version are only closed when they're clicked.
+            message, every copy is closed, not only the one that was clicked. When the first step of a bot or
+            webhook request is approved, every copy shows it. Copies sent before the plugin was upgraded to this
+            version are only closed when they're clicked.
         </p>
 
         <h2 id="rechecks">Requests that can't be approved as they stand</h2>
@@ -148,8 +150,8 @@
         <h2 id="expired">Expired requests</h2>
         <p>
             A request of any type that wasn't reviewed within <em>Request expiry (days)</em> (default 30) can't be
-            approved. Clicking either button on it, or running <code>approve</code> or <code>deny</code> on a
-            channel or Channel Admin request, replies <em>This request has expired.</em>, marks the card
+            approved. Clicking either button on it, or running <code>approve</code> or <code>deny</code> on it,
+            replies <em>This request has expired.</em>, marks the card
             <em>⌛ Expired: not reviewed within N days.</em>, closes the requester's ticket as expired and posts an
             <em>Expired</em> card to the audit channel. The requester can submit it again.
         </p>
