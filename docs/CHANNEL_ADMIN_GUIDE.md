@@ -76,8 +76,9 @@ someone isn't, add them to the channel first (or ask a Channel Admin to).
 
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
 message when an approver responds. If your admin hasn't configured an approval
-channel yet, you'll be told so directly instead of the request disappearing
-silently — pass that message along to a System Admin.
+channel yet, the request is sent to the System Admins directly. You'll see an
+error only if none of them could be reached; pass that message along to a
+System Admin.
 
 ---
 
