@@ -26,6 +26,9 @@ type teamGuestRequest struct {
 	Email       string   `json:"email"`
 	ChannelIDs  []string `json:"channel_ids"`
 	Reason      string   `json:"reason,omitempty"`
+	// CreatedAt is when the request was submitted, in milliseconds.
+	// Requests saved by older versions get it from migratePendingRequests.
+	CreatedAt int64 `json:"created_at,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -103,21 +106,32 @@ func (p *Plugin) submitTeamGuestRequest(requesterID, teamID, email string, chann
 		Email:       email,
 		ChannelIDs:  channels,
 		Reason:      strings.TrimSpace(reason),
+		CreatedAt:   model.GetMillis(),
+	}
+
+	entry := newPendingEntry(req)
+	if err := p.reservePending(pendingKindTeamGuest, req.RequesterID, entry, p.getConfiguration()); err != nil {
+		return "", err
 	}
 
 	if err := p.storeTeamGuestRequest(req); err != nil {
-		return "", err
+		p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
+		p.API.LogError("failed to store team guest request", "error", err.Error())
+		return "", errors.New("could not save your request; try again")
 	}
 	rawBefore, snapErr := json.Marshal(req)
 	if snapErr != nil {
 		_ = p.API.KVDelete(kvTeamGuestRequestPrefix + req.ID)
+		p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
 		return "", errors.Wrap(snapErr, "failed to snapshot team guest request")
 	}
 
 	approvalPostID, approvalChannelID, err := p.postTeamGuestApprovalRequest(req, requester, team)
 	if err != nil {
 		_ = p.API.KVDelete(kvTeamGuestRequestPrefix + req.ID)
-		return "", err
+		p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
+		p.API.LogError("failed to post team guest request for approval", "error", err.Error())
+		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID

@@ -713,6 +713,7 @@ func TestPostApprovalAttachment_RecordFailureDeletesCards(t *testing.T) {
 func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 	t.Run("team", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -733,6 +734,7 @@ func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 	})
 	t.Run("team guest", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)

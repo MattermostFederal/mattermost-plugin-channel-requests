@@ -105,11 +105,14 @@
 
         <h2 id="expired">Expired requests</h2>
         <p>
-            A channel or Channel Admin request that wasn't reviewed within <em>Request expiry (days)</em> (default
-            30) can't be approved. Clicking either button on it replies <em>This request has expired.</em>, marks
-            the card <em>⌛ Expired: not reviewed within N days.</em>, closes the requester's ticket as expired and
-            posts an <em>Expired</em> card to the audit channel. The requester can submit it again. Other request
-            types don't expire.
+            A request of any type that wasn't reviewed within <em>Request expiry (days)</em> (default 30) can't be
+            approved. Clicking either button on it replies <em>This request has expired.</em>, marks the card
+            <em>⌛ Expired: not reviewed within N days.</em>, closes the requester's ticket as expired and posts an
+            <em>Expired</em> card to the audit channel. The requester can submit it again.
+        </p>
+        <p>
+            Bot and webhook requests count from when they were submitted, even after one approval step is done.
+            Only someone who can approve one of their steps can close them as expired.
         </p>
 
         <h2>Bot &amp; webhook two-step approval</h2>

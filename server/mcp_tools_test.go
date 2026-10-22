@@ -437,6 +437,7 @@ func TestMCPRequestTools_QueueForSystemAdmin(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stubMCP(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newMCPTestPlugin(t, api, &configuration{})
 			stubSystemAdminQueue(api)
@@ -466,6 +467,7 @@ func TestMCPRequestTools_QueueForRegularUser(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stubMCP(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newMCPTestPlugin(t, api, &configuration{})
 			api.On("GetUser", requester.Id).Return(requester, nil)
