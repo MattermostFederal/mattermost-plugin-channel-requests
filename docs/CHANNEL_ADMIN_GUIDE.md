@@ -73,7 +73,7 @@ the people. It uses the `request_channel_admin` tool and acts as you, with the
 same rules and approvers as the form: you must be a member of the channel
 (System Admins excepted), and so must everyone you nominate. If Channel Admin
 requests are turned off, the agent is told so. As with the form, a System
-Admin's request takes effect at once.
+Admin's request goes to the approvers too.
 
 ### Form
 
@@ -157,9 +157,8 @@ the ID, and `/mattermost-request-hub approve <request ID>` or
 requester's ticket are then closed as after a click, and when the request went
 to System Admins by direct message, every copy is closed.
 
-Requests from **System Admins** made with the webapp form skip this step, and
-the nominees are promoted immediately. Requests made with the slash command,
-from its form or with arguments, always go to the approvers.
+Requests from **System Admins** are queued for approval too. A System Admin can
+approve their own request.
 
 ---
 
