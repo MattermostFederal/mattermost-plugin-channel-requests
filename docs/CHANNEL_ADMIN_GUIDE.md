@@ -118,9 +118,8 @@ teams, including the approval team, can't act on it.
   A bot message in the channel announces who can now manage it.
 - **Deny** — the request is closed and the requester is notified by DM.
 
-Requests from **System Admins** made with the webapp form skip this step, and
-the nominees are promoted immediately. Requests made with the slash command,
-from its form or with arguments, always go to the approvers.
+Requests from **System Admins** are queued for approval too. A System Admin can
+approve their own request.
 
 ---
 
