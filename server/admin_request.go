@@ -158,10 +158,11 @@ func (p *Plugin) sendAdminTicketCreatedDM(req *adminRequest, requester *model.Us
 
 // promoteChannelAdmins grants the channel_admin role to each nominee who is
 // still a member of the channel and returns the IDs actually promoted.
-// Membership is re-checked because a request can sit pending while people
-// leave or are removed; nobody is added to the channel. Per-user failures
-// are logged but don't abort the others — a partial promotion is better than
-// none, and callers report only who was promoted.
+// Approve refuses a request whose nominees have left (adminApprovalBlocker),
+// but someone can still leave between that check and this loop, so
+// membership is checked again here; nobody is added to the channel. Per-user
+// failures are logged but don't abort the others, and callers report only
+// who was promoted.
 func (p *Plugin) promoteChannelAdmins(req *adminRequest) []string {
 	promoted := make([]string, 0, len(req.NomineeIDs))
 	for _, userID := range req.NomineeIDs {
@@ -335,7 +336,7 @@ func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.Use
 
 	title := "Channel Admin request"
 	if teamName != "" && teamName != "(unknown team)" {
-		title = fmt.Sprintf("Channel Admin request — %s", teamName)
+		title = fmt.Sprintf("Channel Admin request — %s", escapeMarkdown(teamName))
 	}
 
 	siteURL := "/plugins/" + manifest.Id

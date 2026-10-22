@@ -145,6 +145,13 @@ are complete, the plugin:
 3. Creates any requested incoming/outgoing webhooks.
 4. DMs the requester with results (tokens/URLs auto-delete after 72 hours).
 
+Before either step, Approve checks that the requester and any chosen owner are
+still active (the owner can't be a bot), and that any webhook channels still
+exist and aren't archived, the requester is still in them (System Admins
+excepted), and an outgoing webhook's channel is still public. If not, you'll get a private message saying so (for
+example *The bot owner is no longer an active user. Deny this request
+instead.*) and the request and its steps stay as they were, so deny it.
+
 Any eligible approver may **Deny** at any time — that closes the ticket and
 notifies the requester.
 

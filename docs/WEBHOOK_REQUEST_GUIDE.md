@@ -121,6 +121,12 @@ system, two different people). The card shows both status lines.
 
 <img src="images/webhook-request/mattermost-webhook-approval-card.png" alt="Webhook approval card" width="720">
 
+Before either step, Approve checks that the requester is still active, the
+channel still exists and isn't archived, the requester is still in it (System
+Admins excepted), and an outgoing webhook's channel is still public. If not, you'll get a private message saying so (for
+example *~town has been archived. Deny this request instead.*) and the request
+and its steps stay as they were, so deny it.
+
 When both steps are filled, the final approval creates the webhook. On success
 the requester gets a DM with:
 

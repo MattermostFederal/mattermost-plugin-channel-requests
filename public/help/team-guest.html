@@ -129,6 +129,7 @@
             <li><strong>Approve</strong> — Mattermost emails the channel-scoped guest invitation; requester notified by DM.</li>
             <li><strong>Deny</strong> — request closed; requester notified by DM.</li>
             <li>Requests from System Admins are queued for approval too.</li>
+            <li>Approve first checks that the team and each channel still exist and aren't archived, that each channel is still in the team, and that the requester is still active and still in them; if not, the request stays pending so it can be denied (see <a href="approving.html#rechecks">Requests that can't be approved as they stand</a>).</li>
         </ul>
 
         <p>See also <a href="team-member.html">team members</a> and <a href="messaging.html">messaging threads</a>.</p>

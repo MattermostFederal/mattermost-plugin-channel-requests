@@ -402,6 +402,7 @@ func actionBody(t *testing.T, requestID string) string {
 func TestHandleAction_ApproveClaimsAndCreates(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -441,6 +442,7 @@ func TestHandleAction_ApproveClaimsAndCreates(t *testing.T) {
 func TestHandleAction_CreateFailureRestoresRequest(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -478,6 +480,7 @@ func TestHandleAction_CreateFailureRestoresRequest(t *testing.T) {
 func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -691,6 +694,7 @@ func TestResolvedPost_OnlyRebuildsBotPosts(t *testing.T) {
 func TestHandleAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -729,6 +733,7 @@ func TestHandleAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 func TestHandleAction_StaleClaimBytesAsksRetry(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -823,6 +828,7 @@ func TestHandleAction_NonApproverRejected(t *testing.T) {
 func TestHandleAction_PerTeamTeamAdminMayApprove(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team_new")
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -953,6 +959,7 @@ func TestHandleAdminAction_LostClaimReportsAlreadyHandled(t *testing.T) {
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Another reviewer already claimed and processed the request.
 	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
 	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(nil, nil).Once()
 
@@ -1045,7 +1052,7 @@ func TestHandleAdminAction_ArchivedChannelLeavesRequestPending(t *testing.T) {
 
 	var resp model.PostActionIntegrationResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Contains(t, resp.EphemeralText, "deleted")
+	require.Equal(t, "~old has been archived. Deny this request instead.", resp.EphemeralText)
 	api.AssertNotCalled(t, "KVCompareAndDelete", mock.Anything, mock.Anything)
 	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
@@ -1537,6 +1544,7 @@ func TestHandleAction_ErrorPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &plugintest.API{}
 			stubLogs(api)
+			stubLiveTeam(api, "team1")
 			stubPendingLists(api)
 			stubActiveTeamMember(api, "team1", "u_req")
 			defer api.AssertExpectations(t)
@@ -1558,6 +1566,7 @@ func TestHandleAction_ErrorPaths(t *testing.T) {
 func TestHandleAction_WelcomeMentionsAddedMembersAndAdmins(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	stubActiveTeamMember(api, "team1", "u_req")
 	defer api.AssertExpectations(t)
@@ -1704,6 +1713,7 @@ func TestHandleAdminAction_ErrorPaths(t *testing.T) {
 				api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil)
 				api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
 				api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
+				api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
 				api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, testAppErr("kv down"))
 			},
 			want: "Could not process that request.",
@@ -1782,8 +1792,10 @@ func TestHandleAdminAction_ApproveWithNoRemainingNominees(t *testing.T) {
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
 	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(true, nil)
-	// The nominee left the channel while the request was pending.
-	api.On("GetChannelMember", "chX", "u_nom").Return(nil, testAppErr("not a member"))
+	// The nominee passes the approve-time check, then leaves the channel
+	// before the promotion.
+	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil).Once()
+	api.On("GetChannelMember", "chX", "u_nom").Return(nil, testAppErr("not a member")).Once()
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "dm1" })).Return(&model.Post{}, nil)
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
@@ -1941,6 +1953,7 @@ func TestHandleAdminAction_StaleClaimBytesAsksRetry(t *testing.T) {
 	api.On("GetChannel", "chX").Return(&model.Channel{Id: "chX", Name: "marketing", TeamId: "team1"}, nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 	api.On("GetChannelMember", "chX", "u_req").Return(&model.ChannelMember{}, nil)
+	api.On("GetChannelMember", "chX", "u_nom").Return(&model.ChannelMember{}, nil)
 	api.On("KVCompareAndDelete", kvAdminRequestPrefix+"areq1", raw).Return(false, nil)
 	// Post-ID re-store raced the claim — pending record still present.
 	api.On("KVGet", kvAdminRequestPrefix+"areq1").Return(raw, nil).Once()
@@ -2225,6 +2238,7 @@ func TestHandleActionApproveRechecks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &plugintest.API{}
 			stubLogs(api)
+			stubLiveTeam(api, "team1")
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
 			p.setConfiguration(approvableConfig())
@@ -2254,6 +2268,7 @@ func TestHandleActionApproveRechecks(t *testing.T) {
 func TestHandleActionApproveSystemAdminRequesterSkipsTeamCheck(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubLiveTeam(api, "team1")
 	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -2416,6 +2431,7 @@ func TestHandleActionFreesPendingSlot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			api := &plugintest.API{}
 			stubLogs(api)
+			stubLiveTeam(api, "team1")
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
 			p.setConfiguration(approvableConfig())

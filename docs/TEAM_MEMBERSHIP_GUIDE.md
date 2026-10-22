@@ -163,6 +163,11 @@ can Approve or Deny.
   notified by DM. Partial failures are listed in the outcome message.
 - **Deny** — closes the request and notifies the requester by DM.
 
+Approve first checks that the team still exists, isn't archived and isn't
+managed by groups, and that the requester and every nominee are still active. If
+not, you'll get a private message saying so and the request stays pending, so
+deny it.
+
 Requests from System Admins are queued for approval too.
 
 ### Guest invites
@@ -172,6 +177,12 @@ Requests from System Admins are queued for approval too.
 - **Approve** — Mattermost emails a **channel-scoped guest invitation** to the
   address on the ticket. The requester is notified by DM.
 - **Deny** — closes the request and notifies the requester by DM.
+
+Approve first checks that the team and each channel still exist and aren't
+archived, that each channel is still in the team, and that the requester is still active, on the team and in each
+channel (System Admins excepted). If not, you'll get a private message saying so
+(for example *~town has been archived. Deny this request instead.*) and the
+request stays pending, so deny it.
 
 Requests from System Admins are queued for approval too.
 
