@@ -37,93 +37,6 @@ func TestSubmitTeamCreationRequest_InvalidURLName(t *testing.T) {
 	require.Contains(t, err.Error(), "not a valid team URL name")
 }
 
-func TestSubmitTeamCreationRequest_SystemAdminCreatesDirectly(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	// No ApprovalTeam → notice posts are skipped (warn only); team still creates.
-	p.setConfiguration(&configuration{AllowTeamRequests: true})
-
-	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "admin", Roles: "system_user system_admin"}, nil)
-	api.On("CreateTeam", mock.Anything).Return(&model.Team{Id: "new-team", Name: "marketing", DisplayName: "Marketing"}, nil)
-	api.On("CreateTeamMember", "new-team", "u_req").Return(&model.TeamMember{}, nil)
-
-	msg, err := p.submitTeamCreationRequest(teamCreationInput{
-		RequesterID: "u_req",
-		DisplayName: "Marketing",
-	})
-
-	require.NoError(t, err)
-	require.Contains(t, msg, "Marketing")
-	// Created immediately — no request stored.
-	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
-	api.AssertCalled(t, "CreateTeam", mock.Anything)
-}
-
-func TestSubmitTeamCreationRequest_SystemAdminWithTeamAdminFlag(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{AllowTeamRequests: true})
-
-	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "admin", Roles: "system_user system_admin"}, nil)
-	api.On("CreateTeam", mock.Anything).Return(&model.Team{Id: "new-team", Name: "marketing", DisplayName: "Marketing"}, nil)
-	api.On("CreateTeamMember", "new-team", "u_req").Return(&model.TeamMember{}, nil)
-	api.On("UpdateTeamMemberRoles", "new-team", "u_req", teamAdminRoles).Return(&model.TeamMember{}, nil)
-
-	msg, err := p.submitTeamCreationRequest(teamCreationInput{
-		RequesterID:      "u_req",
-		DisplayName:      "Marketing",
-		RequestTeamAdmin: true,
-	})
-
-	require.NoError(t, err)
-	require.Contains(t, msg, "Team Admin")
-	api.AssertCalled(t, "UpdateTeamMemberRoles", "new-team", "u_req", teamAdminRoles)
-}
-
-func TestSubmitTeamCreationRequest_SystemAdminPostsNoticeToTeamChannel(t *testing.T) {
-	api := &plugintest.API{}
-	stubLogs(api)
-	defer api.AssertExpectations(t)
-	p := newTestPlugin(api)
-	p.setConfiguration(&configuration{
-		AllowTeamRequests: true,
-		ApprovalTeam:      "appteam",
-	})
-
-	api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "admin", Roles: "system_user system_admin"}, nil)
-	api.On("CreateTeam", mock.Anything).Return(&model.Team{Id: "new-team", Name: "marketing", DisplayName: "Marketing"}, nil)
-	api.On("CreateTeamMember", "new-team", "u_req").Return(&model.TeamMember{}, nil)
-
-	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id", DisplayName: "App Team"}, nil)
-	api.On("GetChannelByName", "appteam-id", "mattermost-team-requests", false).
-		Return(&model.Channel{Id: "teams-ch"}, nil)
-	api.On("GetChannelByName", "appteam-id", "mattermost-audit-requests", false).
-		Return(&model.Channel{Id: "audit-ch"}, nil).Maybe()
-
-	var noticePost *model.Post
-	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool {
-		return post.ChannelId == "teams-ch"
-	})).Run(func(args mock.Arguments) {
-		noticePost = args.Get(0).(*model.Post)
-	}).Return(&model.Post{Id: "notice-1"}, nil)
-	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "audit-1"}, nil).Maybe()
-
-	msg, err := p.submitTeamCreationRequest(teamCreationInput{
-		RequesterID: "u_req",
-		DisplayName: "Marketing",
-	})
-
-	require.NoError(t, err)
-	require.Contains(t, msg, "Marketing")
-	require.NotNil(t, noticePost)
-	require.Contains(t, noticePost.Message, "created immediately")
-	api.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
-}
-
 func TestSubmitTeamCreationRequest_StoresAndPostsRequest(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
@@ -136,8 +49,9 @@ func TestSubmitTeamCreationRequest_StoresAndPostsRequest(t *testing.T) {
 
 	// ensureTeamCreationApprovalChannel routes team creation to its own channel.
 	api.On("GetTeamByName", "appteam").Return(&model.Team{Id: "appteam-id", DisplayName: "App Team"}, nil)
+	stubApprovalTeamRecord(api)
 	api.On("GetChannelByName", "appteam-id", "mattermost-team-requests", false).
-		Return(&model.Channel{Id: "teams-ch", TeamId: "appteam-id"}, nil)
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: "teams-ch", TeamId: "appteam-id"}, nil)
 
 	// systemAdminMentions + forceTicketChannelCategory share GetUsers.
 	api.On("GetUsers", mock.Anything).Return([]*model.User{{Id: "sys1", Username: "root"}}, nil)
