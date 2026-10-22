@@ -343,8 +343,8 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 	p.releasePending(pendingKindAdmin, req.RequesterID, req.ID)
 
 	if approve {
-		// Report only who was actually promoted; nominees who have since
-		// left the channel are skipped.
+		// Report only who was actually promoted. The re-check above refuses
+		// when a nominee has left, so this only skips someone who left since.
 		req.NomineeIDs = p.promoteChannelAdmins(req)
 		promoted := p.mentionList(req.NomineeIDs)
 		var outcome, cardText string
