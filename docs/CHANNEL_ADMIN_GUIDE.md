@@ -88,7 +88,10 @@ request. Everyone you nominate must already be a member of the channel; if
 someone isn't, add them to the channel first (or ask a Channel Admin to).
 
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
-message when an approver responds.
+message when an approver responds. If your admin hasn't configured an approval
+channel yet, the request is sent to the System Admins directly. You'll see an
+error only if none of them could be reached; pass that message along to a
+System Admin.
 
 **Limits.** A System Admin sets how many Channel Admin requests you can have
 waiting for review at once. At the limit you'll see *you have N pending requests
