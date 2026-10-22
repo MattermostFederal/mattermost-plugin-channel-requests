@@ -2,9 +2,18 @@ import {expect, test} from '@playwright/test';
 import manifest from 'manifest';
 
 import {
+    fetchEnabledRequestTypes,
     fetchPrefixes,
+    fetchSidebarCategories,
     submitAdminRequest,
+    submitBotRequest,
     submitChannelRequest,
+    submitIncomingWebhookRequest,
+    submitOutgoingWebhookRequest,
+    submitTeamAdminRequest,
+    submitTeamCreationRequest,
+    submitTeamGuestRequest,
+    submitTeamMemberRequest,
 } from './client';
 import type {ChannelRequestPayload} from './client';
 
@@ -112,12 +121,20 @@ test.describe('fetchPrefixes', () => {
 ([
     ['submitChannelRequest', () => submitChannelRequest(payload), 'create'],
     ['submitAdminRequest', () => submitAdminRequest({channel_id: 'chan1', nominees: ['alice']}), 'request_admin'],
+    ['submitTeamCreationRequest', () => submitTeamCreationRequest({display_name: 'Team Two', type: 'O'}), 'submit_team_creation'],
+    ['submitTeamAdminRequest', () => submitTeamAdminRequest({team_id: 'team1'}), 'submit_team_admin_request'],
+    ['submitTeamMemberRequest', () => submitTeamMemberRequest({team_id: 'team1', nominees: ['alice']}), 'submit_team_member_request'],
+    ['submitTeamGuestRequest', () => submitTeamGuestRequest({team_id: 'team1', email: 'guest@example.com', channel_ids: ['chan1']}), 'submit_team_guest_request'],
+    ['submitBotRequest', () => submitBotRequest({username: 'helper-bot', display_name: 'Helper'}), 'submit_bot_request'],
+    ['submitIncomingWebhookRequest', () => submitIncomingWebhookRequest({channel_id: 'chan1', display_name: 'Alerts'}), 'submit_incoming_webhook_request'],
+    ['submitOutgoingWebhookRequest', () => submitOutgoingWebhookRequest({channel_id: 'chan1', display_name: 'Relay', callback_url: 'https://example.com/hook'}), 'submit_outgoing_webhook_request'],
 ] as const).forEach(([name, submit, path]) => {
     test.describe(name, () => {
         test('posts JSON with the CSRF token', async () => {
             setCookie('MMCSRF=token123');
             mockFetch(200, {message: 'ok'});
             expect(await submit()).toEqual({message: 'ok'});
+            expect(typeof calls[0].init?.body).toBe('string');
             expect(calls[0].url).toBe(`/plugins/${manifest.id}/api/v1/${path}`);
             expect(calls[0].init?.method).toBe('POST');
             expect(headersOf(calls[0])['X-CSRF-Token']).toBe('token123');
@@ -138,5 +155,70 @@ test.describe('fetchPrefixes', () => {
             mockFetch(200);
             expect(await submit()).toEqual({});
         });
+    });
+});
+
+test.describe('fetchSidebarCategories', () => {
+    test('returns the categories for the team', async () => {
+        const list = [{id: 'cat1', display_name: 'Favorites', type: 'favorites'}];
+        mockFetch(200, list);
+        expect(await fetchSidebarCategories('team 1')).toEqual(list);
+        expect(calls[0].url).toBe(`/plugins/${manifest.id}/api/v1/sidebar_categories?team_id=team%201`);
+    });
+
+    test('returns an empty list for a non-array body', async () => {
+        mockFetch(200, {unexpected: true});
+        expect(await fetchSidebarCategories('team1')).toEqual([]);
+    });
+
+    test('throws on a non-OK status', async () => {
+        mockFetch(403, {});
+        await expect(fetchSidebarCategories('team1')).rejects.toThrow('Failed to load sidebar categories (403)');
+    });
+});
+
+test.describe('fetchEnabledRequestTypes', () => {
+    const failOpen = {
+        channel: true,
+        channelAdmin: true,
+        team: true,
+        teamAdmin: true,
+        teamMember: true,
+        teamGuest: false,
+        bot: true,
+        webhook: true,
+    };
+
+    test('maps the config fields', async () => {
+        mockFetch(200, {channel: true, channel_admin: false, team: true, team_admin: false, team_member: true, team_guest: true, bot: false, webhook: true});
+        expect(await fetchEnabledRequestTypes()).toEqual({
+            channel: true,
+            channelAdmin: false,
+            team: true,
+            teamAdmin: false,
+            teamMember: true,
+            teamGuest: true,
+            bot: false,
+            webhook: true,
+        });
+        expect(calls[0].url).toBe(`/plugins/${manifest.id}/api/v1/config`);
+        expect(calls[0].init?.method).toBe('GET');
+    });
+
+    test('treats missing fields as off', async () => {
+        mockFetch(200, {});
+        expect(Object.values(await fetchEnabledRequestTypes()).every((v) => v === false)).toBe(true);
+    });
+
+    test('falls back to the defaults on a non-OK status', async () => {
+        mockFetch(500, {});
+        expect(await fetchEnabledRequestTypes()).toEqual(failOpen);
+    });
+
+    test('falls back to the defaults when the request fails', async () => {
+        globalThis.fetch = (async () => {
+            throw new TypeError('Failed to fetch');
+        }) as unknown as typeof globalThis.fetch;
+        expect(await fetchEnabledRequestTypes()).toEqual(failOpen);
     });
 });

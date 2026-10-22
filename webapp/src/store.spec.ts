@@ -12,11 +12,37 @@ import reducer, {
     getChannelDisplayName,
     getChannelType,
     getCurrentChannelId,
+    getCurrentTeamDisplayName,
     getCurrentTeamId,
+    isBotRequestModalOpen,
     isCurrentUserChannelAdmin,
+    isCurrentUserTeamAdmin,
+    isHubModalOpen,
+    isIncomingWebhookModalOpen,
+    isOutgoingWebhookModalOpen,
     isRequestModalOpen,
+    isTeamAdminRequestModalOpen,
+    isTeamCreationModalOpen,
+    isTeamGuestRequestModalOpen,
+    isTeamMemberRequestModalOpen,
     openAdminRequestModal,
     openRequestModal,
+    closeBotRequestModal,
+    closeHubModal,
+    closeIncomingWebhookModal,
+    closeOutgoingWebhookModal,
+    closeTeamAdminRequestModal,
+    closeTeamCreationModal,
+    closeTeamGuestRequestModal,
+    closeTeamMemberRequestModal,
+    openBotRequestModal,
+    openHubModal,
+    openIncomingWebhookModal,
+    openOutgoingWebhookModal,
+    openTeamAdminRequestModal,
+    openTeamCreationModal,
+    openTeamGuestRequestModal,
+    openTeamMemberRequestModal,
 } from './store';
 import type {GlobalState} from './store';
 
@@ -161,5 +187,100 @@ test.describe('isCurrentUserChannelAdmin', () => {
 
     test('is false when there is no current user', () => {
         expect(isCurrentUserChannelAdmin(stateWith({users: {profiles: {}}}), 'chan1')).toBe(false);
+    });
+});
+
+// Each request type's modal has an open flag in plugin state, an
+// open/close action pair and a selector.
+test.describe('request type modals', () => {
+    const modals = [
+        ['team creation', 'teamCreationModalOpen', openTeamCreationModal, closeTeamCreationModal, isTeamCreationModalOpen],
+        ['Team Admin', 'teamAdminRequestModalOpen', openTeamAdminRequestModal, closeTeamAdminRequestModal, isTeamAdminRequestModalOpen],
+        ['team member', 'teamMemberRequestModalOpen', openTeamMemberRequestModal, closeTeamMemberRequestModal, isTeamMemberRequestModalOpen],
+        ['team guest', 'teamGuestRequestModalOpen', openTeamGuestRequestModal, closeTeamGuestRequestModal, isTeamGuestRequestModalOpen],
+        ['bot', 'botRequestModalOpen', openBotRequestModal, closeBotRequestModal, isBotRequestModalOpen],
+        ['incoming webhook', 'incomingWebhookModalOpen', openIncomingWebhookModal, closeIncomingWebhookModal, isIncomingWebhookModalOpen],
+        ['outgoing webhook', 'outgoingWebhookModalOpen', openOutgoingWebhookModal, closeOutgoingWebhookModal, isOutgoingWebhookModalOpen],
+        ['hub', 'hubModalOpen', openHubModal, closeHubModal, isHubModalOpen],
+    ] as const;
+
+    for (const [name, key, open, close, isOpen] of modals) {
+        test(`${name}: opens, closes and is read by its selector`, () => {
+            expect(open().type.startsWith(`${manifest.id}_`)).toBe(true);
+            expect(close().type.startsWith(`${manifest.id}_`)).toBe(true);
+
+            const opened = reducer(undefined, open());
+            expect(opened[key]).toBe(true);
+            expect(isOpen(stateWith({}, opened))).toBe(true);
+
+            const closed = reducer(opened, close());
+            expect(closed[key]).toBe(false);
+            expect(isOpen(stateWith({}, closed))).toBe(false);
+            expect(isOpen(stateWith())).toBe(false);
+        });
+    }
+
+    test('opening one modal leaves the others closed', () => {
+        const opened = reducer(undefined, openBotRequestModal());
+        for (const [, key] of modals) {
+            expect(opened[key], key).toBe(key === 'botRequestModalOpen');
+        }
+    });
+});
+
+test.describe('isCurrentUserTeamAdmin', () => {
+    const users = (roles: string) => ({currentUserId: 'me', profiles: {me: {roles}}});
+    const teams = (myMembers: GlobalState['entities']['teams']['myMembers']) => ({currentTeamId: 'team1', teams: {}, myMembers});
+
+    test('is true for a System Admin', () => {
+        expect(isCurrentUserTeamAdmin(stateWith({users: users('system_user system_admin')}), 'team1')).toBe(true);
+    });
+
+    test('is true for a scheme admin member', () => {
+        const state = stateWith({users: users('system_user'), teams: teams({team1: {roles: 'team_user', scheme_admin: true}})});
+        expect(isCurrentUserTeamAdmin(state, 'team1')).toBe(true);
+    });
+
+    test('is true when the member roles include team_admin', () => {
+        const state = stateWith({users: users('system_user'), teams: teams({team1: {roles: 'team_user team_admin', scheme_admin: false}})});
+        expect(isCurrentUserTeamAdmin(state, 'team1')).toBe(true);
+    });
+
+    test('is false for a regular member', () => {
+        const state = stateWith({users: users('system_user'), teams: teams({team1: {roles: 'team_user', scheme_admin: false}})});
+        expect(isCurrentUserTeamAdmin(state, 'team1')).toBe(false);
+    });
+
+    test('is false when not a member, no team is given or there is no user', () => {
+        const state = stateWith({users: {profiles: {}}});
+        expect(isCurrentUserTeamAdmin(state, 'team1')).toBe(false);
+        expect(isCurrentUserTeamAdmin(state, '')).toBe(false);
+    });
+});
+
+test.describe('getCurrentTeamDisplayName', () => {
+    test('returns the display name of the current team', () => {
+        const state = stateWith({teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', display_name: 'Team One', name: 'team-one'}}, myMembers: {}}});
+        expect(getCurrentTeamDisplayName(state)).toBe('Team One');
+    });
+
+    test('falls back to the team ID before the team loads', () => {
+        expect(getCurrentTeamDisplayName(stateWith())).toBe('team1');
+    });
+
+    test('is empty with no current team', () => {
+        expect(getCurrentTeamDisplayName({entities: {}} as unknown as GlobalState)).toBe('');
+    });
+});
+
+test.describe('getChannelType', () => {
+    for (const type of ['O', 'P', 'D', 'G']) {
+        test(`returns ${type}`, () => {
+            expect(getChannelType(stateWith({channels: {channels: {chan1: {type}}}}), 'chan1')).toBe(type);
+        });
+    }
+
+    test('is empty for an unknown channel', () => {
+        expect(getChannelType(stateWith({channels: {channels: {}}}), 'chan1')).toBe('');
     });
 });

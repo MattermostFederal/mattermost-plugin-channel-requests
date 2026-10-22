@@ -3,25 +3,23 @@ import React from 'react';
 
 import {IndexHarness} from './IndexHarness';
 import type {Recorded, RecordedMenu} from './IndexHarness';
+import manifest from './manifest';
 
 import {expect, test} from '../playwright/ct-coverage';
+import {API, ALL_ON} from '../playwright/ct-helpers';
 
-const PLUGIN_ID = 'com.mattermostfederal.mattermost-plugin-request-hub';
+const PLUGIN_ID = manifest.id;
 
-const allEnabled = {
-    channel: true,
-    channel_admin: true,
-    team: true,
-    team_admin: true,
-    team_member: true,
-    team_guest: true,
-    bot: true,
-    webhook: true,
-};
-
-async function routeConfig(page: Page, body: unknown = allEnabled) {
-    await page.route(`**/plugins/${PLUGIN_ID}/api/v1/config`, (route) => route.fulfill({contentType: 'application/json', body: JSON.stringify(body)}));
+async function routeConfig(page: Page, body: unknown = ALL_ON) {
+    await page.route(`${API}/config`, (route) => route.fulfill({contentType: 'application/json', body: JSON.stringify(body)}));
 }
+
+// Markup for two injectors: an open Members panel, and a team rail with no
+// native Create Team button.
+const injectorMarkup = `
+    <div id="rhsContainer"><p>Members</p><button data-testid="addMembersButton">Add</button></div>
+    <div id="teamSidebarWrapper"></div>
+`;
 
 async function recorded(page: Page): Promise<Recorded> {
     const pre = page.getByTestId('recorded');
@@ -138,5 +136,31 @@ test.describe('plugin entry point', () => {
         const r = await recorded(page);
         expect(r.adminSettings).toEqual([]);
         expect(r.menus).toHaveLength(9);
+    });
+
+    test('uninitialize removes what the DOM injectors added', async ({mount, page}) => {
+        await mount(<IndexHarness
+            markup={injectorMarkup}
+            uninitialize={true}
+                    />);
+        const r = await recorded(page);
+        expect(r.injected?.before).toEqual({membersPanelButton: 1, teamRailButton: 1});
+        expect(r.injected?.after).toEqual({membersPanelButton: 0, teamRailButton: 0});
+        expect(r.errors).toEqual([]);
+    });
+
+    test('a failing disposer does not stop the others', async ({mount, page}) => {
+        await mount(<IndexHarness
+            markup={injectorMarkup}
+            uninitialize={true}
+            failFirstDisposer={true}
+                    />);
+        const r = await recorded(page);
+        expect(r.injected?.before).toEqual({membersPanelButton: 1, teamRailButton: 1});
+
+        // The Members panel disposer threw before removing its button; the
+        // team rail disposer still ran.
+        expect(r.injected?.after).toEqual({membersPanelButton: 1, teamRailButton: 0});
+        expect(r.errors).toEqual(['[channel-requests] disposer failed during uninitialize']);
     });
 });

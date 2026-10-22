@@ -3,10 +3,10 @@ import React from 'react';
 
 import {DomInjectorHarness} from './DomInjectorHarness';
 import type {HarnessRecord} from './DomInjectorHarness';
+import {OPEN_REQUEST_MODAL} from './store';
 
 import {expect, test} from '../playwright/ct-coverage';
-
-const OPEN_REQUEST_MODAL = 'com.mattermostfederal.mattermost-plugin-request-hub_open_request_modal';
+import {frame, harnessInstalled} from '../playwright/ct-helpers';
 
 const member = {entities: {users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}}}};
 const admin = {entities: {users: {currentUserId: 'me', profiles: {me: {roles: 'system_user system_admin'}}}}};
@@ -38,7 +38,6 @@ const menuWithComposedLabels = `
 </div>`;
 
 async function recorded(page: Page): Promise<HarnessRecord> {
-    // eslint-disable-next-line no-underscore-dangle
     return page.evaluate(() => ({actions: window.__harness!.actions, escapes: window.__harness!.escapes}));
 }
 
@@ -50,6 +49,7 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithNativeById}
                 state={member}
                         />);
+            await harnessInstalled(page);
             const item = page.locator('#createNewChannelMenuItem');
             await expect(item).toHaveText('Request new channel');
             await item.click();
@@ -62,6 +62,7 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithNativeByText}
                 state={member}
                         />);
+            await harnessInstalled(page);
             const item = page.getByRole('button', {name: 'Request new channel'});
             await expect(item).toBeVisible();
             await item.click();
@@ -74,12 +75,26 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithNativeById}
                 state={admin}
                         />);
-            await expect(page.getByTestId('harness-ready')).toBeAttached();
-            await page.waitForTimeout(100);
+            await harnessInstalled(page);
+            await frame(page);
             await expect(page.locator('#createNewChannelMenuItem')).toHaveText('Create new channel');
             await page.locator('#createNewChannelMenuItem').click();
             expect((await recorded(page)).actions).toEqual([]);
         });
+    });
+
+    test('keeps one item when a menu relabeled by text re-renders', async ({mount, page}) => {
+        await mount(<DomInjectorHarness
+            injector='channelCreation'
+            markup={menuWithNativeByText}
+            state={member}
+                    />);
+        await harnessInstalled(page);
+        await expect(page.getByText('Request new channel')).toHaveCount(1);
+
+        await page.evaluate(() => window.__harness!.addMarkup('<p>unrelated</p>'));
+        await frame(page);
+        await expect(page.getByText('Request new channel')).toHaveCount(1);
     });
 
     test.describe('without the native item', () => {
@@ -89,14 +104,14 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithoutNative}
                 state={member}
                         />);
+            await harnessInstalled(page);
             const injected = page.getByTestId('channelRequestsInjectedItem');
             await expect(injected).toHaveText('Request new channel');
             await expect(page.locator('ul li').first()).toHaveAttribute('data-mm-plugin-channel-requests-injected', 'true');
 
             // Another DOM change rescans the menu without injecting again.
-            // eslint-disable-next-line no-underscore-dangle
             await page.evaluate(() => window.__harness!.addMarkup('<p>unrelated</p>'));
-            await page.waitForTimeout(100);
+            await frame(page);
             await expect(injected).toHaveCount(1);
 
             await injected.click();
@@ -110,6 +125,7 @@ test.describe('channelCreationOverride', () => {
                 markup={markup}
                 state={member}
                         />);
+            await harnessInstalled(page);
             await expect(page.getByTestId('channelRequestsInjectedItem')).toHaveAttribute('href', '#');
         });
 
@@ -119,6 +135,7 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithComposedLabels}
                 state={member}
                         />);
+            await harnessInstalled(page);
             const injected = page.getByTestId('channelRequestsInjectedItem');
             await expect(injected).toHaveText('Request new channel');
             await expect(injected.locator('i.icon-globe')).toBeAttached();
@@ -130,8 +147,7 @@ test.describe('channelCreationOverride', () => {
                 markup=''
                 state={member}
                         />);
-            await expect(page.getByTestId('harness-ready')).toBeAttached();
-            // eslint-disable-next-line no-underscore-dangle
+            await harnessInstalled(page);
             await page.evaluate((html) => window.__harness!.addMarkup(html), menuWithoutNative);
             await expect(page.getByTestId('channelRequestsInjectedItem')).toBeVisible();
         });
@@ -142,8 +158,14 @@ test.describe('channelCreationOverride', () => {
                 markup='<ul><li>Browse channels</li></ul>'
                 state={member}
                         />);
-            await page.waitForTimeout(100);
+            await harnessInstalled(page);
+            await frame(page);
             await expect(page.getByTestId('channelRequestsInjectedItem')).toHaveCount(0);
+
+            // Control: once the stray list is gone, a real channel menu gets the item.
+            await page.locator('ul:not([role])').evaluate((el) => el.remove());
+            await page.evaluate((html) => window.__harness!.addMarkup(html), menuWithoutNative);
+            await expect(page.getByTestId('channelRequestsInjectedItem')).toHaveCount(1);
         });
     });
 
@@ -154,6 +176,7 @@ test.describe('channelCreationOverride', () => {
                 markup='<button>Request new channel</button>'
                 state={member}
                         />);
+            await harnessInstalled(page);
             await page.getByRole('button', {name: 'Request new channel'}).click();
             expect((await recorded(page)).actions).toEqual([]);
         });
@@ -164,6 +187,7 @@ test.describe('channelCreationOverride', () => {
                 markup={menuWithNativeById}
                 state={member}
                         />);
+            await harnessInstalled(page);
             await page.getByRole('button', {name: 'Browse channels'}).click();
             expect((await recorded(page)).actions).toEqual([]);
         });

@@ -4,22 +4,38 @@ import {Provider} from 'react-redux';
 import {combineReducers, legacy_createStore as createStore} from 'redux';
 import type {Reducer} from 'redux';
 
-import reducer, {openAdminRequestModal, openRequestModal} from './store';
-import type {GlobalState} from './store';
+import reducer, {
+    openAdminRequestModal,
+    openBotRequestModal,
+    openHubModal,
+    openIncomingWebhookModal,
+    openOutgoingWebhookModal,
+    openRequestModal,
+    openTeamAdminRequestModal,
+    openTeamCreationModal,
+    openTeamGuestRequestModal,
+    openTeamMemberRequestModal,
+} from './store';
+import type {GlobalState, PluginState} from './store';
 
 /**
  * Harness for components that read the plugin's Redux state.
  *
  * Builds a real store from the plugin reducer (under `plugins-<id>`, as
  * Mattermost registers it) plus static `entities`, so closing a modal
- * really unmounts it. Two hidden-label buttons reopen the modals, which lets
- * a test check that a reopened form starts empty.
+ * really unmounts it. Hidden-label buttons ("harness: open <modal>") reopen
+ * each modal, which lets a test check that a reopened form starts empty.
  */
 
 type Props = {
     entities?: Partial<GlobalState['entities']>;
     requestOpen?: boolean;
     adminChannelId?: string | null;
+
+    // pluginState overrides fields of the plugin's own state, e.g.
+    // {hubModalOpen: true} to start with the hub open. It is applied after
+    // requestOpen and adminChannelId, and like them is read once at mount.
+    pluginState?: Partial<PluginState>;
     children?: React.ReactNode;
 };
 
@@ -35,7 +51,20 @@ const defaultEntities: GlobalState['entities'] = {
     },
 };
 
-export const StoreHarness = ({entities, requestOpen = false, adminChannelId = null, children}: Props) => {
+const reopeners = {
+    'request modal': openRequestModal,
+    'admin modal': () => openAdminRequestModal('chan1'),
+    team: openTeamCreationModal,
+    'team admin': openTeamAdminRequestModal,
+    'team member': openTeamMemberRequestModal,
+    'team guest': openTeamGuestRequestModal,
+    bot: openBotRequestModal,
+    hub: openHubModal,
+    incoming: openIncomingWebhookModal,
+    outgoing: openOutgoingWebhookModal,
+};
+
+export const StoreHarness = ({entities, requestOpen = false, adminChannelId = null, pluginState, children}: Props) => {
     const [store] = useState(() => {
         const allEntities = {...defaultEntities, ...entities};
         const rootReducer = combineReducers({
@@ -50,6 +79,7 @@ export const StoreHarness = ({entities, requestOpen = false, adminChannelId = nu
                     ...reducer(undefined, {type: '@@INIT'}),
                     modalOpen: requestOpen,
                     adminModalChannelId: adminChannelId,
+                    ...pluginState,
                 },
             },
         );
@@ -58,14 +88,13 @@ export const StoreHarness = ({entities, requestOpen = false, adminChannelId = nu
     return (
         <Provider store={store}>
             {children}
-            <button
-                aria-label='harness: open request modal'
-                onClick={() => store.dispatch(openRequestModal())}
-            />
-            <button
-                aria-label='harness: open admin modal'
-                onClick={() => store.dispatch(openAdminRequestModal('chan1'))}
-            />
+            {Object.entries(reopeners).map(([modal, open]) => (
+                <button
+                    key={modal}
+                    aria-label={`harness: open ${modal}`}
+                    onClick={() => store.dispatch(open())}
+                />
+            ))}
         </Provider>
     );
 };

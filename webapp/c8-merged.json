@@ -1,8 +1,11 @@
 {
     "all": true,
+    "src": ["src"],
     "excludeAfterRemap": true,
-    "include": ["src/**/*.{ts,tsx}"],
     "exclude": [
+        "**/node_modules/**",
+        "*.config.ts",
+        "playwright/**",
         "src/**/*.spec.ts",
         "src/**/*.pw.tsx",
         "src/**/*Harness.tsx",

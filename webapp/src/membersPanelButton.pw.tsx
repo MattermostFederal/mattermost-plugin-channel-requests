@@ -2,10 +2,10 @@ import type {Page} from '@playwright/test';
 import React from 'react';
 
 import {DomInjectorHarness} from './DomInjectorHarness';
+import {OPEN_ADMIN_MODAL} from './store';
 
 import {expect, test} from '../playwright/ct-coverage';
-
-const OPEN_ADMIN_MODAL = 'com.mattermostfederal.mattermost-plugin-request-hub_open_admin_modal';
+import {frame, harnessInstalled} from '../playwright/ct-helpers';
 
 type ChannelState = {type?: string; roles?: string; systemRoles?: string; channelId?: string};
 
@@ -34,7 +34,6 @@ const membersPanel = `
 const button = (page: Page) => page.getByRole('button', {name: 'Request Admin'});
 
 async function status(page: Page) {
-    // eslint-disable-next-line no-underscore-dangle
     return page.evaluate(() => (window as unknown as {__cr_status?: Record<string, unknown>}).__cr_status);
 }
 
@@ -46,13 +45,14 @@ test.describe('membersPanelButton', () => {
                 markup={membersPanel}
                 state={stateFor()}
                         />);
+            await harnessInstalled(page);
             await expect(button(page)).toBeVisible();
             await expect(page.locator('.add-members + button')).toHaveText('Request Admin');
-            // eslint-disable-next-line no-underscore-dangle
+
             expect(await page.evaluate(() => (window as unknown as {__cr_injector_loaded?: boolean}).__cr_injector_loaded)).toBe(true);
 
             await button(page).click();
-            // eslint-disable-next-line no-underscore-dangle
+
             expect(await page.evaluate(() => window.__harness!.actions)).toEqual([{type: OPEN_ADMIN_MODAL, channelId: 'chan1'}]);
         });
 
@@ -68,6 +68,7 @@ test.describe('membersPanelButton', () => {
                     markup={markup}
                     state={stateFor()}
                             />);
+                await harnessInstalled(page);
                 await expect(button(page)).toBeVisible();
             });
         }
@@ -83,6 +84,7 @@ test.describe('membersPanelButton', () => {
                 markup={markup}
                 state={stateFor()}
                         />);
+            await harnessInstalled(page);
             await expect(page.locator('span + button')).toHaveText('Request Admin');
         });
 
@@ -92,6 +94,7 @@ test.describe('membersPanelButton', () => {
                 markup='<div id="rhsContainer"><h2>12 Members</h2></div>'
                 state={stateFor()}
                         />);
+            await harnessInstalled(page);
             await expect(page.locator('h2 + button')).toHaveText('Request Admin');
         });
 
@@ -101,6 +104,7 @@ test.describe('membersPanelButton', () => {
                 markup='<div id="rhsContainer"><p>Members of this channel</p><a role="button" aria-label="Add members">+</a></div>'
                 state={stateFor()}
                         />);
+            await harnessInstalled(page);
             await expect(page.locator('a + button')).toHaveText('Request Admin');
         });
 
@@ -110,6 +114,7 @@ test.describe('membersPanelButton', () => {
                 markup={membersPanel}
                 state={stateFor({type: ''})}
                         />);
+            await harnessInstalled(page);
             await expect(button(page)).toBeVisible();
         });
 
@@ -119,9 +124,9 @@ test.describe('membersPanelButton', () => {
                 markup={membersPanel}
                 state={stateFor()}
                         />);
+            await harnessInstalled(page);
             await expect(button(page)).toBeVisible();
 
-            // eslint-disable-next-line no-underscore-dangle
             await page.evaluate(() => window.__harness!.addMarkup('<p>new post</p>'));
             await expect.poll(async () => (await status(page))?.skip).toBe('already-injected');
             await expect(button(page)).toHaveCount(1);
@@ -136,10 +141,68 @@ test.describe('membersPanelButton', () => {
                 markup={membersPanel}
                 state={stateFor({channelId: ''})}
                         />);
+            await harnessInstalled(page);
             await button(page).click();
-            // eslint-disable-next-line no-underscore-dangle
+
             expect(await page.evaluate(() => window.__harness!.actions)).toEqual([]);
         });
+    });
+
+    test.describe('disposing', () => {
+        test('removes the button', async ({mount, page}) => {
+            await mount(<DomInjectorHarness
+                injector='membersPanel'
+                markup={membersPanel}
+                state={stateFor()}
+                        />);
+            await harnessInstalled(page);
+            await expect(button(page)).toBeVisible();
+
+            await page.evaluate(() => window.__harness!.dispose());
+            await expect(button(page)).toHaveCount(0);
+
+            // The panel's own controls still work and dispatch nothing of ours.
+            await page.locator('.add-members').click();
+            expect(await page.evaluate(() => window.__harness!.actions)).toEqual([]);
+        });
+
+        test('does not add the button again on later renders', async ({mount, page}) => {
+            await mount(<DomInjectorHarness
+                injector='membersPanel'
+                markup='<div>loading</div>'
+                state={stateFor()}
+                        />);
+            await harnessInstalled(page);
+
+            await page.evaluate(() => window.__harness!.dispose());
+
+            await page.evaluate((html) => window.__harness!.addMarkup(html), membersPanel);
+            await frame(page);
+            await expect(button(page)).toHaveCount(0);
+        });
+
+        for (const disposeFirst of [false, true]) {
+            test(disposeFirst ? 'cancels an injection already scheduled' : 'an injection scheduled the same way lands without dispose', async ({mount, page}) => {
+                await mount(<DomInjectorHarness
+                    injector='membersPanel'
+                    markup='<div>loading</div>'
+                    state={stateFor()}
+                            />);
+                await harnessInstalled(page);
+
+                // The observer callback runs as a microtask and schedules the
+                // injection for the next frame; dispose lands in between.
+                await page.evaluate(async ({html, doDispose}) => {
+                    window.__harness!.addMarkup(html);
+                    await Promise.resolve();
+                    if (doDispose) {
+                        window.__harness!.dispose();
+                    }
+                }, {html: membersPanel, doDispose: disposeFirst});
+                await frame(page);
+                await expect(button(page)).toHaveCount(disposeFirst ? 0 : 1);
+            });
+        }
     });
 
     test.describe('skipping', () => {
@@ -158,6 +221,7 @@ test.describe('membersPanelButton', () => {
                     markup={markup}
                     state={state}
                             />);
+                await harnessInstalled(page);
                 await expect.poll(async () => (await status(page))?.skip).toBe(skip);
                 await expect(button(page)).toHaveCount(0);
             });

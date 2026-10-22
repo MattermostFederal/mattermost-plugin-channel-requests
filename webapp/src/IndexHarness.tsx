@@ -9,6 +9,11 @@ import React, {useEffect, useState} from 'react';
  * harness then runs the registered header button and every channel header
  * menu item (and its shouldRender, when it has one), and serializes
  * everything into a text node for the test.
+ *
+ * With `uninitialize`, `markup` is written into the page first so the DOM
+ * injectors have something to work on; the harness counts their injected
+ * elements, calls `uninitialize`, and counts again. `failFirstDisposer`
+ * makes the first disposer throw partway through.
  */
 
 export type RecordedMenu = {
@@ -33,6 +38,15 @@ export type Recorded = {
     menus: RecordedMenu[];
     errors: string[];
     infos: string[];
+
+    // injected counts the DOM injectors' elements before and after
+    // uninitialize. Present only with the uninitialize prop.
+    injected?: {before: InjectedCounts; after: InjectedCounts};
+};
+
+export type InjectedCounts = {
+    membersPanelButton: number;
+    teamRailButton: number;
 };
 
 type Props = {
@@ -43,11 +57,22 @@ type Props = {
     // withoutAdminConsole leaves registerAdminConsoleCustomSetting undefined,
     // like an older Mattermost.
     withoutAdminConsole?: boolean;
+
+    markup?: string;
+    uninitialize?: boolean;
+    failFirstDisposer?: boolean;
 };
 
 type Fn = (...args: unknown[]) => unknown;
 
-export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
+const countInjected = (): InjectedCounts => ({
+    membersPanelButton: document.querySelectorAll('[data-cr-request-admin]').length,
+    teamRailButton: document.querySelectorAll('#mmPluginRequestTeamAddButton').length,
+});
+
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
+export const IndexHarness = ({throwOn, withoutAdminConsole, markup, uninitialize, failFirstDisposer}: Props) => {
     const [result, setResult] = useState('');
 
     useEffect(() => {
@@ -99,7 +124,11 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                 subscribe: () => () => undefined,
             };
 
-            let plugin: {initialize: (r: unknown, s: unknown) => Promise<void>} | undefined;
+            const host = document.createElement('div');
+            host.innerHTML = markup ?? '';
+            document.body.appendChild(host);
+
+            let plugin: {initialize: (r: unknown, s: unknown) => Promise<void>; uninitialize: () => void} | undefined;
             let registeredId = '';
             window.registerPlugin = (id: string, p: unknown) => {
                 registeredId = id;
@@ -136,6 +165,36 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                 menus.push(entry);
             }
 
+            let injected: Recorded['injected'];
+            if (uninitialize) {
+                // The injectors work on the next frame; wait until both have run.
+                for (let i = 0; i < 20; i++) {
+                    const counts = countInjected();
+                    if (counts.membersPanelButton && counts.teamRailButton) {
+                        break;
+                    }
+                    // eslint-disable-next-line no-await-in-loop
+                    await nextFrame();
+                }
+                const before = countInjected();
+
+                const disconnect = MutationObserver.prototype.disconnect;
+                if (failFirstDisposer) {
+                    MutationObserver.prototype.disconnect = function failOnce(this: MutationObserver) {
+                        MutationObserver.prototype.disconnect = disconnect;
+                        throw new Error('disconnect failed');
+                    };
+                }
+                try {
+                    plugin!.uninitialize();
+                } finally {
+                    MutationObserver.prototype.disconnect = disconnect;
+                }
+                await nextFrame();
+                injected = {before, after: countInjected()};
+            }
+            host.remove();
+
             // eslint-disable-next-line no-console
             console.error = originalError;
             // eslint-disable-next-line no-console
@@ -151,6 +210,7 @@ export const IndexHarness = ({throwOn, withoutAdminConsole}: Props) => {
                 menus,
                 errors,
                 infos,
+                injected,
             };
             setResult(JSON.stringify(recorded));
         };
