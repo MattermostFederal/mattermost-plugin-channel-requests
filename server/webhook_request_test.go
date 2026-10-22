@@ -54,8 +54,9 @@ func mmAPIStub(t *testing.T) *httptest.Server {
 // ensureWebhookApprovalChannel (called by submitWebhookRequest).
 func stubWebhookChannel(api *plugintest.API, teamName, channelID string) {
 	api.On("GetTeamByName", teamName).Return(&model.Team{Id: "team-id", DisplayName: "App Team"}, nil)
+	stubApprovalTeamRecord(api)
 	api.On("GetChannelByName", "team-id", "mattermost-webhook-requests", false).
-		Return(&model.Channel{Id: channelID}, nil)
+		Return(&model.Channel{Type: model.ChannelTypePrivate, CreatorId: "bot-user-id", Id: channelID}, nil)
 }
 
 // --- submitWebhookRequest tests -------------------------------------------------

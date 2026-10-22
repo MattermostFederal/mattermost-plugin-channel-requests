@@ -127,8 +127,7 @@ System Admins see **Approve** and **Deny**.
   box) promotes them to Team Admin. The requester is notified by DM.
 - **Deny**: closes the request and notifies the requester by DM.
 
-System Admins who submit a team request themselves bypass the queue: the team
-is created immediately.
+Requests from System Admins are queued for approval too.
 
 ### Team Admin
 

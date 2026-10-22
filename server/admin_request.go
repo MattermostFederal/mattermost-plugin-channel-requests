@@ -41,11 +41,9 @@ type adminRequest struct {
 	DMChannelID       string `json:"dm_channel_id,omitempty"`
 }
 
-// submitAdminRequest validates the input and either promotes the nominees
-// immediately (System Admins) or stores a pending
-// request and posts it to the approval channel. forceQueue (slash-command
-// dialog) disables the bypass so an approval card is always posted.
-func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string, forceQueue bool) (string, error) {
+// submitAdminRequest validates the input, stores a pending request and posts
+// it to the approval channel. Requests from System Admins queue too.
+func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []string) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
 		return "", errors.New("a channel is required")
 	}
@@ -53,6 +51,9 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 	nominees := dedupeNonEmpty(nomineeIDs)
 	if len(nominees) == 0 {
 		return "", errors.New("pick at least one person to make a Channel Admin")
+	}
+	if err := checkIDList(nominees, "Channel Admin nominees"); err != nil {
+		return "", err
 	}
 
 	requester, appErr := p.API.GetUser(requesterID)
@@ -98,16 +99,6 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		ChannelID:   channelID,
 		NomineeIDs:  nominees,
 		CreatedAt:   model.GetMillis(),
-	}
-
-	// Bypass approval for System Admins — unless forceQueue (slash-command
-	// dialog) which always produces an approval card.
-	if !forceQueue && requester.IsSystemAdmin() {
-		req.NomineeIDs = p.promoteChannelAdmins(req)
-		p.postAdminPromotionMessage(channel, req, requester)
-		p.logAudit(auditDirect, fmt.Sprintf("@%s promoted %s to Channel Admin in ~%s",
-			requester.Username, p.mentionList(req.NomineeIDs), channel.Name), "")
-		return fmt.Sprintf("Promoted %s to Channel Admin in ~%s.", p.mentionList(req.NomineeIDs), channel.Name), nil
 	}
 
 	entry := pendingEntry{ID: req.ID, CreatedAt: req.CreatedAt, Key: adminRequestKey(req)}
@@ -248,6 +239,7 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
 	approvalChannel, teamLabel := p.resolveApprovalChannel(channel.TeamId)
 	return p.postApprovalAttachment(
+		req.ID,
 		p.adminApprovalAttachment(req, requester, channel),
 		teamLabel+p.adminApprovalHeader(channel),
 		approvalChannel,

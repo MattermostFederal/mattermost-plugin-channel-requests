@@ -98,24 +98,32 @@ func TestRequestChannelTool_UsesContextUserNotArgs(t *testing.T) {
 	stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
-	p := newMCPTestPlugin(t, api, &configuration{prefixes: []channelPrefix{{Prefix: "team-"}}})
+	p := newMCPTestPlugin(t, api, &configuration{prefixes: []channelPrefix{{Prefix: "team-"}}, ApprovalTeam: "appteam"})
 
+	// A System Admin's request queues for approval like anyone else's.
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
-	api.On("CreateChannel", mock.MatchedBy(func(c *model.Channel) bool {
-		return c.CreatorId == "admin1" && c.TeamId == "team1" && c.Name == "team-marketing"
-	})).Return(&model.Channel{Id: "ch1", Name: "team-marketing"}, nil)
-	api.On("AddChannelMember", "ch1", "admin1").Return(&model.ChannelMember{}, nil)
-	// With no Channel Admins named, the requester becomes one.
-	api.On("UpdateChannelMemberRoles", "ch1", "admin1", channelAdminRoles).Return(&model.ChannelMember{}, nil)
-	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	var stored channelRequest
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
+		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
+	}).Return(nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	mockApprovalChannel(api)
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "appch" })).Return(&model.Post{Id: "card1"}, nil)
+	api.On("GetDirectChannel", "admin1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
 
 	result := callMCPTool(t, p, "admin1", "request_channel", map[string]any{
 		"team_id": "team1", "prefix": "team-", "display_name": "Marketing",
 	})
 
 	out := mcpToolOutput[MCPMessageOutput](t, result)
-	require.Equal(t, "Created channel ~team-marketing.", out.Message)
+	require.Contains(t, out.Message, "submitted for approval")
+	require.Equal(t, "admin1", stored.RequesterID)
+	require.Equal(t, "team-marketing", stored.Name)
+	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
 func TestRequestChannelTool_NonMemberIsRefused(t *testing.T) {
@@ -171,27 +179,35 @@ func TestRequestChannelAdminTool_RefusesWithoutUserID(t *testing.T) {
 	api.AssertNotCalled(t, "GetUser", mock.Anything)
 }
 
-func TestRequestChannelAdminTool_PromotesForSysadmin(t *testing.T) {
+func TestRequestChannelAdminTool_QueuesForSysadmin(t *testing.T) {
 	stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
-	p := newMCPTestPlugin(t, api, &configuration{})
+	p := newMCPTestPlugin(t, api, &configuration{ApprovalTeam: "appteam"})
 
-	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
+	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID, Username: "nommy"}, nil)
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
-	api.On("GetUser", "u_nom").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
-	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", Type: model.ChannelTypeOpen}, nil)
-	api.On("GetChannelMember", "ch1", "u_nom").Return(&model.ChannelMember{}, nil)
-	api.On("UpdateChannelMemberRoles", "ch1", "u_nom", channelAdminRoles).Return(&model.ChannelMember{}, nil)
-	api.On("CreatePost", mock.Anything).Return(&model.Post{}, nil)
+	api.On("GetUser", testNomineeID).Return(&model.User{Id: testNomineeID, Username: "nommy"}, nil)
+	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "marketing", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
+	api.On("GetChannelMember", "ch1", testNomineeID).Return(&model.ChannelMember{}, nil)
+	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
+	api.On("KVSet", mock.Anything, mock.Anything).Return(nil)
+	mockApprovalChannel(api)
+	api.On("GetUsers", mock.Anything).Return([]*model.User{}, nil).Maybe()
+	api.On("GetTeamMembers", "team1", mock.Anything, mock.Anything).Return([]*model.TeamMember{}, nil).Maybe()
+	api.On("CreatePost", mock.MatchedBy(func(post *model.Post) bool { return post.ChannelId == "appch" })).Return(&model.Post{Id: "card1"}, nil)
+	api.On("GetDirectChannel", "admin1", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
+	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "dmroot"}, nil)
 
 	result := callMCPTool(t, p, "admin1", "request_channel_admin", map[string]any{
 		"channel_id": "ch1", "nominees": []string{"@nommy"},
 	})
 
 	out := mcpToolOutput[MCPMessageOutput](t, result)
-	require.Equal(t, "Promoted @nommy to Channel Admin in ~marketing.", out.Message)
+	require.Contains(t, out.Message, "submitted for approval")
+	api.AssertNotCalled(t, "UpdateChannelMemberRoles", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRequestChannelAdminTool_NonMemberIsRefused(t *testing.T) {
@@ -201,7 +217,7 @@ func TestRequestChannelAdminTool_NonMemberIsRefused(t *testing.T) {
 	defer api.AssertExpectations(t)
 	p := newMCPTestPlugin(t, api, &configuration{})
 
-	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: "u_nom", Username: "nommy"}, nil)
+	api.On("GetUserByUsername", "nommy").Return(&model.User{Id: testNomineeID, Username: "nommy"}, nil)
 	api.On("GetUser", "u1").Return(&model.User{Id: "u1", Username: "reqer", Roles: "system_user"}, nil)
 	api.On("GetChannelMember", "ch1", "u1").Return(nil, testAppErr("not a member"))
 
