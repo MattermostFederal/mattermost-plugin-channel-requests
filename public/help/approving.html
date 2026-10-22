@@ -98,26 +98,51 @@
             upgraded to this version are only closed when they're clicked.
         </p>
 
-        <h2>Channel requests that can't be approved as they stand</h2>
+        <h2 id="rechecks">Requests that can't be approved as they stand</h2>
         <p>
-            Before creating the channel, Approve checks the request again. If one of these applies, you'll see a
-            private message, the request stays pending and the card keeps its buttons, so you can deny it:
+            A request may have waited a while, so Approve checks it again before acting. If something no longer
+            holds, you'll see a private message ending <em>Deny this request instead.</em>, the request stays
+            pending and the card keeps its buttons, so you can deny it. Deny is never blocked, and an expired
+            request closes as expired whatever else has changed.
+        </p>
+        <table class="field-table">
+            <thead><tr><th>Request</th><th>Approve checks that</th></tr></thead>
+            <tbody>
+                <tr><td>Channel</td><td>The team still exists and isn't archived; the requester's account is active and they're still on the team (System Admins excepted); the channel name still matches a configured prefix</td></tr>
+                <tr><td>Channel Admin</td><td>The channel still exists and isn't archived; the requester's account is active and they're still in the channel (System Admins excepted); every nominee's account is active and they're still in the channel</td></tr>
+                <tr><td>Team Admin</td><td>The team still exists and isn't archived; the requester's account is active and they're still on the team (System Admins excepted); every nominee's account is active, isn't a bot or guest, and is still on the team</td></tr>
+                <tr><td>Team members</td><td>The team still exists, isn't archived and isn't managed by groups; the requester's account is active; every nominee's account is active</td></tr>
+                <tr><td>Guest invite</td><td>The team still exists and isn't archived; the requester's account is active and they're still on the team and in each channel (System Admins excepted); each channel still exists, isn't archived and is still in the team</td></tr>
+                <tr><td>Team</td><td>The requester's account is active</td></tr>
+                <tr><td>Bot</td><td>The requester's account is active; a chosen owner's account is active and isn't a bot; any webhook channels still exist and aren't archived, the requester is still in them (System Admins excepted), and an outgoing webhook's channel is still public</td></tr>
+                <tr><td>Webhook</td><td>The requester's account is active; the channel still exists and isn't archived; the requester is still in it (System Admins excepted); an outgoing webhook's channel is still public</td></tr>
+            </tbody>
+        </table>
+        <p>
+            Bot and webhook requests are checked before either step, so neither step is recorded on a request
+            that can no longer go through. Messages you may see include:
         </p>
         <ul>
             <li><em>The requester's account is no longer active. Deny this request instead.</em></li>
             <li><em>The requester is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the channel. Deny this request instead.</em></li>
+            <li><em>The team has been archived. Deny this request instead.</em></li>
+            <li><em>The team no longer exists. Deny this request instead.</em></li>
+            <li><em>~town has been archived. Deny this request instead.</em> (with the channel's name)</li>
+            <li><em>@bob is deactivated. Deny this request instead.</em> (with the nominee's name)</li>
+            <li><em>@bob is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>~town is no longer in this team. Deny this request instead.</em></li>
+            <li><em>Outgoing webhooks need a public channel, and ~town is no longer public. Deny this request instead.</em></li>
+            <li><em>The bot owner is no longer an active user. Deny this request instead.</em></li>
             <li><em>The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again.</em></li>
         </ul>
         <p>
-            If the requester can't be checked at that moment, you'll see <em>Could not check the requester right
-            now. Try again in a moment.</em> instead.
+            If something can't be checked at that moment, you'll see <em>Could not check the requester right
+            now. Try again in a moment.</em> or <em>Could not check this request right now. Try again in a
+            moment.</em> instead.
         </p>
         <p>
-            Channel Admin requests get the same check before anyone is promoted: if the
-            requester's account is no longer active, or they've left the channel (System Admins
-            excepted), you'll see <em>The requester's account is no longer active.</em> or
-            <em>The requester is no longer a member of the channel.</em> and the request stays
-            pending so you can deny it. See <a href="troubleshooting.html#requester-left">Troubleshooting</a>.
+            See <a href="troubleshooting.html#requester-left">Troubleshooting</a> if a requester has left.
         </p>
 
         <h2 id="expired">Expired requests</h2>

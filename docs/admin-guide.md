@@ -160,7 +160,7 @@ Bot and webhook cards use **two-step** approval. The card shows security and sys
 | Request type | On Approve |
 |--------------|-----------|
 | **Channel creation** | Creates the channel, adds members, promotes Channel Admins, places in sidebar category if requested |
-| **Channel Admin** | Promotes the nominees to Channel Admin. Nominees must already be channel members when the request is made; anyone who has left by approval is skipped |
+| **Channel Admin** | Promotes the nominees to Channel Admin. Nominees must already be channel members when the request is made. Approve is refused if a nominee has since left the channel or been deactivated |
 | **Team Admin** | Promotes the nominees to Team Admin on that team. Nominees must already be team members. From the Request Hub or More actions the nominee is the requester; the slash command and its form can name other team members |
 | **Team creation** | Creates the team, adds the requester, optionally promotes to Team Admin |
 | **Bot account** | After both steps: creates the bot, optional token/webhooks; secrets go to a DM that auto-deletes in 72h |

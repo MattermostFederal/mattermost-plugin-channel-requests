@@ -80,6 +80,13 @@
         <img src="images/webhook-request/mattermost-webhook-outgoing-modal.png" alt="Outgoing webhook form">
         <img src="images/webhook-request/mattermost-webhook-approval-card.png" alt="Webhook approval card">
         <img src="images/webhook-request/mattermost-webhook-dm.png" alt="Webhook URL DM">
+        <p>
+            Before either approval step, Approve checks that the requester is still active, the channel still
+            exists and isn't archived, the requester is still in it (System Admins excepted), and an outgoing
+            webhook's channel is still public. If not, the
+            approver gets a private message and the request stays as it was, so it can be denied
+            (see <a href="approving.html#rechecks">Requests that can't be approved as they stand</a>).
+        </p>
 
         <div class="alert alert-info">
             <div class="alert-title">Limits</div>

@@ -1354,16 +1354,16 @@ func TestExercise_DecisionsAreMarkedInTheAudit(t *testing.T) {
 	require.Equal(t, expiredText, f.run("admin1", "/mattermost-request-hub approve "+cr[2].ID))
 	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+ar[0].ID), "promoted to Channel Admin")
 	require.Contains(t, f.run("admin1", "/mattermost-request-hub deny "+ar[1].ID), "Denied")
-	delete(f.channelMembers[m.ChannelIDs[0]], f.persona("crew").Id)
-	require.Contains(t, f.run("admin1", "/mattermost-request-hub approve "+ar[2].ID), "nobody was promoted")
-	require.Equal(t, expiredText, f.run("admin1", "/mattermost-request-hub approve "+ar[3].ID))
-
 	lead := "@exercise-lead" + personaSuffix
 	crew := "@exercise-crew" + personaSuffix
+	// A nominee who left blocks Approve, so nothing is audited for it.
+	delete(f.channelMembers[m.ChannelIDs[0]], f.persona("crew").Id)
+	require.Equal(t, crew+" is no longer a member of the channel. Deny this request instead.", f.run("admin1", "/mattermost-request-hub approve "+ar[2].ID))
+	require.Equal(t, expiredText, f.run("admin1", "/mattermost-request-hub approve "+ar[3].ID))
+
 	require.Equal(t, []string{
 		fmt.Sprintf(`⌛ Expired EXERCISE @admin closed channel request "EXERCISE Old" from %s, which was not reviewed within 30 days`, lead),
 		fmt.Sprintf("⌛ Expired EXERCISE @admin closed the Channel Admin request for %s in ~team-ops from %s, which was not reviewed within 30 days", crew, lead),
-		fmt.Sprintf("✅ Approved EXERCISE @admin approved %s for Channel Admin in ~team-ops, but none were still members (requested by %s)", crew, lead),
 		fmt.Sprintf(`✅ Approved EXERCISE @admin approved channel request "EXERCISE Approved" (~team-approved) from %s`, lead),
 		fmt.Sprintf("✅ Approved EXERCISE @admin promoted %s to Channel Admin in ~team-ops (requested by %s)", crew, lead),
 		fmt.Sprintf("❌ Denied EXERCISE @admin denied a Channel Admin request for %s in ~team-ops", crew),

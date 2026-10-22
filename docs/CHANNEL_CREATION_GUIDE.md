@@ -163,9 +163,9 @@ requester; agents can't approve or deny.
   and posts a welcome message that @-mentions everyone added.
 - **Deny**: the request is closed and the requester is notified by DM.
 
-Approve checks the request again first. If the requester's account is no longer
-active, they've left the team, or the channel name no longer matches the
-configured prefixes, you'll get a private message saying so (for example *The
+Approve checks the request again first. If the team has been archived, the
+requester's account is no longer active, they've left the team, or the channel
+name no longer matches the configured prefixes, you'll get a private message saying so (for example *The
 requester is no longer a member of the team. Deny this request instead.*). The
 request stays pending and the card keeps its buttons, so deny it. If the
 requester can't be checked at that moment, you'll see *Could not check the

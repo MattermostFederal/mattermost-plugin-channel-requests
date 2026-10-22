@@ -176,7 +176,7 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 
 	msg := "Your webhook request has been submitted for approval. It needs a security approval and a system approval."
 	if requester.IsSystemAdmin() {
-		msg = "Your webhook request has been posted for two-step approval. A security approver must sign off first; then you (or another System Admin) can fill the system step."
+		msg = "Your webhook request has been posted for two-step approval. A security approver must sign off first, then another System Admin fills the system step."
 	}
 	return msg, nil
 }

@@ -288,7 +288,7 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 	channel, channelErr := p.API.GetChannel(req.ChannelID)
 
 	channelRef := "the channel"
-	if channelErr == nil {
+	if channelErr == nil && channel != nil {
 		channelRef = "~" + channel.Name
 	}
 	nominees := p.mentionList(req.NomineeIDs)
@@ -321,17 +321,11 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 		})
 	}
 
-	// On approval we need a live channel to promote into; bail before claiming
-	// the request so a deleted channel leaves the pending request intact.
-	// GetChannel returns archived channels too, so check DeleteAt.
-	if approve && (channelErr != nil || channel.DeleteAt != 0) {
-		return decisionResult{Reply: "Could not load the channel; it may have been deleted."}
-	}
-
-	// Re-check what submitAdminRequest checked about the requester. A failed
-	// check leaves the request pending so it can be denied.
+	// Re-check what submitAdminRequest checked, starting with a live channel
+	// to promote into. A failed check leaves the request pending so it can be
+	// denied.
 	if approve {
-		if msg := p.adminApprovalBlocker(req, requester, requesterErr); msg != "" {
+		if msg := p.adminApprovalBlocker(req, channel, channelErr, requester, requesterErr); msg != "" {
 			return decisionResult{Reply: msg}
 		}
 	}

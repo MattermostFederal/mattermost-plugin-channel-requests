@@ -80,6 +80,7 @@ func decisionFixture(t *testing.T, approvalPostID string) (*plugintest.API, *Plu
 // mockChannelCreate lets an approval of the fixture's request create its channel.
 func mockChannelCreate(api *plugintest.API) {
 	stubActiveTeamMember(api, "team1", "u_req")
+	stubLiveTeam(api, "team1")
 	api.On("CreateChannel", mock.Anything).Return(&model.Channel{Id: "ch1", Name: "team-x", TeamId: "team1"}, nil)
 	api.On("AddChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil)
 	api.On("UpdateChannelMemberRoles", "ch1", "u_req", channelAdminRoleString).Return(&model.ChannelMember{}, nil)
@@ -204,6 +205,7 @@ func TestExecuteDecision_RefusalsLeaveTheRequestPending(t *testing.T) {
 	t.Run("requester left the team", func(t *testing.T) {
 		api, p, store := decisionFixture(t, "card1")
 		api.On("GetTeamMember", "team1", "u_req").Return(nil, &model.AppError{StatusCode: http.StatusNotFound})
+		stubLiveTeam(api, "team1")
 
 		resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
 
@@ -553,6 +555,7 @@ func TestSubmitAdminRequest_ShowsTheIDAndRecordsSystemAdminCopies(t *testing.T) 
 func TestDecision_CreateFailureKeepsTheCards(t *testing.T) {
 	api, p, store := decisionFixture(t, "")
 	stubActiveTeamMember(api, "team1", "u_req")
+	stubLiveTeam(api, "team1")
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
 
 	resp := runCommandAs(p, "admin1", "/mattermost-request-hub approve "+testChannelRequestID)
@@ -566,6 +569,7 @@ func TestDecision_CreateFailureKeepsTheCards(t *testing.T) {
 func TestDecision_LostRequestResolvesTheCards(t *testing.T) {
 	api, p, store := decisionFixture(t, "")
 	stubActiveTeamMember(api, "team1", "u_req")
+	stubLiveTeam(api, "team1")
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("name taken"))
 	// The restore after the failed create fails too. fakeKV's KVSet was
 	// registered first, so move this one ahead of it.
