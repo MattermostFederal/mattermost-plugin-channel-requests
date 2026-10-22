@@ -150,9 +150,9 @@ The DM includes:
 If something failed, the DM says what couldn't be created and what to do next.
 
 Every bot request goes through both approval steps, including requests from
-System Admins. System Admins can fill the system step, but a security approver
-must still fill the
-other.
+System Admins. Nobody can approve either step of their own request, so a System
+Admin's request needs a security approver and a different system approver (or
+one other System Admin when the approver mode is System Admins only).
 
 ---
 
