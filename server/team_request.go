@@ -27,6 +27,9 @@ type teamCreationRequest struct {
 	Description      string `json:"description"`
 	Type             string `json:"type"` // "O" (open) or "I" (invite)
 	RequestTeamAdmin bool   `json:"request_team_admin"`
+	// CreatedAt is when the request was submitted, in milliseconds.
+	// Requests saved by older versions get it from migratePendingRequests.
+	CreatedAt int64 `json:"created_at,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -94,21 +97,32 @@ func (p *Plugin) submitTeamCreationRequest(in teamCreationInput) (string, error)
 		Description:      strings.TrimSpace(in.Description),
 		Type:             teamType,
 		RequestTeamAdmin: in.RequestTeamAdmin,
+		CreatedAt:        model.GetMillis(),
+	}
+
+	entry := newPendingEntry(req)
+	if err := p.reservePending(pendingKindTeam, req.RequesterID, entry, p.getConfiguration()); err != nil {
+		return "", err
 	}
 
 	if err := p.storeTeamRequest(req); err != nil {
-		return "", err
+		p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
+		p.API.LogError("failed to store team request", "error", err.Error())
+		return "", errors.New("could not save your request; try again")
 	}
 	rawBefore, snapErr := json.Marshal(req)
 	if snapErr != nil {
 		_ = p.API.KVDelete(kvTeamRequestPrefix + req.ID)
+		p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
 		return "", errors.Wrap(snapErr, "failed to snapshot team request")
 	}
 
 	approvalPostID, approvalChannelID, err := p.postTeamCreationApprovalRequest(req, requester)
 	if err != nil {
 		_ = p.API.KVDelete(kvTeamRequestPrefix + req.ID)
-		return "", err
+		p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
+		p.API.LogError("failed to post team request for approval", "error", err.Error())
+		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID

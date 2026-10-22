@@ -79,6 +79,20 @@
         <img src="images/team-request/mattermost-team-modal.png" alt="Request a New Team form">
         <img src="images/team-request/mattermost-team-approval-card.png" alt="Team creation approval card">
 
+        <div class="alert alert-info">
+            <div class="alert-title">Limits</div>
+            <p>
+                A System Admin sets how many new team requests you can have waiting for review at once
+                (<em>Pending requests per user</em>; each request type is counted separately). At the limit,
+                you'll see <em>you have N pending requests waiting for review; you can submit more once some are
+                approved, denied or expire</em>.
+            </p>
+            <p>
+                Asking again for a team URL you're already waiting on shows <em>you already have a pending
+                request for a team named name</em>. Requests that aren't reviewed within <em>Request expiry (days)</em> expire, and your ticket DM says so.
+            </p>
+        </div>
+
         <h2 id="team-admin-open">Team Admin: how to open</h2>
         <ul class="entry-list">
             <li><strong>Native:</strong> team sidebar → <strong>Request Team Admin</strong></li>
@@ -106,6 +120,19 @@
         <img src="images/team-admin-request/mattermost-team-admin-modal.png" alt="Request Team Admin confirmation">
         <img src="images/team-admin-request/mattermost-team-admin-approval-card.png" alt="Team Admin approval card">
 
+        <div class="alert alert-info">
+            <div class="alert-title">Limits</div>
+            <p>
+                A System Admin sets how many Team Admin requests you can have waiting for review at once
+                (<em>Pending requests per user</em>; each request type is counted separately). At the limit,
+                you'll see <em>you have N pending requests waiting for review; you can submit more once some are
+                approved, denied or expire</em>.
+            </p>
+            <p>
+                Asking again for the same people in the same team while that request is pending shows <em>you
+                already have a pending Team Admin request for these people in this team</em>. Requests that aren't reviewed within <em>Request expiry (days)</em> expire, and your ticket DM says so.
+            </p>
+        </div>
     </main>
 </div>
 </body>
