@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1082,23 +1085,101 @@ func jsonMap(t *testing.T, w *httptest.ResponseRecorder) map[string]string {
 	return out
 }
 
+var (
+	submitRoutes = []string{
+		routeDialog, routeCreate, routeRequestAdmin,
+		routeChannelAdminDialog, routeTeamAdminDialog, routeTeamDialog,
+		routeTeamMemberDialog, routeTeamGuestDialog, routeBotDialog,
+		routeIncomingWebhookDialog, routeOutgoingWebhookDialog,
+		routeSubmitTeamCreationWebapp, routeSubmitTeamAdminWebapp,
+		routeSubmitTeamMemberWebapp, routeSubmitTeamGuestWebapp,
+		routeSubmitBotWebapp, routeSubmitIncomingWebhookWebapp,
+		routeSubmitOutgoingWebhookWebapp,
+	}
+	lookupRoutes = []string{
+		routePrefixes, routeTeams, routeChannels, routeUserAutocomplete,
+		routeSidebarCategories, routeConfig,
+	}
+	actionRoutes = []string{
+		routeApprove, routeDeny, routeApproveAdmin, routeDenyAdmin,
+		routeApproveTeam, routeDenyTeam, routeApproveTeamAdmin, routeDenyTeamAdmin,
+		routeApproveTeamMember, routeDenyTeamMember, routeApproveTeamGuest, routeDenyTeamGuest,
+		routeApproveBot, routeDenyBot, routeApproveWebhook, routeDenyWebhook,
+	}
+)
+
+func allRoutes() []string {
+	return append(append(append([]string{}, submitRoutes...), lookupRoutes...), actionRoutes...)
+}
+
+// TestServeHTTP_RouteListsMatchDispatch keeps the route lists above in step
+// with ServeHTTP, so a new route can't be added without these tests.
+func TestServeHTTP_RouteListsMatchDispatch(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "http.go", nil, 0)
+	require.NoError(t, err)
+
+	var dispatched []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "ServeHTTP" {
+			return true
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if cc, ok := n.(*ast.CaseClause); ok {
+				for _, e := range cc.List {
+					id, ok := e.(*ast.Ident)
+					require.True(t, ok, "ServeHTTP cases must name a route constant")
+					dispatched = append(dispatched, id.Name)
+				}
+			}
+			return true
+		})
+		return false
+	})
+
+	values := map[string]string{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if vs, ok := n.(*ast.ValueSpec); ok {
+			for i, name := range vs.Names {
+				if i >= len(vs.Values) {
+					break
+				}
+				if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					values[name.Name] = strings.Trim(lit.Value, `"`)
+				}
+			}
+		}
+		return true
+	})
+
+	var paths []string
+	for _, name := range dispatched {
+		require.Contains(t, values, name)
+		paths = append(paths, values[name])
+	}
+	require.ElementsMatch(t, paths, allRoutes())
+}
+
 func TestServeHTTP_RoutesEveryPathToAnAuthenticatedHandler(t *testing.T) {
-	routes := []string{
-		routeDialog, routeCreate, routeApprove, routeDeny, routeRequestAdmin,
-		routeApproveAdmin, routeDenyAdmin, routePrefixes, routeTeams, routeChannels,
-		routeUserAutocomplete,
+	routes := allRoutes()
+	for _, route := range actionRoutes {
+		require.True(t, isPostActionPath(route), route)
 	}
 	for _, route := range routes {
 		t.Run(route, func(t *testing.T) {
+			// The mock only allows logging, so any other API call panics and
+			// the recovered reply fails the checks below.
 			api := &plugintest.API{}
+			stubLogLevels(api)
 			p := newTestPlugin(api)
 
-			r := httptest.NewRequest(http.MethodPost, route, strings.NewReader("{}"))
+			r := httptest.NewRequest(http.MethodPost, route, strings.NewReader(`{"user_id":"u1","UserId":"u1"}`))
 			w := httptest.NewRecorder()
 			p.ServeHTTP(nil, w, r)
 
-			// Each handler rejects a request with no session user. Approve and
-			// Deny buttons always get a JSON reply the client can show.
+			// Each handler rejects a request with no session user, even when
+			// the body names one. Approve and Deny buttons always get a JSON
+			// reply the client can show.
 			if isPostActionPath(route) {
 				require.Equal(t, http.StatusOK, w.Code)
 				require.Contains(t, actionResponse(t, w).EphemeralText, "Could not verify your identity")
