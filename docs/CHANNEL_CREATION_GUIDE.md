@@ -112,9 +112,14 @@ unknown `@user` or a suffix that breaks the prefix's rule, the reply says what,
 and nothing is submitted. If channel requests are turned off, the command says
 so.
 
-A channel name, purpose or category can't contain a word that starts with `--`,
-and extra spaces or line breaks in them become single spaces. Use the form if
-you need either.
+Put quotes around text that should stay as typed, such as a purpose with a word
+that starts with `--`: `--purpose "--draft-- plans"`. The quote marks are not
+saved. Users can be separated by spaces or commas, so `@alice @bob` and
+`@alice,@bob` mean the same.
+
+Every other request type can be filed from the command line too. Run
+`/mattermost-request-hub help` for the list, or see the Slash commands page in
+`/mattermost-request-hub docs`.
 
 ---
 

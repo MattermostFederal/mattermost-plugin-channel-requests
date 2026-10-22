@@ -33,7 +33,9 @@ Same **Request a Bot Account** form from every entry point.
 - **Native:** Main Menu → Integrations → **Bot Accounts** (non–System Admins; System Admins still get native bot management)
 - **Dropdown:** channel More actions → **Request a Bot**
 - **Hub:** right App Bar **plug** → Requests → **Request a Bot**
-- **Slash:** `/mattermost-request-hub bot`
+- **Slash:** `/mattermost-request-hub bot` (or skip the form with
+  `/mattermost-request-hub bot <username> <Display name> [--description <text>] [--owner @user]`;
+  access tokens and webhooks for the bot are only in the form)
 
 <p>
 <img src="images/bot-request/mattermost-bot-integrations.png" alt="Integrations" width="720">
