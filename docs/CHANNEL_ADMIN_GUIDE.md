@@ -131,11 +131,21 @@ teams, including the approval team, can't act on it.
 
 <img src="images/channel-admin-request/mattermost-promotion-approval-card.png" alt="Channel Admin approval card" width="720">
 
-- **Approve** — each nominee who is still a member of the channel is promoted to
-  Channel Admin. Anyone who has left since the request was made is skipped, and
-  the approval message, DM and audit line list only who was actually promoted.
-  A bot message in the channel announces who can now manage it.
+- **Approve**: each nominee is promoted to Channel Admin, and the approval
+  message, DM and audit line list who was promoted. A bot message in the channel
+  announces who can now manage it.
 - **Deny** — the request is closed and the requester is notified by DM.
+
+Approve checks the request again first. If the requester's account is no longer
+active, they've left the channel (System Admins excepted), or a nominee has been
+deactivated or has left the channel, you'll get a private message saying so (for
+example *The requester is no longer a member of the channel. Deny this request
+instead.* or *@bob is no longer a member of the channel. Deny this request
+instead.*). The request stays pending and the
+card keeps its buttons, so deny it. If the requester or a nominee can't be
+checked at that moment, you'll see *Could not check the requester right now. Try
+again in a moment.* or *Could not check this request right now. Try again in a
+moment.* instead.
 
 A request that wasn't reviewed within **Request expiry (days)** can't be
 approved: clicking either button replies *This request has expired.*, marks the
@@ -154,7 +164,7 @@ requests, in **System Console → Plugins → Mattermost Request Hub**:
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team that owns plugin-managed approval channels. Required. |
+| **Approval team** | The team that owns plugin-managed approval channels. Recommended: without it, a Channel Admin request that has no per-team approval channel is sent by direct message to every System Admin instead. |
 | **Allow channel admin requests** | Enables Channel Admin entry points. |
 | **Team Admins can approve requests** | Applies to channel-creation requests only. Channel Admin requests are always reviewed by System Admins and the Team Admins of the *requested channel's* team, whatever this is set to. |
 | **Per-team approval channels** | Default on. Same per-team routing as channel creation — requests go to that team's `mattermost-channel-requests` when it has a Team Admin or System Admin. |

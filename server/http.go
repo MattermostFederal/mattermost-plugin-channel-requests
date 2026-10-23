@@ -950,11 +950,12 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 
-	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for notify + audit
+	// Best-effort for notify and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
 	channel, channelErr := p.API.GetChannel(req.ChannelID)
 
 	channelRef := "the channel"
-	if channelErr == nil {
+	if channelErr == nil && channel != nil {
 		channelRef = "~" + channel.Name
 	}
 	nominees := p.mentionList(req.NomineeIDs)
@@ -987,12 +988,14 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 
-	// On approval we need a live channel to promote into; bail before claiming
-	// the request so a deleted channel leaves the pending request intact.
-	// GetChannel returns archived channels too, so check DeleteAt.
-	if approve && (channelErr != nil || channel.DeleteAt != 0) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
-		return
+	// Re-check what submitAdminRequest checked, starting with a live channel
+	// to promote into. A failed check leaves the request pending so it can be
+	// denied.
+	if approve {
+		if msg := p.adminApprovalBlocker(req, channel, channelErr, requester, requesterErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvAdminRequestPrefix+req.ID, rawReq)
@@ -1236,9 +1239,13 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
+	// Re-check what submit checked. A failed check leaves the request
+	// pending so it can be denied.
+	if approve {
+		if msg := p.teamAdminApprovalBlocker(req, team, teamErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamAdminRequestPrefix+req.ID, rawReq)
@@ -1394,9 +1401,13 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
+	// Re-check what submit checked. A failed check leaves the request
+	// pending so it can be denied.
+	if approve {
+		if msg := p.teamMemberApprovalBlocker(req, team, teamErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamMemberRequestPrefix+req.ID, rawReq)
@@ -1572,9 +1583,13 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
+	// Re-check what submit checked. A failed check leaves the request
+	// pending so it can be denied.
+	if approve {
+		if msg := p.teamGuestApprovalBlocker(req, team, teamErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamGuestRequestPrefix+req.ID, rawReq)
@@ -1692,6 +1707,13 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
 		})
 		return
+	}
+
+	if approve {
+		if msg := p.teamApprovalBlocker(req); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
 	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamRequestPrefix+req.ID, rawReq)
@@ -1849,7 +1871,8 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		canSys = false
 	}
 
-	requester, _ := p.API.GetUser(req.RequesterID)
+	// Best-effort for cards and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
 
 	// Expiry counts from submission, even when one step is already approved.
 	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
@@ -1916,6 +1939,14 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		return
 	}
 
+	// Re-check what submit checked, before either step, so neither step is
+	// filled on a request that can no longer be carried out. A failed check
+	// leaves the request and its steps as they are, so it can be denied.
+	if msg := p.botApprovalBlocker(req, requester, requesterErr); msg != "" {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+		return
+	}
+
 	newState := p.applyTwoStepApproval(req.twoStepState, step, actingUser, model.GetMillis())
 
 	if newState.complete() {
@@ -1941,16 +1972,12 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 				return
 			}
 			notice := fmt.Sprintf("Couldn't create the bot: %s. The request is still pending — click **Approve** again to retry, or **Deny** it.", createErr.Error())
-			cardRequester := requester
-			if cardRequester == nil {
-				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-			}
 			writeJSON(w, model.PostActionIntegrationResponse{
 				EphemeralText: notice,
 				Update: p.repaintedApprovalPost(
 					request.PostId,
 					"@channel — a bot account request needs review (a previous approval attempt failed).",
-					p.botApprovalAttachmentWithNotice(req, cardRequester, notice),
+					p.botApprovalAttachmentWithNotice(req, requester, notice),
 				),
 			})
 			return
@@ -2095,15 +2122,11 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 		Title: "Bot Account Request Update",
 		Text:  fmt.Sprintf("Your bot request for **@%s** received the %s approval; awaiting the other approval.", req.Username, step),
 	})
-	cardRequester := requester
-	if cardRequester == nil {
-		cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-	}
 	writeJSON(w, model.PostActionIntegrationResponse{
 		Update: p.repaintedApprovalPost(
 			request.PostId,
 			p.botApprovalHeader(),
-			p.botApprovalAttachment(&newReq, cardRequester),
+			p.botApprovalAttachment(&newReq, requester),
 		),
 	})
 }
@@ -2240,8 +2263,9 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		canSys = false
 	}
 
-	requester, _ := p.API.GetUser(req.RequesterID)
-	channel, _ := p.API.GetChannel(req.ChannelID)
+	// Best-effort for cards and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
+	channel, channelErr := p.API.GetChannel(req.ChannelID)
 
 	// Expiry counts from submission, even when one step is already approved.
 	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
@@ -2301,7 +2325,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		}
 		cardChannel := channel
 		if cardChannel == nil {
-			cardChannel = &model.Channel{DisplayName: "unknown channel"}
+			cardChannel = &model.Channel{Name: req.ChannelID}
 		}
 		title, cardNotice, ephemeral, paintCard := twoStepApproveBlock(actingUser.Username, reason)
 		var att *model.MessageAttachment
@@ -2309,6 +2333,14 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			att = p.webhookApprovalAttachmentWithTitledNotice(req, cardRequester, cardChannel, title, cardNotice)
 		}
 		p.respondTwoStepApproveBlocked(w, userID, request.PostId, ephemeral, p.webhookApprovalHeader(), att)
+		return
+	}
+
+	// Re-check what submit checked, before either step, so neither step is
+	// filled on a request that can no longer be carried out. A failed check
+	// leaves the request and its steps as they are, so it can be denied.
+	if msg := p.webhookApprovalBlocker(req, requester, requesterErr, channel, channelErr); msg != "" {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
 		return
 	}
 
@@ -2337,20 +2369,12 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 				return
 			}
 			notice := fmt.Sprintf("Couldn't create the webhook: %s. The request is still pending — click **Approve** again to retry, or **Deny** it.", createErr.Error())
-			cardRequester := requester
-			if cardRequester == nil {
-				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-			}
-			cardChannel := channel
-			if cardChannel == nil {
-				cardChannel = &model.Channel{Name: req.ChannelID}
-			}
 			writeJSON(w, model.PostActionIntegrationResponse{
 				EphemeralText: notice,
 				Update: p.repaintedApprovalPost(
 					request.PostId,
 					"@channel — a webhook request needs review (a previous approval attempt failed).",
-					p.webhookApprovalAttachmentWithNotice(req, cardRequester, cardChannel, notice),
+					p.webhookApprovalAttachmentWithNotice(req, requester, channel, notice),
 				),
 			})
 			return
@@ -2417,19 +2441,11 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 		Title: "Webhook Request Update",
 		Text:  fmt.Sprintf("Your %s webhook request for **%s** received the %s approval; awaiting the other approval.", req.WebhookType, escapeMarkdown(req.DisplayName), step),
 	})
-	cardRequester := requester
-	if cardRequester == nil {
-		cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
-	}
-	cardChannel := channel
-	if cardChannel == nil {
-		cardChannel = &model.Channel{Name: req.ChannelID}
-	}
 	writeJSON(w, model.PostActionIntegrationResponse{
 		Update: p.repaintedApprovalPost(
 			request.PostId,
 			p.webhookApprovalHeader(),
-			p.webhookApprovalAttachment(&newReq, cardRequester, cardChannel),
+			p.webhookApprovalAttachment(&newReq, requester, channel),
 		),
 	})
 }
@@ -2671,36 +2687,6 @@ func (p *Plugin) expireRequest(w http.ResponseWriter, e expiredRequest) {
 		}),
 	})
 }
-
-// approvalBlocker returns why a channel request can't be approved as it
-// stands, or "" when it can. A lookup that fails for any reason other than
-// "not found" asks the approver to try again rather than deny.
-func (p *Plugin) approvalBlocker(config *configuration, req *channelRequest, requester *model.User, requesterErr *model.AppError) string {
-	if requesterErr != nil && requesterErr.StatusCode != http.StatusNotFound {
-		p.API.LogWarn("failed to load requester for approval", "user_id", req.RequesterID, "error", requesterErr.Error())
-		return approvalRetryText
-	}
-	if requester == nil || requester.DeleteAt != 0 {
-		return "The requester's account is no longer active. Deny this request instead."
-	}
-	if !requester.IsSystemAdmin() {
-		member, appErr := p.API.GetTeamMember(req.TeamID, req.RequesterID)
-		if appErr != nil && appErr.StatusCode != http.StatusNotFound {
-			p.API.LogWarn("failed to check requester's team membership for approval", "user_id", req.RequesterID, "team_id", req.TeamID, "error", appErr.Error())
-			return approvalRetryText
-		}
-		if appErr != nil || member == nil || member.DeleteAt != 0 {
-			return "The requester is no longer a member of the team. Deny this request instead."
-		}
-	}
-	if !config.allowsChannelName(req.Name) {
-		return "The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again."
-	}
-	return ""
-}
-
-// approvalRetryText is the private reply when approval can't be checked.
-const approvalRetryText = "Could not check the requester right now. Try again in a moment."
 
 // teamDisplayRef is the team's display name in bold, or its ID when the
 // team couldn't be loaded.

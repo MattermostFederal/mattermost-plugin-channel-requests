@@ -56,6 +56,11 @@ func stubActiveTeamMember(api *plugintest.API, teamID, userID string) {
 	api.On("GetTeamMember", teamID, userID).Return(&model.TeamMember{TeamId: teamID, UserId: userID}, nil).Maybe()
 }
 
+// stubLiveTeam lets approve-time checks find teamID live.
+func stubLiveTeam(api *plugintest.API, teamID string) {
+	api.On("GetTeam", teamID).Return(&model.Team{Id: teamID, Name: teamID, DisplayName: "Team " + teamID}, nil).Maybe()
+}
+
 const day = millisPerDay
 
 // entriesJSON encodes a pending list the way updatePending stores it.

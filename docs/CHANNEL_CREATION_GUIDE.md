@@ -192,9 +192,9 @@ requester; agents can't approve or deny.
   and posts a welcome message that @-mentions everyone added.
 - **Deny** — the request is closed and the requester is notified by DM.
 
-Approve checks the request again first. If the requester's account is no longer
-active, they've left the team, or the channel name no longer matches the
-configured prefixes, you'll get a private message saying so (for example *The
+Approve checks the request again first. If the team has been archived, the
+requester's account is no longer active, they've left the team, or the channel
+name no longer matches the configured prefixes, you'll get a private message saying so (for example *The
 requester is no longer a member of the team. Deny this request instead.*). The
 request stays pending and the card keeps its buttons, so deny it. If the
 requester can't be checked at that moment, you'll see *Could not check the
@@ -220,7 +220,7 @@ Configure the plugin in **System Console → Plugins → Mattermost Request Hub*
 
 | Setting | Purpose |
 |---------|---------|
-| **Approval team** | The team that owns plugin-managed approval channels. Required. |
+| **Approval team** | The team that owns plugin-managed approval channels. Recommended: without it, a channel request that has no per-team approval channel is sent by direct message to every System Admin instead. |
 | **Allow channel requests** | Enables channel-creation entry points. |
 | **Channel domain prefixes** | **Required.** The prefix list requesters pick from (see below). An empty list rejects every channel request. |
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
