@@ -32,6 +32,8 @@ type adminRequest struct {
 	NomineeIDs []string `json:"nominee_ids"`
 	// CreatedAt is when the request was submitted, in milliseconds.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 
 	// Ticket messaging fields — set after the approval post and DM are created.
 	// Used by the MessageHasBeenPosted hook to route thread replies in both directions.
@@ -240,15 +242,15 @@ func (p *Plugin) loadAdminRequest(id string) (*adminRequest, []byte, error) {
 // buttons) to the reviewers. It reuses postApprovalAttachment, which posts to
 // the resolved approval channel and falls back to DMing every System Admin when
 // none is available, exactly as the channel-creation flow does. Returns the
-// created post ID and channel ID; both empty in fallback mode.
+// created post ID and channel ID; both empty in fallback mode. Exercise
+// requests mention nobody, so seeding doesn't notify the approvers.
 func (p *Plugin) postAdminApprovalRequest(req *adminRequest, requester *model.User, channel *model.Channel) (postID, channelID string, err error) {
 	approvalChannel, teamLabel := p.resolveApprovalChannel(channel.TeamId)
-	return p.postApprovalAttachment(
-		req.ID,
-		p.adminApprovalAttachment(req, requester, channel),
-		teamLabel+p.adminApprovalHeader(channel),
-		approvalChannel,
-	)
+	header := exerciseMarker + ": a Channel Admin request needs your review."
+	if !req.Exercise {
+		header = p.adminApprovalHeader(channel)
+	}
+	return p.postApprovalAttachment(req.ID, p.adminApprovalAttachment(req, requester, channel), teamLabel+header, approvalChannel)
 }
 
 // adminApprovalHeader builds the message that leads the approval post,
@@ -345,7 +347,7 @@ func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.Use
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   title,
+		Title:   exerciseLabel(req.Exercise) + title,
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    fmt.Sprintf("**Proposed Channel Admins:** %s", p.mentionList(req.NomineeIDs)),

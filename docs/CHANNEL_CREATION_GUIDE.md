@@ -101,6 +101,8 @@ replies are only visible to you:
 - `approve <request ID>` and `deny <request ID>` let approvers act on a request
   of any type without clicking its card. The ID is at the bottom of the
   approval card.
+- `exercise populate|teardown|status` lets System Admins seed, remove or report
+  marked exercise data for training and demonstrations, when exercise mode is on.
 - `help` lists every subcommand and its arguments.
 
 Put quotes around text that should stay as typed, such as a purpose with a word
@@ -203,6 +205,8 @@ Configure the plugin in **System Console → Plugins → Mattermost Request Hub*
 | **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes, file requests of every type on a user's behalf and look up pending ones, under the same rules and per-type toggles as the forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. Needs Mattermost 11.3 or later. |
 | **Pending requests per user** | How many requests of each type one user can have waiting for review (each type is counted separately), up to `1000`. Default `5`; `0` means no limit. |
 | **Request expiry (days)** | Pending requests of any type older than this can no longer be approved, and stop counting toward the per-user limit. At most `3650`. Default `30`; `0` means requests never expire. A change applies to requests already pending too. |
+| **Enable exercise mode** | Off by default. **Do not enable in production.** Lets System Admins run `/mattermost-request-hub exercise populate`, `teardown` and `status` to seed and remove marked exercise data in a team: persona accounts nobody can sign in as, channels, and pending requests of every type on real approval cards. Populate needs **Allow channel requests**, at least one prefix, and the setting for each other type the scenario seeds (the built-in scenario seeds all eight). Approving a seeded request does the real thing, marked EXERCISE: a channel, team, bot or webhook, a Team Admin or team member change for a persona, or a guest invite. Teardown deletes the webhooks and bots, archives the teams and channels, and undoes the personas' team changes. Personas and guest invites use `exercise.invalid` email addresses, so a server or team that restricts email domains, or a guest domain list, must allow that domain, and guest access must be on for a scenario with guest invites. A guest invite can't be withdrawn; it reaches nobody and expires on its own. |
+| **Exercise scenario (JSON)** | Optional. Blank uses the built-in fictional scenario. Paste a scenario to seed your own; it is stored only in this server's configuration. The format is on the plugin's built-in `slash.html#exercise-scenario` page. |
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Public/Private Channel** permission from the System User role (System

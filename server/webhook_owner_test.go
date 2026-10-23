@@ -281,12 +281,13 @@ func TestCreateOutgoingWebhookForBot_OwnedByBot(t *testing.T) {
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
-	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
+	hookID, err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		RequesterID: "u_req", Username: "svcbot", OutgoingWebhookChannelID: "ch1",
 		OutgoingWebhookCallbackURL: "https://hooks.example.com/out",
 	})
 
 	require.NoError(t, err)
+	require.Equal(t, "out-hook-id", hookID)
 	require.NotNil(t, capture.outgoing)
 	require.Equal(t, "new-bot-id", capture.outgoing.CreatorId)
 	require.Equal(t, "team1", capture.outgoing.TeamId)
@@ -303,7 +304,7 @@ func TestCreateOutgoingWebhookForBot_KeepsRequestedName(t *testing.T) {
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
-	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
+	_, err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		Username: "svcbot", OutgoingWebhookChannelID: "ch1", OutgoingWebhookDisplayName: "Deploy relay",
 		OutgoingWebhookCallbackURL: "https://hooks.example.com/out",
 	})
@@ -318,7 +319,7 @@ func TestCreateOutgoingWebhookForBot_ChannelLoadFailure(t *testing.T) {
 	stubSiteURL(api, "http://localhost:8065")
 	api.On("GetChannel", "ch1").Return(nil, testAppErr("gone"))
 
-	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{OutgoingWebhookChannelID: "ch1"})
+	_, err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{OutgoingWebhookChannelID: "ch1"})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "load channel")
@@ -333,7 +334,7 @@ func TestCreateOutgoingWebhookForBot_APIErrorPropagates(t *testing.T) {
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", TeamId: "team1"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 
-	err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
+	_, err := p.createOutgoingWebhookForBot("tok1", "new-bot-id", &botRequest{
 		OutgoingWebhookChannelID: "ch1", OutgoingWebhookCallbackURL: "https://hooks.example.com/out",
 	})
 

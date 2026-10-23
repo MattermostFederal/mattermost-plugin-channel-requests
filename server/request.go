@@ -89,6 +89,8 @@ type channelRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 
 	// CategoryName is the optional sidebar category the requester wants the
 	// new channel placed in on approval. Matched case-insensitively; if no
@@ -713,14 +715,14 @@ func (p *Plugin) loadRequest(id string) (*channelRequest, []byte, error) {
 // postApprovalRequest posts a channel-creation request (with Approve/Deny buttons) for an admin to
 // act on. Returns the created post's ID and channel ID, which are empty in fallback mode (when the
 // request is DM'd to system admins instead of posted to a channel).
+// Exercise requests mention nobody, so seeding doesn't notify the channel.
 func (p *Plugin) postApprovalRequest(req *channelRequest, requester *model.User) (postID, channelID string, err error) {
 	approvalChannel, teamLabel := p.resolveApprovalChannel(req.TeamID)
-	return p.postApprovalAttachment(
-		req.ID,
-		p.approvalAttachment(req, requester),
-		teamLabel+"@channel — a new channel request needs your review.",
-		approvalChannel,
-	)
+	header := "@channel — a new channel request needs your review."
+	if req.Exercise {
+		header = exerciseMarker + ": a new channel request needs your review."
+	}
+	return p.postApprovalAttachment(req.ID, p.approvalAttachment(req, requester), teamLabel+header, approvalChannel)
 }
 
 // postApprovalAttachment delivers an approval attachment to the reviewers. When approvalChannel is
@@ -844,7 +846,7 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   title,
+		Title:   exerciseLabel(req.Exercise) + title,
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    strings.Join(details, "\n"),

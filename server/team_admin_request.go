@@ -29,6 +29,8 @@ type teamAdminRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 
 	// Ticket messaging fields — set after the approval post and DM are created.
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
@@ -168,7 +170,10 @@ func (p *Plugin) promoteTeamAdmins(req *teamAdminRequest) {
 // team creation requests so all team-scope actions appear together.
 func (p *Plugin) postTeamAdminApprovalRequest(req *teamAdminRequest, requester *model.User, team *model.Team) (postID, channelID string, err error) {
 	ch := p.ensureTeamCreationApprovalChannel()
-	header := p.systemAdminMentions() + " — a Team Admin request needs System Admin review."
+	header := exerciseMarker + ": a Team Admin request needs System Admin review."
+	if !req.Exercise {
+		header = p.systemAdminMentions() + " — a Team Admin request needs System Admin review."
+	}
 	return p.postApprovalAttachment(
 		req.ID,
 		p.teamAdminApprovalAttachment(req, requester, team),
@@ -193,7 +198,7 @@ func (p *Plugin) teamAdminApprovalAttachment(req *teamAdminRequest, requester *m
 	}
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Team Admin request",
+		Title:   exerciseLabel(req.Exercise) + "Team Admin request",
 		Color:   "#F4A221",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

@@ -71,6 +71,7 @@ type channelPrefix struct {
 //  5. Multi-step approver pools (bot / webhook two-step)
 //  6. Agents (MCP tools)
 //  7. Request limits (pending requests per user, expiry)
+//  8. Exercise mode
 type configuration struct {
 	// --- 1. Approval routing ---
 
@@ -139,6 +140,13 @@ type configuration struct {
 	// every request type, and each type is counted separately.
 	MaxPendingRequestsPerUser string
 	RequestExpiryDays         string
+
+	// --- 8. Exercise mode ---
+	// EnableExercise lets System Admins run the exercise subcommand.
+	// ExerciseScenarioJSON replaces the built-in fictional scenario when
+	// set; see loadExerciseScenario.
+	EnableExercise       bool
+	ExerciseScenarioJSON string
 
 	// --- Parsed / computed (unexported) ---
 	prefixes   []channelPrefix

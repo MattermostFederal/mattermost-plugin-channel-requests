@@ -143,13 +143,13 @@ func TestTwoStepActionHandlers_RequesterApproveIsShownOnCard(t *testing.T) {
 		{
 			name: "bot", handler: botActionHandler, kvPrefix: kvBotRequestPrefix,
 			record: &botRequest{ID: "r1", RequesterID: "admin1", Username: "svcbot", ApprovalPostID: "post1"},
-			header: (&Plugin{}).botApprovalHeader(),
+			header: (&Plugin{}).botApprovalHeader(false),
 			stub:   func(*plugintest.API) {},
 		},
 		{
 			name: "webhook", handler: webhookActionHandler, kvPrefix: kvWebhookRequestPrefix,
 			record: &webhookRequest{ID: "r1", RequesterID: "admin1", WebhookType: webhookTypeIncoming, ChannelID: "ch1", ApprovalPostID: "post1"},
-			header: (&Plugin{}).webhookApprovalHeader(),
+			header: (&Plugin{}).webhookApprovalHeader(false),
 			stub: func(api *plugintest.API) {
 				// The target channel is gone; the card still renders.
 				api.On("GetChannel", "ch1").Return(nil, testAppErr("gone"))
@@ -300,8 +300,8 @@ func TestTwoStepActionHandlers_PartialApprovalRecordsStepAndRepaintsCard(t *test
 		record   any
 		header   string
 	}{
-		{"bot", botActionHandler, kvBotRequestPrefix, pendingBotRequest(twoStepState{}), (&Plugin{}).botApprovalHeader()},
-		{"webhook", webhookActionHandler, kvWebhookRequestPrefix, pendingWebhookRequest(twoStepState{}), (&Plugin{}).webhookApprovalHeader()},
+		{"bot", botActionHandler, kvBotRequestPrefix, pendingBotRequest(twoStepState{}), (&Plugin{}).botApprovalHeader(false)},
+		{"webhook", webhookActionHandler, kvWebhookRequestPrefix, pendingWebhookRequest(twoStepState{}), (&Plugin{}).webhookApprovalHeader(false)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

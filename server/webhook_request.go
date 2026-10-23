@@ -36,6 +36,8 @@ type webhookRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -372,13 +374,20 @@ func (p *Plugin) postWebhookApprovalRequest(req *webhookRequest, requester *mode
 	return p.postApprovalAttachment(
 		req.ID,
 		p.webhookApprovalAttachment(req, requester, channel),
-		p.webhookApprovalHeader(),
+		p.webhookApprovalHeader(req.Exercise),
 		webhookCh,
 	)
 }
 
-func (p *Plugin) webhookApprovalHeader() string {
-	return "@channel — a webhook request needs review (requires a security approval and a system approval)."
+// webhookApprovalHeader is the webhook card's header. Exercise cards mention
+// nobody, so seeding doesn't notify the channel.
+func (p *Plugin) webhookApprovalHeader(exercise bool) string {
+	return cardMention(exercise) + "a webhook request needs review (requires a security approval and a system approval)."
+}
+
+// webhookRetryHeader is the webhook card's header after a failed final approval.
+func webhookRetryHeader(exercise bool) string {
+	return cardMention(exercise) + "a webhook request needs review (a previous approval attempt failed)."
 }
 
 func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model.User, channel *model.Channel) *model.MessageAttachment {
@@ -405,7 +414,7 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Webhook request",
+		Title:   exerciseLabel(req.Exercise) + "Webhook request",
 		Color:   "#FF6B35",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

@@ -229,6 +229,66 @@
             See <a href="agents.html">AI agents</a> for what each one does.
         </p>
 
+        <h2 id="exercise">Exercise mode</h2>
+        <p>
+            These are replies to <a href="slash.html#exercise"><code>/mattermost-request-hub exercise</code></a>.
+        </p>
+        <p>
+            <strong>"Exercise mode is off"</strong>: turn on <em>Enable exercise mode</em> in System Console →
+            Plugins → Mattermost Request Hub. Only System Admins can run the command.
+        </p>
+        <p>
+            <strong>"exercise mode seeds channel requests, which are turned off"</strong> or <strong>"this scenario
+            seeds ... requests, which are turned off"</strong>: populate files the same requests a user would, so it
+            needs <em>Allow channel requests</em> on, and the setting for every other type the scenario seeds. The
+            built-in scenario seeds all eight types. Nothing was created. <code>status</code> and
+            <code>teardown</code> don't need any of these settings.
+        </p>
+        <p>
+            <strong>"The username @exercise-... is taken by an account that isn't exercise data"</strong>: a real
+            account has a persona's username. Populate creates nothing in that case. Rename that account, or
+            change the persona's <code>role</code> in the <a href="slash.html#exercise-scenario">exercise
+            scenario</a>.
+        </p>
+        <p>
+            <strong>"This server or team only allows accounts with email addresses at ..."</strong>: personas use
+            addresses at <code>exercise.invalid</code>, a domain that never receives mail, and Mattermost only lets
+            accounts from the allowed domains join a team. While you run the exercise, add
+            <code>exercise.invalid</code> to <em>Restrict account creation to specified email domains</em> in the
+            System Console, or to the team's allowed domains, whichever the reply names.
+        </p>
+        <p>
+            <strong>"A team with the URL name exercise-... already exists"</strong> or <strong>"the username
+            @ex-... is taken"</strong>: a team or account already has a name the scenario's team or bot request
+            needs. Populate creates nothing in that case. Rename it, or change the scenario's suffix. A team or bot
+            left from an earlier exercise is removed by its teardown.
+        </p>
+        <p>
+            <strong>"This scenario seeds guest invite requests, but guest accounts are off"</strong> or
+            <strong>"guests can only be invited from ..."</strong>: approving a guest invite request would fail, so
+            populate refuses first. Turn on <em>Enable Guest Access</em> in System Console → Authentication → Guest
+            Access, and add <code>exercise.invalid</code> to the guest domain list if there is one, or use a
+            scenario without guest invites.
+        </p>
+        <p>
+            <strong>"A channel named ~... already exists in this team"</strong>: a channel, archived or not, already
+            has a name the scenario needs. Rename it, or change the scenario's suffix.
+        </p>
+        <p>
+            <strong>Status says the exercise is <em>populating</em></strong> when no populate is running: an earlier
+            populate stopped partway. The server log has <em>failed to populate exercise data</em> with the reason.
+            Run <code>/mattermost-request-hub exercise teardown</code>, which removes whatever it created, then
+            populate again. For five minutes after a populate stops, teardown answers <em>a populate is still
+            running in this team</em>, since it can't tell a stopped populate from a slow one. Wait and run it
+            again.
+        </p>
+        <p>
+            <strong>Teardown says some items could not be removed</strong>, or status says <em>a teardown started
+            but didn't finish</em>: the record of the exercise is kept, so run teardown again. The server log names
+            each item that failed. A request stored under an exercise request's ID that isn't exercise data is
+            always left alone and reported this way.
+        </p>
+
     </main>
 </div>
 </body>

@@ -167,9 +167,9 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 			dmRootID:    req.DMRootPostID,
 			dmChannelID: req.DMChannelID,
 			days:        config.ExpiryDays(),
-			cardTitle:   "Channel Request Expired",
+			cardTitle:   exerciseLabel(req.Exercise) + "Channel Request Expired",
 			cardText:    fmt.Sprintf("Your request for channel **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("@%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("@%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
 				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
 		})
 	}
@@ -203,6 +203,9 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 			}
 			return decisionResult{Reply: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())}
 		}
+		if req.Exercise {
+			p.recordExerciseChannel(channel)
+		}
 		// The KV key was already removed by the atomic claim above.
 		p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
@@ -210,12 +213,12 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 		if requester != nil {
 			p.postWelcomeMessage(channel, req, requester, actingUser)
 		}
-		p.logAudit(auditApproved, fmt.Sprintf("@%s approved channel request \"%s\" (~%s) from %s",
+		p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s approved channel request \"%s\" (~%s) from %s",
 			actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Channel Request Approved",
+			CardTitle:  exerciseLabel(req.Exercise) + "Channel Request Approved",
 			CardText:   fmt.Sprintf("Approved by @%s. Your request for channel **%s** is now available at ~%s.", actingUser.Username, escapeMarkdown(req.DisplayName), channel.Name),
 			StatusLine: outcome,
 		})
@@ -223,12 +226,12 @@ func (p *Plugin) decideChannelRequest(actingUserID, requestID, clickedPostID str
 
 	p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 	outcome := fmt.Sprintf("❌ Denied by @%s for %s. Channel request **%s** (`%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.DisplayName), req.Name)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied channel request \"%s\" from %s",
+	p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied channel request \"%s\" from %s",
 		actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 	return p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 		Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Channel Request Denied",
+		CardTitle:  exerciseLabel(req.Exercise) + "Channel Request Denied",
 		CardText:   fmt.Sprintf("Denied by @%s. Your request for channel **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, escapeMarkdown(req.DisplayName)),
 		StatusLine: outcome,
 	})
@@ -298,9 +301,9 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 			dmRootID:    req.DMRootPostID,
 			dmChannelID: req.DMChannelID,
 			days:        days,
-			cardTitle:   "Channel Admin Request Expired",
+			cardTitle:   exerciseLabel(req.Exercise) + "Channel Admin Request Expired",
 			cardText:    fmt.Sprintf("Your request to make %s Channel Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, channelRef),
-			audit: fmt.Sprintf("@%s closed the Channel Admin request for %s in %s from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("@%s closed the Channel Admin request for %s in %s from %s, which was not reviewed within %d days",
 				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID), days),
 		})
 	}
@@ -331,31 +334,31 @@ func (p *Plugin) decideAdminRequest(actingUserID, requestID, clickedPostID strin
 		if promoted == "" {
 			outcome = fmt.Sprintf("⚠️ Approved by @%s for %s, but nobody was promoted: the nominees are no longer members of %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), channelRef)
 			cardText = fmt.Sprintf("Approved by @%s, but nobody was promoted: %s are no longer members of %s.", actingUser.Username, nominees, channelRef)
-			p.logAudit(auditApproved, fmt.Sprintf("@%s approved %s for Channel Admin in %s, but none were still members (requested by %s)",
+			p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s approved %s for Channel Admin in %s, but none were still members (requested by %s)",
 				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 		} else {
 			p.postAdminPromotionMessage(channel, req, actingUser)
 			outcome = fmt.Sprintf("✅ Approved by @%s for %s. %s promoted to Channel Admin in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), promoted, channelRef)
 			cardText = fmt.Sprintf("Approved by @%s. %s is now Channel Admin in %s.", actingUser.Username, promoted, channelRef)
-			p.logAudit(auditApproved, fmt.Sprintf("@%s promoted %s to Channel Admin in %s (requested by %s)",
+			p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s promoted %s to Channel Admin in %s (requested by %s)",
 				actingUser.Username, promoted, channelRef, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 		}
 		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Approved: true, ApproverUsername: actingUser.Username,
-			CardTitle:  "Channel Admin Request Approved",
+			CardTitle:  exerciseLabel(req.Exercise) + "Channel Admin Request Approved",
 			CardText:   cardText,
 			StatusLine: outcome,
 		})
 	}
 
 	outcome := fmt.Sprintf("❌ Denied by @%s for %s. Channel Admin for %s in %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), nominees, channelRef)
-	p.logAudit(auditDenied, fmt.Sprintf("@%s denied a Channel Admin request for %s in %s",
+	p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied a Channel Admin request for %s in %s",
 		actingUser.Username, nominees, channelRef), cards.cardPostID)
 	return p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 		Approved: false, ApproverUsername: actingUser.Username,
-		CardTitle:  "Channel Admin Request Denied",
+		CardTitle:  exerciseLabel(req.Exercise) + "Channel Admin Request Denied",
 		CardText:   fmt.Sprintf("Denied by @%s. Your request to make %s Channel Admin in %s was not approved. Reply to this thread if you'd like more information.", actingUser.Username, nominees, channelRef),
 		StatusLine: outcome,
 	})

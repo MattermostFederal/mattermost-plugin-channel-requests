@@ -30,6 +30,11 @@ type teamCreationRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
+	// ExerciseTeamID is the team whose exercise data records what
+	// approving this request creates.
+	ExerciseTeamID string `json:"exercise_team_id,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -186,7 +191,10 @@ func (p *Plugin) createTeamForRequest(req *teamCreationRequest) (*model.Team, er
 
 func (p *Plugin) postTeamCreationApprovalRequest(req *teamCreationRequest, requester *model.User) (postID, channelID string, err error) {
 	ch := p.ensureTeamCreationApprovalChannel()
-	header := p.systemAdminMentions() + " — a team creation request needs System Admin review."
+	header := exerciseMarker + ": a team creation request needs System Admin review."
+	if !req.Exercise {
+		header = p.systemAdminMentions() + " — a team creation request needs System Admin review."
+	}
 	return p.postApprovalAttachment(
 		req.ID,
 		p.teamCreationApprovalAttachment(req, requester),
@@ -231,7 +239,7 @@ func (p *Plugin) teamCreationApprovalAttachment(req *teamCreationRequest, reques
 
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Team creation request",
+		Title:   exerciseLabel(req.Exercise) + "Team creation request",
 		Color:   "#6A33C2",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

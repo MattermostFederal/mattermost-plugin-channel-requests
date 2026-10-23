@@ -29,6 +29,8 @@ type teamGuestRequest struct {
 	// CreatedAt is when the request was submitted, in milliseconds.
 	// Requests saved by older versions get it from migratePendingRequests.
 	CreatedAt int64 `json:"created_at,omitempty"`
+	// Exercise marks a request seeded by exercise mode.
+	Exercise bool `json:"exercise,omitempty"`
 
 	ApprovalPostID    string `json:"approval_post_id,omitempty"`
 	ApprovalChannelID string `json:"approval_channel_id,omitempty"`
@@ -198,7 +200,10 @@ func (p *Plugin) fulfillTeamGuestRequest(req *teamGuestRequest, actingAdminID st
 
 func (p *Plugin) postTeamGuestApprovalRequest(req *teamGuestRequest, requester *model.User, team *model.Team) (postID, channelID string, err error) {
 	ch := p.ensureTeamCreationApprovalChannel()
-	header := p.systemAdminMentions() + " — a guest invite request needs System Admin review."
+	header := exerciseMarker + ": a guest invite request needs System Admin review."
+	if !req.Exercise {
+		header = p.systemAdminMentions() + " — a guest invite request needs System Admin review."
+	}
 	return p.postApprovalAttachment(
 		req.ID,
 		p.teamGuestApprovalAttachment(req, requester, team),
@@ -219,7 +224,7 @@ func (p *Plugin) teamGuestApprovalAttachment(req *teamGuestRequest, requester *m
 	}
 	siteURL := "/plugins/" + manifest.Id
 	return &model.MessageAttachment{
-		Title:   "Team guest invite request",
+		Title:   exerciseLabel(req.Exercise) + "Team guest invite request",
 		Color:   "#F4A221",
 		Fields:  fields,
 		Footer:  requestIDFooter(req.ID),

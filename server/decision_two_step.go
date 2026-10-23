@@ -188,9 +188,9 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 			dmRootID:    req.DMRootPostID,
 			dmChannelID: req.DMChannelID,
 			days:        days,
-			cardTitle:   "Bot Account Request Expired",
+			cardTitle:   exerciseLabel(req.Exercise) + "Bot Account Request Expired",
 			cardText:    fmt.Sprintf("Your request for bot **@%s** expired before it was reviewed. Submit it again if you still need it.", req.Username),
-			audit: fmt.Sprintf("@%s closed the bot request for @%s from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("@%s closed the bot request for @%s from %s, which was not reviewed within %d days",
 				actingUser.Username, req.Username, requesterUsername(requester, req.RequesterID), days),
 		})
 	}
@@ -204,12 +204,12 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 		}
 		p.releasePending(pendingKindBot, req.RequesterID, req.ID)
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. Bot **@%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.Username)
-		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a bot request for @%s",
+		p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied a bot request for @%s",
 			actingUser.Username, req.Username), cards.cardPostID)
 		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Approved: false, ApproverUsername: actingUser.Username,
-			CardTitle:  "Bot Account Request Denied",
+			CardTitle:  exerciseLabel(req.Exercise) + "Bot Account Request Denied",
 			CardText:   fmt.Sprintf("Denied by @%s. Your request for bot **@%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.Username),
 			StatusLine: outcome,
 		})
@@ -217,7 +217,7 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 
 	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, actingUser.Id, req.RequesterID)
 	if !fill {
-		return twoStepBlocked(cards, actingUser.Username, reason, p.botApprovalHeader(), func(title, notice string) *model.MessageAttachment {
+		return twoStepBlocked(cards, actingUser.Username, reason, p.botApprovalHeader(req.Exercise), func(title, notice string) *model.MessageAttachment {
 			cardRequester := requester
 			if cardRequester == nil {
 				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
@@ -241,7 +241,7 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Title: "Bot Account Request Update",
 			Text:  fmt.Sprintf("Your bot request for **@%s** received the %s approval; awaiting the other approval.", req.Username, step),
-		}, p.botApprovalHeader(), func() *model.MessageAttachment { return p.botApprovalAttachment(&newReq, requester) })
+		}, p.botApprovalHeader(req.Exercise), func() *model.MessageAttachment { return p.botApprovalAttachment(&newReq, requester) })
 	}
 
 	if res, ok := p.claimRecord(key, rawReq, cards, "bot request"); !ok {
@@ -261,7 +261,7 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 		}
 		// The cards are for clicking, whoever ran into the failure.
 		return p.repaintCards(cards, key, notice(clickedPostID != ""),
-			"@channel — a bot account request needs review (a previous approval attempt failed).",
+			botRetryHeader(req.Exercise),
 			p.botApprovalAttachmentWithNotice(req, requester, notice(true)))
 	}
 	p.releasePending(pendingKindBot, req.RequesterID, req.ID)
@@ -272,6 +272,15 @@ func (p *Plugin) decideBotRequest(actingUserID, requestID, clickedPostID string,
 // exists: it creates the token and webhooks asked for, as the approving
 // admin, closes the ticket and cards, and sends the requester the extras.
 func (p *Plugin) fulfillBotRequest(req *botRequest, bot *model.Bot, actingUser, requester *model.User, cards decisionCards) decisionResult {
+	// An exercise bot is recorded before anything is made for it, and
+	// each webhook as soon as it exists, so teardown misses none of them.
+	if req.Exercise && !p.recordExerciseBot(req.ExerciseTeamID, bot.UserId) {
+		return p.closeRemovedExerciseRequest(cards, req.RequesterID, req.DMRootPostID, req.DMChannelID)
+	}
+	recordHook := func(hook exerciseWebhook) bool {
+		return !req.Exercise || p.recordExerciseWebhook(req.ExerciseTeamID, hook, actingUser.Id)
+	}
+
 	authToken := ""
 	siteURL := p.siteURL()
 	if adminSession, sessErr := p.createUserSession(actingUser.Id); sessErr != nil {
@@ -321,16 +330,20 @@ func (p *Plugin) fulfillBotRequest(req *botRequest, bot *model.Bot, actingUser, 
 			if whErr != nil {
 				partialErrors = append(partialErrors, fmt.Sprintf("incoming webhook creation failed: %s", whErr.Error()))
 				p.API.LogError("failed to create incoming webhook for bot", "error", whErr.Error())
+			} else if !recordHook(exerciseWebhook{ID: hookIDFromPublicURL(incomingWebhookURL), Type: webhookTypeIncoming}) {
+				incomingWebhookURL = ""
 			}
 		}
 	}
 
+	var outgoingHookID string
 	if wantsOutgoing && authToken != "" && siteURL != "" {
-		if outErr := p.createOutgoingWebhookForBot(authToken, bot.UserId, req); outErr != nil {
+		var outErr error
+		if outgoingHookID, outErr = p.createOutgoingWebhookForBot(authToken, bot.UserId, req); outErr != nil {
 			partialErrors = append(partialErrors, fmt.Sprintf("outgoing webhook creation failed: %s", outErr.Error()))
 			p.API.LogError("failed to create outgoing webhook for bot", "error", outErr.Error())
 		} else {
-			outgoingWebhookCreated = true
+			outgoingWebhookCreated = recordHook(exerciseWebhook{ID: outgoingHookID, Type: webhookTypeOutgoing})
 		}
 	}
 
@@ -375,12 +388,12 @@ func (p *Plugin) fulfillBotRequest(req *botRequest, bot *model.Bot, actingUser, 
 	}
 
 	outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. Bot **@%s** created.", requesterUsername(requester, req.RequesterID), bot.Username)
-	p.logAudit(auditApproved, fmt.Sprintf("@%s gave final approval; bot @%s created for %s",
+	p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s gave final approval; bot @%s created for %s",
 		actingUser.Username, bot.Username, requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 	result := p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 		Approved: true, ApproverUsername: actingUser.Username,
-		CardTitle:  "Bot Account Request Approved",
+		CardTitle:  exerciseLabel(req.Exercise) + "Bot Account Request Approved",
 		CardText:   fmt.Sprintf("Fully approved (security + system). Bot **@%s** has been created.", bot.Username),
 		StatusLine: outcome,
 	})
@@ -438,9 +451,9 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 			dmRootID:    req.DMRootPostID,
 			dmChannelID: req.DMChannelID,
 			days:        days,
-			cardTitle:   "Webhook Request Expired",
+			cardTitle:   exerciseLabel(req.Exercise) + "Webhook Request Expired",
 			cardText:    fmt.Sprintf("Your request for a %s webhook **%s** expired before it was reviewed. Submit it again if you still need it.", req.WebhookType, escapeMarkdown(req.DisplayName)),
-			audit: fmt.Sprintf("@%s closed the %s webhook request for %s from %s, which was not reviewed within %d days",
+			audit: exerciseLabel(req.Exercise) + fmt.Sprintf("@%s closed the %s webhook request for %s from %s, which was not reviewed within %d days",
 				actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
 		})
 	}
@@ -454,12 +467,12 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 		}
 		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. %s webhook **%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.WebhookType, escapeMarkdown(req.DisplayName))
-		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a %s webhook request for %s",
+		p.logAudit(auditDenied, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s denied a %s webhook request for %s",
 			actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName)), cards.cardPostID)
 		return p.finish(cards, "", outcome, ticketClose{
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Approved: false, ApproverUsername: actingUser.Username,
-			CardTitle:  "Webhook Request Denied",
+			CardTitle:  exerciseLabel(req.Exercise) + "Webhook Request Denied",
 			CardText:   fmt.Sprintf("Denied by @%s. Your request for a %s webhook **%s** was not approved. Reply to this thread if you'd like more information.", actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName)),
 			StatusLine: outcome,
 		})
@@ -467,7 +480,7 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 
 	step, fill, reason := planApproval(req.twoStepState, canSec, canSys, actingUser.Id, req.RequesterID)
 	if !fill {
-		return twoStepBlocked(cards, actingUser.Username, reason, p.webhookApprovalHeader(), func(title, notice string) *model.MessageAttachment {
+		return twoStepBlocked(cards, actingUser.Username, reason, p.webhookApprovalHeader(req.Exercise), func(title, notice string) *model.MessageAttachment {
 			cardRequester := requester
 			if cardRequester == nil {
 				cardRequester = &model.User{Username: requesterUsername(nil, req.RequesterID)}
@@ -495,7 +508,7 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 			RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 			Title: "Webhook Request Update",
 			Text:  fmt.Sprintf("Your %s webhook request for **%s** received the %s approval; awaiting the other approval.", req.WebhookType, escapeMarkdown(req.DisplayName), step),
-		}, p.webhookApprovalHeader(), func() *model.MessageAttachment { return p.webhookApprovalAttachment(&newReq, requester, channel) })
+		}, p.webhookApprovalHeader(req.Exercise), func() *model.MessageAttachment { return p.webhookApprovalAttachment(&newReq, requester, channel) })
 	}
 
 	if res, ok := p.claimRecord(key, rawReq, cards, "webhook request"); !ok {
@@ -515,10 +528,13 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 		}
 		// The cards are for clicking, whoever ran into the failure.
 		return p.repaintCards(cards, key, notice(clickedPostID != ""),
-			"@channel — a webhook request needs review (a previous approval attempt failed).",
+			webhookRetryHeader(req.Exercise),
 			p.webhookApprovalAttachmentWithNotice(req, requester, channel, notice(true)))
 	}
 	p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
+	if req.Exercise && !p.recordExerciseWebhook(req.TeamID, exerciseWebhook{ID: hookID, Type: req.WebhookType}, actingUser.Id) {
+		return p.closeRemovedExerciseRequest(cards, req.RequesterID, req.DMRootPostID, req.DMChannelID)
+	}
 
 	// Best-effort: reopen the requester DM if submit-time open failed.
 	if req.DMChannelID == "" {
@@ -543,12 +559,12 @@ func (p *Plugin) decideWebhookRequest(actingUserID, requestID, clickedPostID str
 	}
 
 	outcome := fmt.Sprintf("✅ Fully approved (security + system) for %s. %s webhook **%s** created.", requesterUsername(requester, req.RequesterID), req.WebhookType, escapeMarkdown(req.DisplayName))
-	p.logAudit(auditApproved, fmt.Sprintf("@%s gave final approval; %s webhook \"%s\" created for %s",
+	p.logAudit(auditApproved, exerciseLabel(req.Exercise)+fmt.Sprintf("@%s gave final approval; %s webhook \"%s\" created for %s",
 		actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)), cards.cardPostID)
 	return p.finish(cards, "", outcome, ticketClose{
 		RequesterID: req.RequesterID, DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
 		Approved: true, ApproverUsername: actingUser.Username,
-		CardTitle:  "Webhook Request Approved",
+		CardTitle:  exerciseLabel(req.Exercise) + "Webhook Request Approved",
 		CardText:   fmt.Sprintf("Fully approved (security + system). %s", dmMsg),
 		StatusLine: outcome,
 	})

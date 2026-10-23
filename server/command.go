@@ -46,6 +46,7 @@ const (
 	listApprovals           = "approvals"
 	subcommandApprove       = "approve"
 	subcommandDeny          = "deny"
+	subcommandExercise      = "exercise"
 	requestIDArgHint        = "<request ID>"
 )
 
@@ -58,7 +59,7 @@ func getCommand() *model.Command {
 		Trigger:          commandTrigger,
 		AutoComplete:     true,
 		AutoCompleteDesc: "Request admin-gated permissions (channels, teams, admin roles) or open docs",
-		AutoCompleteHint: "[docs|help|channel|channel-admin|prefixes|list|approve|deny|team-admin|team|team-member|team-guest|bot|webhook-incoming|webhook-outgoing]",
+		AutoCompleteHint: "[docs|help|channel|channel-admin|prefixes|list|approve|deny|exercise|team-admin|team|team-member|team-guest|bot|webhook-incoming|webhook-outgoing]",
 		AutocompleteData: getAutocompleteData(),
 		DisplayName:      "Mattermost Request Hub",
 	}
@@ -76,6 +77,11 @@ func getAutocompleteData() *model.AutocompleteData {
 	root.AddCommand(list)
 	root.AddCommand(model.NewAutocompleteData(subcommandApprove, requestIDArgHint, "Approve a request by the ID on its approval card"))
 	root.AddCommand(model.NewAutocompleteData(subcommandDeny, requestIDArgHint, "Deny a request by the ID on its approval card"))
+	exercise := model.NewAutocompleteData(subcommandExercise, "populate|teardown|status", "Seed, remove or report exercise data (System Admins, exercise mode on)")
+	exercise.AddCommand(model.NewAutocompleteData(exercisePopulate, "", "Seed marked exercise data into this team"))
+	exercise.AddCommand(model.NewAutocompleteData(exerciseTeardown, "", "Remove this team's exercise data"))
+	exercise.AddCommand(model.NewAutocompleteData(exerciseStatus, "", "Compare recorded and live exercise data"))
+	root.AddCommand(exercise)
 	root.AddCommand(model.NewAutocompleteData("team-admin", "["+teamAdminArgsHint+"]", "Request Team Admin role in the current team (no arguments opens the form)"))
 	root.AddCommand(model.NewAutocompleteData("team", "["+teamArgsHint+"]", "Request creation of a new team (no arguments opens the form)"))
 	root.AddCommand(model.NewAutocompleteData("team-member", "["+teamMemberArgsHint+"]", "Request adding users or bots to the current team (no arguments opens the form)"))
@@ -141,6 +147,8 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (res
 		return p.executeDecision(args, params, true), nil
 	case subcommandDeny:
 		return p.executeDecision(args, params, false), nil
+	case subcommandExercise:
+		return p.executeExercise(args, params), nil
 	case "team-admin":
 		if len(params) > 0 {
 			return p.executeTeamAdminNominateCommand(args, params), nil
@@ -363,6 +371,7 @@ var helpRows = []helpRow{
 	{"", subcommandList + " " + listApprovals, "List the pending requests you can approve and their IDs"},
 	{"", subcommandApprove + " " + requestIDArgHint, "Approve a request, as its Approve button would"},
 	{"", subcommandDeny + " " + requestIDArgHint, "Deny a request, as its Deny button would"},
+	{"", subcommandExercise + " <populate, teardown or status>", "Seed (`populate`), remove (`teardown`) or report (`status`) marked exercise data in this team (System Admins, when exercise mode is on)"},
 	{requestTypeTeamAdmin, "team-admin", "Request Team Admin role in this team (opens the form)"},
 	{requestTypeTeamAdmin, "team-admin " + teamAdminArgsHint, "Request Team Admin for those members of this team"},
 	{requestTypeTeam, "team", "Request a new team (opens the form)"},

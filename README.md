@@ -17,6 +17,7 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 - Approval routing: channel requests (root or per-team), team-scope tickets in `mattermost-team-requests`, bots/webhooks in dedicated channels
 - Soft-squash approval cards and DM ticket threads with message relay
 - Bot/webhook two-step approval via User Attributes, User Groups, or System Admins only
+- Exercise mode for training and demonstrations (**Enable exercise mode**, off by default): System Admins seed a team with marked persona accounts, channels and pending requests of every type from a fictional built-in scenario or their own, then remove it all, including what approving them created, with `exercise teardown`
 - Optional tools for the Mattermost Agents plugin (**Offer tools to Agents**): an agent can list prefixes, file any type of request for the user it's talking to and look up pending requests, under the same rules and per-type toggles. Agents can't approve or deny.
 
 ## Documentation

@@ -329,6 +329,11 @@ func (p *Plugin) pendingRequestExists(kind, requestID string) (bool, error) {
 	return data != nil, nil
 }
 
+// requestKVPrefix is the KV prefix of the records of a pending kind.
+func requestKVPrefix(kind string) string {
+	return pendingKinds[kind].kvPrefix
+}
+
 func duplicateRequestError(kind, key string) error {
 	return pendingKinds[kind].duplicate(key)
 }
