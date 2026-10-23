@@ -7,7 +7,8 @@
     {"role": "tankerac", "first_name": "Hannah", "last_name": "Whitmore", "position": "Tanker aircraft commander, Kestrel Tanker Detachment, Kestrel Field"},
     {"role": "boomop", "first_name": "Luis", "last_name": "Ferrante", "position": "Boom operator, Kestrel Tanker Detachment, Kestrel Field"},
     {"role": "bomberac", "first_name": "Marcus", "last_name": "Reyland", "position": "Bomber aircraft commander, Dunmore Bomber Detachment, Dunmore Island"},
-    {"role": "airfield", "first_name": "Keiko", "last_name": "Brand", "position": "Airfield manager, Port Vellan Air Station"}
+    {"role": "airfield", "first_name": "Keiko", "last_name": "Brand", "position": "Airfield manager, Port Vellan Air Station"},
+    {"role": "liaison", "first_name": "Tomas", "last_name": "Adeyemi", "position": "Fuel liaison, Port Vellan Air Station", "off_team": true}
   ],
   "operations": [
     {
@@ -61,6 +62,63 @@
       "channel": "current-ops-channel",
       "requester": "chiefops",
       "nominees": ["planner"]
+    },
+    {
+      "act": 1,
+      "operation_id": "planning-cell-team-request",
+      "kind": "team_request",
+      "suffix": "planning-cell",
+      "display_name": "Silver Harbor Planning Cell",
+      "purpose": "A separate team for the replanning cell while the divert is worked.",
+      "private": true,
+      "requester": "chiefops",
+      "team_admin": true
+    },
+    {
+      "act": 1,
+      "operation_id": "planner-team-admin-request",
+      "kind": "team_admin_request",
+      "requester": "chiefops",
+      "nominees": ["planner"]
+    },
+    {
+      "act": 1,
+      "operation_id": "liaison-team-member-request",
+      "kind": "team_member_request",
+      "requester": "airfield",
+      "nominees": ["liaison"],
+      "reason": "The fuel liaison needs to follow the divert channels."
+    },
+    {
+      "act": 1,
+      "operation_id": "fuel-vendor-guest-request",
+      "kind": "team_guest_request",
+      "requester": "chiefops",
+      "guest": "fuel-vendor",
+      "channels": ["current-ops-channel"],
+      "reason": "Contract fuel vendor for the diverted bomber."
+    },
+    {
+      "act": 1,
+      "operation_id": "track-status-bot-request",
+      "kind": "bot_request",
+      "suffix": "status",
+      "display_name": "Refueling Track Status",
+      "purpose": "Posts refueling track status to current ops.",
+      "requester": "chiefops",
+      "owner": "planner",
+      "token": true,
+      "incoming_channel": "current-ops-channel"
+    },
+    {
+      "act": 1,
+      "operation_id": "tanker-status-webhook-request",
+      "kind": "webhook_request",
+      "webhook_type": "incoming",
+      "channel": "current-ops-channel",
+      "display_name": "Tanker Status Feed",
+      "purpose": "Tanker detachment status updates.",
+      "requester": "chiefops"
     }
   ]
 }

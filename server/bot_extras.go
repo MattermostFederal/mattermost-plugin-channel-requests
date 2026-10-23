@@ -86,8 +86,8 @@ func (p *Plugin) createIncomingWebhookForBot(authToken, botUserID string, req *b
 }
 
 // createOutgoingWebhookForBot creates an outgoing webhook owned by the bot using
-// the approving admin's session token.
-func (p *Plugin) createOutgoingWebhookForBot(authToken, botUserID string, req *botRequest) error {
+// the approving admin's session token. Returns the hook's ID on success.
+func (p *Plugin) createOutgoingWebhookForBot(authToken, botUserID string, req *botRequest) (string, error) {
 	client := model.NewAPIv4Client(p.internalBaseURL())
 	client.SetToken(authToken)
 
@@ -98,10 +98,10 @@ func (p *Plugin) createOutgoingWebhookForBot(authToken, botUserID string, req *b
 
 	channel, appErr := p.API.GetChannel(req.OutgoingWebhookChannelID)
 	if appErr != nil {
-		return fmt.Errorf("load channel: %s", appErr.Error())
+		return "", fmt.Errorf("load channel: %s", appErr.Error())
 	}
 
-	_, _, err := client.CreateOutgoingWebhook(context.Background(), &model.OutgoingWebhook{
+	hook, _, err := client.CreateOutgoingWebhook(context.Background(), &model.OutgoingWebhook{
 		TeamId:       channel.TeamId,
 		ChannelId:    req.OutgoingWebhookChannelID,
 		CreatorId:    botUserID,
@@ -111,9 +111,9 @@ func (p *Plugin) createOutgoingWebhookForBot(authToken, botUserID string, req *b
 		ContentType:  "application/json",
 	})
 	if err != nil {
-		return fmt.Errorf("create outgoing webhook: %w", err)
+		return "", fmt.Errorf("create outgoing webhook: %w", err)
 	}
-	return nil
+	return hook.Id, nil
 }
 
 // sendBotExtrasReply posts a thread reply with the token, webhook URLs, and any

@@ -46,7 +46,7 @@ func (p *Plugin) executeExercise(args *model.CommandArgs, params []commandArg) *
 	case exercisePopulate:
 		reply, err = p.populateExercise(args.TeamId, args.UserId)
 	case exerciseTeardown:
-		reply, err = p.teardownExercise(args.TeamId)
+		reply, err = p.teardownExercise(args.TeamId, args.UserId)
 	case exerciseStatus:
 		reply, err = p.exerciseStatus(args.TeamId)
 	default:

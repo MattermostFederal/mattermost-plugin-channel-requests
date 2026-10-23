@@ -178,7 +178,7 @@
                 "display_name": "Enable exercise mode",
                 "type": "bool",
                 "default": false,
-                "help_text": "Do not enable in production. When true, System Admins can run /mattermost-request-hub exercise populate, teardown and status to seed marked EXERCISE data into a team: persona accounts nobody can sign in as, a channel, and pending channel and Channel Admin requests on the approval cards. Needs channel requests allowed and a channel prefix. Approving a seeded request creates a real channel marked EXERCISE. Teardown closes the requests, archives the channels and deactivates the personas."
+                "help_text": "Do not enable in production. When true, System Admins can run /mattermost-request-hub exercise populate, teardown and status to seed marked EXERCISE data into a team: persona accounts nobody can sign in as, a channel, and pending requests of every type on the approval cards. Needs channel requests allowed, a channel prefix, and each type the scenario seeds turned on. Approving a seeded request does the real thing (a channel, team, bot or webhook marked EXERCISE, a Team Admin or member change for a persona, or a guest invite to an address that receives no mail). Teardown closes the requests, deletes the webhooks and bots, archives the teams and channels, undoes the personas' team changes and deactivates them. Guest invites can't be withdrawn and expire on their own."
             },
             {
                 "key": "ExerciseScenarioJSON",

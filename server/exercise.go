@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -48,7 +49,6 @@ const (
 
 	// The populate refusals when the request types it seeds are turned off.
 	exerciseChannelRequestsOffText = "exercise mode seeds channel requests, which are turned off. Turn on **Allow channel requests** in System Console → Plugins → Mattermost Request Hub, then run populate again"
-	exerciseAdminRequestsOffText   = "this scenario seeds Channel Admin requests, which are turned off. Turn on **Allow channel admin requests** in System Console → Plugins → Mattermost Request Hub, or use a scenario without them"
 
 	// exerciseEmailDomain is a reserved domain (RFC 2606), so mail to a
 	// persona goes nowhere.
@@ -70,6 +70,28 @@ const (
 	exerciseKindChannel        = "channel"
 	exerciseKindChannelRequest = "channel_request"
 	exerciseKindAdminRequest   = "admin_request"
+	exerciseKindTeamRequest    = "team_request"
+	exerciseKindTeamAdmin      = "team_admin_request"
+	exerciseKindTeamMember     = "team_member_request"
+	exerciseKindTeamGuest      = "team_guest_request"
+	exerciseKindBotRequest     = "bot_request"
+	exerciseKindWebhookRequest = "webhook_request"
+)
+
+const (
+	// exerciseTeamNamePrefix starts the URL name of every exercise team.
+	exerciseTeamNamePrefix = "exercise-"
+	// exerciseBotPrefix starts every exercise bot username. It is short
+	// because bot usernames are short.
+	exerciseBotPrefix = "ex-"
+	// exerciseBotTeamIDChars is how much of the team ID a bot username
+	// carries.
+	exerciseBotTeamIDChars = 6
+	// exerciseGuestEmailPrefix starts the address of every exercise guest.
+	exerciseGuestEmailPrefix = "exercise-guest-"
+	// exerciseCallbackURL is the callback of every exercise outgoing
+	// webhook. The domain is reserved, so nothing is ever called.
+	exerciseCallbackURL = "https://" + exerciseEmailDomain + "/hook"
 )
 
 // builtInExerciseScenario is a fictional scenario that shows the
@@ -113,24 +135,106 @@ type exercisePersonaSpec struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Position  string `json:"position"`
+	// OffTeam keeps the persona out of the team, so a team member request
+	// can add them.
+	OffTeam bool `json:"off_team,omitempty"`
 }
 
 // exerciseOperationSpec is one step of a scenario. Persona fields hold
-// roles; Channel holds the operation ID of a channel operation.
+// roles; Channel, Channels, IncomingChannel and OutgoingChannel hold the
+// operation IDs of channel operations.
 type exerciseOperationSpec struct {
-	Act         int      `json:"act"`
-	OperationID string   `json:"operation_id"`
-	Kind        string   `json:"kind"`
-	Suffix      string   `json:"suffix,omitempty"`
-	DisplayName string   `json:"display_name,omitempty"`
-	Purpose     string   `json:"purpose,omitempty"`
-	Private     bool     `json:"private,omitempty"`
-	Requester   string   `json:"requester"`
-	Members     []string `json:"members,omitempty"`
-	Admins      []string `json:"admins,omitempty"`
-	AgeDays     int      `json:"age_days,omitempty"`
-	Channel     string   `json:"channel,omitempty"`
-	Nominees    []string `json:"nominees,omitempty"`
+	Act             int      `json:"act"`
+	OperationID     string   `json:"operation_id"`
+	Kind            string   `json:"kind"`
+	Suffix          string   `json:"suffix,omitempty"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	Purpose         string   `json:"purpose,omitempty"`
+	Private         bool     `json:"private,omitempty"`
+	Requester       string   `json:"requester"`
+	Members         []string `json:"members,omitempty"`
+	Admins          []string `json:"admins,omitempty"`
+	AgeDays         int      `json:"age_days,omitempty"`
+	Channel         string   `json:"channel,omitempty"`
+	Nominees        []string `json:"nominees,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	TeamAdmin       bool     `json:"team_admin,omitempty"`
+	Guest           string   `json:"guest,omitempty"`
+	Channels        []string `json:"channels,omitempty"`
+	Owner           string   `json:"owner,omitempty"`
+	Token           bool     `json:"token,omitempty"`
+	IncomingChannel string   `json:"incoming_channel,omitempty"`
+	OutgoingChannel string   `json:"outgoing_channel,omitempty"`
+	WebhookType     string   `json:"webhook_type,omitempty"`
+}
+
+// exerciseRequestType describes one request type a plan seeds.
+type exerciseRequestType struct {
+	kind string
+	// plural names the type, as in "channel requests".
+	plural string
+	// setting is the System Console setting that turns the type on.
+	setting string
+	// specIDs are the IDs of the plan's requests of this type.
+	specIDs []string
+}
+
+// requestTypes lists every request type in plan order, with the plan's
+// requests of each.
+func (plan *exercisePlan) requestTypes() []exerciseRequestType {
+	ids := func(n int, id func(int) string) []string {
+		out := make([]string, 0, n)
+		for i := range n {
+			out = append(out, id(i))
+		}
+		return out
+	}
+	return []exerciseRequestType{
+		{
+			pendingKindChannel, "channel requests", "Allow channel requests",
+			ids(len(plan.ChannelRequests), func(i int) string { return plan.ChannelRequests[i].ID }),
+		},
+		{
+			pendingKindAdmin, "Channel Admin requests", "Allow channel admin requests",
+			ids(len(plan.AdminRequests), func(i int) string { return plan.AdminRequests[i].ID }),
+		},
+		{
+			pendingKindTeam, "team creation requests", "Allow team requests",
+			ids(len(plan.TeamRequests), func(i int) string { return plan.TeamRequests[i].ID }),
+		},
+		{
+			pendingKindTeamAdmin, "Team Admin requests", "Allow team admin requests",
+			ids(len(plan.TeamAdminRequests), func(i int) string { return plan.TeamAdminRequests[i].ID }),
+		},
+		{
+			pendingKindTeamMember, "team member requests", "Allow team member requests",
+			ids(len(plan.TeamMemberRequests), func(i int) string { return plan.TeamMemberRequests[i].ID }),
+		},
+		{
+			pendingKindTeamGuest, "guest invite requests", "Allow team guest requests",
+			ids(len(plan.TeamGuestRequests), func(i int) string { return plan.TeamGuestRequests[i].ID }),
+		},
+		{
+			pendingKindBot, "bot account requests", "Allow bot account requests",
+			ids(len(plan.BotRequests), func(i int) string { return plan.BotRequests[i].ID }),
+		},
+		{
+			pendingKindWebhook, "webhook requests", "Allow webhook requests",
+			ids(len(plan.WebhookRequests), func(i int) string { return plan.WebhookRequests[i].ID }),
+		},
+	}
+}
+
+// alwaysShown reports whether populate and status count the type even
+// when the scenario seeds none: channel and Channel Admin requests.
+func (t exerciseRequestType) alwaysShown() bool {
+	return t.kind == pendingKindChannel || t.kind == pendingKindAdmin
+}
+
+// exerciseTypeOffText refuses a populate whose scenario seeds a request
+// type that is turned off.
+func exerciseTypeOffText(t exerciseRequestType) string {
+	return fmt.Sprintf("this scenario seeds %s, which are turned off. Turn on **%s** in System Console → Plugins → Mattermost Request Hub, or use a scenario without them", t.plural, t.setting)
 }
 
 // exercisePlan is everything populate will create for one team, with
@@ -142,6 +246,13 @@ type exercisePlan struct {
 	Channels        []exerciseChannel        `json:"channels"`
 	ChannelRequests []exerciseChannelRequest `json:"channel_requests"`
 	AdminRequests   []exerciseAdminRequest   `json:"admin_requests"`
+
+	TeamRequests       []exerciseTeamRequest    `json:"team_requests,omitempty"`
+	TeamAdminRequests  []exerciseNomineeRequest `json:"team_admin_requests,omitempty"`
+	TeamMemberRequests []exerciseNomineeRequest `json:"team_member_requests,omitempty"`
+	TeamGuestRequests  []exerciseGuestRequest   `json:"team_guest_requests,omitempty"`
+	BotRequests        []exerciseBotRequest     `json:"bot_requests,omitempty"`
+	WebhookRequests    []exerciseWebhookRequest `json:"webhook_requests,omitempty"`
 }
 
 type exercisePersona struct {
@@ -151,6 +262,7 @@ type exercisePersona struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Position  string `json:"position"`
+	OffTeam   bool   `json:"off_team,omitempty"`
 }
 
 type exerciseChannel struct {
@@ -186,6 +298,66 @@ type exerciseAdminRequest struct {
 	CreatedAt    int64    `json:"created_at"`
 }
 
+// exerciseTeamRequest is a planned team creation request. Name is the
+// team's URL name.
+type exerciseTeamRequest struct {
+	OpKey       string `json:"op_key"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	Requester   string `json:"requester"`
+	TeamAdmin   bool   `json:"team_admin,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+// exerciseNomineeRequest is a planned Team Admin or team member request
+// for the exercise team.
+type exerciseNomineeRequest struct {
+	OpKey     string   `json:"op_key"`
+	ID        string   `json:"id"`
+	Requester string   `json:"requester"`
+	Nominees  []string `json:"nominees"`
+	Reason    string   `json:"reason,omitempty"`
+	CreatedAt int64    `json:"created_at"`
+}
+
+type exerciseGuestRequest struct {
+	OpKey         string   `json:"op_key"`
+	ID            string   `json:"id"`
+	Requester     string   `json:"requester"`
+	Email         string   `json:"email"`
+	ChannelOpKeys []string `json:"channel_op_keys"`
+	Reason        string   `json:"reason,omitempty"`
+	CreatedAt     int64    `json:"created_at"`
+}
+
+type exerciseBotRequest struct {
+	OpKey                string `json:"op_key"`
+	ID                   string `json:"id"`
+	Username             string `json:"username"`
+	DisplayName          string `json:"display_name"`
+	Description          string `json:"description"`
+	Requester            string `json:"requester"`
+	Owner                string `json:"owner,omitempty"`
+	Token                bool   `json:"token,omitempty"`
+	IncomingChannelOpKey string `json:"incoming_channel_op_key,omitempty"`
+	OutgoingChannelOpKey string `json:"outgoing_channel_op_key,omitempty"`
+	CreatedAt            int64  `json:"created_at"`
+}
+
+type exerciseWebhookRequest struct {
+	OpKey        string `json:"op_key"`
+	ID           string `json:"id"`
+	WebhookType  string `json:"webhook_type"`
+	ChannelOpKey string `json:"channel_op_key"`
+	DisplayName  string `json:"display_name"`
+	Description  string `json:"description"`
+	Requester    string `json:"requester"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
 // exerciseManifest records a team's exercise data. It is claimed before
 // populate writes anything, so it always names everything that may exist.
 type exerciseManifest struct {
@@ -205,6 +377,17 @@ type exerciseManifest struct {
 	// of the seeded requests, which outlive a decision, for teardown to
 	// delete.
 	KVKeys []string `json:"kv_keys,omitempty"`
+	// TeamIDs, BotIDs and Webhooks list what approving exercise requests
+	// created, for teardown to remove.
+	TeamIDs  []string          `json:"team_ids,omitempty"`
+	BotIDs   []string          `json:"bot_ids,omitempty"`
+	Webhooks []exerciseWebhook `json:"webhooks,omitempty"`
+}
+
+// exerciseWebhook is a webhook created by approving an exercise request.
+type exerciseWebhook struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
 func exerciseManifestKey(teamID string) string {
@@ -252,14 +435,17 @@ func buildExercisePlan(sc *exerciseScenario, teamID string, prefixes []channelPr
 		return nil, errors.Errorf("a scenario can have at most %d personas and %d operations", maxExercisePersonas, maxExerciseOperations)
 	}
 	prefix := prefixes[0].Prefix
+	teamTail := "-" + teamID[:min(len(teamID), exerciseTeamIDChars)]
 
 	plan := &exercisePlan{Scenario: sc.ID, TeamID: teamID}
 	roles := map[string]bool{}
+	offTeam := map[string]bool{}
 	for _, ps := range sc.Personas {
 		if roles[ps.Role] {
 			return nil, errors.Errorf("persona %q is listed twice", ps.Role)
 		}
 		roles[ps.Role] = true
+		offTeam[ps.Role] = ps.OffTeam
 		username := exercisePersonaUsername(ps.Role, teamID)
 		if !model.IsValidUsername(username) {
 			return nil, errors.Errorf("persona %q gives the invalid username %q", ps.Role, username)
@@ -278,6 +464,7 @@ func buildExercisePlan(sc *exerciseScenario, teamID string, prefixes []channelPr
 			FirstName: ps.FirstName,
 			LastName:  ps.LastName,
 			Position:  position,
+			OffTeam:   ps.OffTeam,
 		})
 	}
 
@@ -292,10 +479,49 @@ func buildExercisePlan(sc *exerciseScenario, teamID string, prefixes []channelPr
 		}
 		return nil
 	}
+	// onTeam also refuses off-team personas, for lists that need team
+	// members.
+	onTeam := func(op exerciseOperationSpec, list []string) error {
+		if err := checkRoles(op, list); err != nil {
+			return err
+		}
+		for _, r := range list {
+			if offTeam[r] {
+				return errors.Errorf("operation %q needs persona %q on the team, but it is off_team", op.OperationID, r)
+			}
+		}
+		return nil
+	}
+	nominees := func(op exerciseOperationSpec, check func(exerciseOperationSpec, []string) error) error {
+		if len(op.Nominees) == 0 {
+			return errors.Errorf("operation %q names no nominees", op.OperationID)
+		}
+		return check(op, op.Nominees)
+	}
 
 	seenOps := map[string]bool{}
-	channelOps := map[string]string{} // operation ID -> op key
+	channelOps := map[string]exerciseChannel{} // operation ID -> channel
+	// channelRef returns the earlier channel operation ref names, which
+	// member must belong to.
+	channelRef := func(op exerciseOperationSpec, ref, member string) (exerciseChannel, error) {
+		ch, ok := channelOps[ref]
+		if !ok {
+			return ch, errors.Errorf("operation %q needs an earlier channel operation %q", op.OperationID, ref)
+		}
+		if member != ch.Creator && !slices.Contains(ch.Members, member) && !slices.Contains(ch.Admins, member) {
+			return ch, errors.Errorf("operation %q needs persona %q in channel operation %q", op.OperationID, member, ref)
+		}
+		return ch, nil
+	}
 	names := map[string]bool{}
+	unique := func(op exerciseOperationSpec, what, value string) error {
+		key := what + "\x00" + value
+		if names[key] {
+			return errors.Errorf("operation %q reuses the %s %q", op.OperationID, what, value)
+		}
+		names[key] = true
+		return nil
+	}
 	for _, op := range sc.Operations {
 		key := exerciseOpKey(sc.ID, op.Act, op.OperationID)
 		if op.OperationID == "" || seenOps[op.OperationID] {
@@ -305,70 +531,204 @@ func buildExercisePlan(sc *exerciseScenario, teamID string, prefixes []channelPr
 		if op.AgeDays < 0 || op.AgeDays > maxRequestExpiryDays {
 			return nil, errors.Errorf("operation %q needs an age_days from 0 to %d", op.OperationID, maxRequestExpiryDays)
 		}
-		if err := checkRoles(op, []string{op.Requester}); err != nil {
+		// Only a team member request and a team creation request may
+		// come from someone off the team.
+		requesterCheck := onTeam
+		if op.Kind == exerciseKindTeamMember || op.Kind == exerciseKindTeamRequest {
+			requesterCheck = checkRoles
+		}
+		if err := requesterCheck(op, []string{op.Requester}); err != nil {
 			return nil, err
 		}
+		op.Nominees, op.Channels = dedupeNonEmpty(op.Nominees), dedupeNonEmpty(op.Channels)
 		createdAt := nowMs - int64(op.AgeDays)*millisPerDay
+		displayName := exerciseDisplayPrefix + strings.Join(strings.Fields(op.DisplayName), " ")
+		purpose := exercisePurposePrefix + op.Purpose
 
-		var name, displayName, purpose, channelType string
-		if op.Kind == exerciseKindChannel || op.Kind == exerciseKindChannelRequest {
-			if err := checkRoles(op, op.Members); err != nil {
+		switch op.Kind {
+		case exerciseKindChannel, exerciseKindChannelRequest:
+			if err := onTeam(op, op.Members); err != nil {
 				return nil, err
 			}
-			if err := checkRoles(op, op.Admins); err != nil {
+			if err := onTeam(op, op.Admins); err != nil {
 				return nil, err
 			}
-			displayName = exerciseDisplayPrefix + strings.Join(strings.Fields(op.DisplayName), " ")
-			purpose = exercisePurposePrefix + op.Purpose
 			if err := validateRequestInput(requestInput{TeamID: teamID, DisplayName: displayName, Purpose: purpose}); err != nil {
 				return nil, errors.Wrapf(err, "operation %q", op.OperationID)
 			}
-			var err error
-			name, err = resolvePrefixedName(prefixes, requestInput{Prefix: prefix, Name: op.Suffix, DisplayName: op.DisplayName})
+			name, err := resolvePrefixedName(prefixes, requestInput{Prefix: prefix, Name: op.Suffix, DisplayName: op.DisplayName})
 			if err != nil {
 				return nil, errors.Wrapf(err, "operation %q", op.OperationID)
 			}
-			if names[name] {
-				return nil, errors.Errorf("operation %q reuses the channel name %q", op.OperationID, name)
+			if err := unique(op, "channel name", name); err != nil {
+				return nil, err
 			}
-			names[name] = true
-			channelType = channelTypeOpen
+			channelType := channelTypeOpen
 			if op.Private {
 				channelType = channelTypePrivate
 			}
-		}
-
-		switch op.Kind {
-		case exerciseKindChannel:
-			channelOps[op.OperationID] = key
-			plan.Channels = append(plan.Channels, exerciseChannel{
-				OpKey: key, Name: name, DisplayName: displayName, Purpose: purpose, ChannelType: channelType,
-				Creator: op.Requester, Members: op.Members, Admins: op.Admins,
-			})
-		case exerciseKindChannelRequest:
+			if op.Kind == exerciseKindChannel {
+				ch := exerciseChannel{
+					OpKey: key, Name: name, DisplayName: displayName, Purpose: purpose, ChannelType: channelType,
+					Creator: op.Requester, Members: op.Members, Admins: op.Admins,
+				}
+				channelOps[op.OperationID] = ch
+				plan.Channels = append(plan.Channels, ch)
+				continue
+			}
 			plan.ChannelRequests = append(plan.ChannelRequests, exerciseChannelRequest{
 				OpKey: key, ID: newID(), Name: name, DisplayName: displayName, Purpose: purpose, ChannelType: channelType,
 				Requester: op.Requester, Members: op.Members, Admins: op.Admins, CreatedAt: createdAt,
 			})
 		case exerciseKindAdminRequest:
-			channelKey, ok := channelOps[op.Channel]
-			if !ok {
-				return nil, errors.Errorf("operation %q needs an earlier channel operation %q", op.OperationID, op.Channel)
+			ch, err := channelRef(op, op.Channel, op.Requester)
+			if err != nil {
+				return nil, err
 			}
-			if len(op.Nominees) == 0 {
-				return nil, errors.Errorf("operation %q names no nominees", op.OperationID)
-			}
-			if err := checkRoles(op, op.Nominees); err != nil {
+			if err := nominees(op, onTeam); err != nil {
 				return nil, err
 			}
 			plan.AdminRequests = append(plan.AdminRequests, exerciseAdminRequest{
-				OpKey: key, ID: newID(), ChannelOpKey: channelKey, Requester: op.Requester, Nominees: op.Nominees, CreatedAt: createdAt,
+				OpKey: key, ID: newID(), ChannelOpKey: ch.OpKey, Requester: op.Requester, Nominees: op.Nominees, CreatedAt: createdAt,
+			})
+		case exerciseKindTeamRequest:
+			name := exerciseTeamNamePrefix + slugify(op.Suffix) + teamTail
+			if slugify(op.Suffix) == "" || len(name) > model.TeamNameMaxLength || !model.IsValidTeamName(name) || model.IsReservedTeamName(name) {
+				return nil, errors.Errorf("operation %q gives the invalid team URL name %q", op.OperationID, name)
+			}
+			if err := unique(op, "team URL name", name); err != nil {
+				return nil, err
+			}
+			if err := errors.Wrapf(firstError(
+				checkTextLen("team name", displayName, model.TeamDisplayNameMaxRunes),
+				checkByteLen("description", purpose, maxTeamDescriptionBytes),
+			), "operation %q", op.OperationID); err != nil {
+				return nil, err
+			}
+			teamType := model.TeamOpen
+			if op.Private {
+				teamType = model.TeamInvite
+			}
+			plan.TeamRequests = append(plan.TeamRequests, exerciseTeamRequest{
+				OpKey: key, ID: newID(), Name: name, DisplayName: displayName, Description: purpose, Type: teamType,
+				Requester: op.Requester, TeamAdmin: op.TeamAdmin, CreatedAt: createdAt,
+			})
+		case exerciseKindTeamAdmin, exerciseKindTeamMember:
+			check, list := onTeam, &plan.TeamAdminRequests
+			if op.Kind == exerciseKindTeamMember {
+				check, list = checkRoles, &plan.TeamMemberRequests
+			}
+			if err := nominees(op, check); err != nil {
+				return nil, err
+			}
+			if err := errors.Wrapf(checkTextLen("reason", op.Reason, maxReasonLen), "operation %q", op.OperationID); err != nil {
+				return nil, err
+			}
+			*list = append(*list, exerciseNomineeRequest{
+				OpKey: key, ID: newID(), Requester: op.Requester, Nominees: op.Nominees, Reason: op.Reason, CreatedAt: createdAt,
+			})
+		case exerciseKindTeamGuest:
+			email := exerciseGuestEmailPrefix + slugify(op.Guest) + teamTail + "@" + exerciseEmailDomain
+			if slugify(op.Guest) == "" || len(email) > maxEmailLen || !model.IsValidEmail(email) {
+				return nil, errors.Errorf("operation %q needs a guest label that makes a valid email address", op.OperationID)
+			}
+			if err := unique(op, "guest", email); err != nil {
+				return nil, err
+			}
+			if len(op.Channels) == 0 || len(op.Channels) > maxMembersPerList {
+				return nil, errors.Errorf("operation %q needs 1 to %d channels", op.OperationID, maxMembersPerList)
+			}
+			var channelKeys []string
+			for _, ref := range op.Channels {
+				ch, err := channelRef(op, ref, op.Requester)
+				if err != nil {
+					return nil, err
+				}
+				channelKeys = append(channelKeys, ch.OpKey)
+			}
+			if err := errors.Wrapf(checkTextLen("reason", op.Reason, maxReasonLen), "operation %q", op.OperationID); err != nil {
+				return nil, err
+			}
+			plan.TeamGuestRequests = append(plan.TeamGuestRequests, exerciseGuestRequest{
+				OpKey: key, ID: newID(), Requester: op.Requester, Email: email, ChannelOpKeys: channelKeys, Reason: op.Reason, CreatedAt: createdAt,
+			})
+		case exerciseKindBotRequest:
+			username := exerciseBotPrefix + strings.ToLower(op.Suffix) + "-" + teamID[:min(len(teamID), exerciseBotTeamIDChars)]
+			if op.Suffix == "" || len(username) < minBotUsernameLen || len(username) > maxBotUsernameLen || !model.IsValidUsername(username) {
+				return nil, errors.Errorf("operation %q gives the invalid bot username %q (%d to %d characters)", op.OperationID, username, minBotUsernameLen, maxBotUsernameLen)
+			}
+			if err := unique(op, "bot username", username); err != nil {
+				return nil, err
+			}
+			if op.Owner != "" {
+				if err := checkRoles(op, []string{op.Owner}); err != nil {
+					return nil, err
+				}
+			}
+			if err := errors.Wrapf(firstError(
+				checkTextLen("display name", displayName, maxDisplayNameLen),
+				checkTextLen("description", purpose, maxDescriptionLen),
+			), "operation %q", op.OperationID); err != nil {
+				return nil, err
+			}
+			bot := exerciseBotRequest{
+				OpKey: key, ID: newID(), Username: username, DisplayName: displayName, Description: purpose,
+				Requester: op.Requester, Owner: op.Owner, Token: op.Token, CreatedAt: createdAt,
+			}
+			if op.IncomingChannel != "" {
+				ch, err := channelRef(op, op.IncomingChannel, op.Requester)
+				if err != nil {
+					return nil, err
+				}
+				bot.IncomingChannelOpKey = ch.OpKey
+			}
+			if op.OutgoingChannel != "" {
+				ch, err := channelRef(op, op.OutgoingChannel, op.Requester)
+				if err != nil {
+					return nil, err
+				}
+				if ch.ChannelType != channelTypeOpen {
+					return nil, errors.Errorf("operation %q needs a public channel for its outgoing webhook", op.OperationID)
+				}
+				bot.OutgoingChannelOpKey = ch.OpKey
+			}
+			plan.BotRequests = append(plan.BotRequests, bot)
+		case exerciseKindWebhookRequest:
+			if op.WebhookType != webhookTypeIncoming && op.WebhookType != webhookTypeOutgoing {
+				return nil, errors.Errorf("operation %q needs a webhook_type of %q or %q", op.OperationID, webhookTypeIncoming, webhookTypeOutgoing)
+			}
+			ch, err := channelRef(op, op.Channel, op.Requester)
+			if err != nil {
+				return nil, err
+			}
+			if op.WebhookType == webhookTypeOutgoing && ch.ChannelType != channelTypeOpen {
+				return nil, errors.Errorf("operation %q needs a public channel for an outgoing webhook", op.OperationID)
+			}
+			if err := errors.Wrapf(firstError(
+				checkByteLen("display name", displayName, maxWebhookNameBytes),
+				checkByteLen("description", purpose, maxWebhookDescriptionBytes),
+			), "operation %q", op.OperationID); err != nil {
+				return nil, err
+			}
+			plan.WebhookRequests = append(plan.WebhookRequests, exerciseWebhookRequest{
+				OpKey: key, ID: newID(), WebhookType: op.WebhookType, ChannelOpKey: ch.OpKey,
+				DisplayName: displayName, Description: purpose, Requester: op.Requester, CreatedAt: createdAt,
 			})
 		default:
 			return nil, errors.Errorf("operation %q has the unknown kind %q", op.OperationID, op.Kind)
 		}
 	}
 	return plan, nil
+}
+
+// firstError returns the first non-nil error.
+func firstError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadExerciseManifest returns the team's manifest and its stored bytes,
@@ -420,27 +780,79 @@ func (p *Plugin) updateExerciseManifest(teamID string, change func(*exerciseMani
 	return errors.New("the exercise record kept changing")
 }
 
-// recordExerciseChannel adds a channel created by approving an exercise
-// request to the team's manifest, so teardown archives it too. When the
-// exercise was already torn down, the channel is archived at once.
-func (p *Plugin) recordExerciseChannel(channel *model.Channel) {
-	err := p.updateExerciseManifest(channel.TeamId, func(m *exerciseManifest) error {
-		m.ChannelIDs = append(m.ChannelIDs, channel.Id)
+// recordExerciseEffect adds what approving an exercise request created
+// to teamID's manifest, so teardown removes it too. When the exercise was
+// already torn down, undo removes it at once and recordExerciseEffect
+// reports false. what and id name it in the logs.
+func (p *Plugin) recordExerciseEffect(teamID, what, id string, change func(*exerciseManifest), undo func() error) bool {
+	err := p.updateExerciseManifest(teamID, func(m *exerciseManifest) error {
+		change(m)
 		return nil
 	})
 	if errors.Is(err, errNoExerciseManifest) {
-		if _, archiveErr := p.archiveExerciseChannel(channel.Id); archiveErr != nil {
-			p.API.LogWarn("failed to archive exercise channel after teardown; archive it by hand", "channel_id", channel.Id, "error", archiveErr.Error())
+		if undoErr := undo(); undoErr != nil {
+			p.API.LogWarn("failed to remove exercise "+what+" after teardown; remove it by hand", "id", id, "error", undoErr.Error())
 		}
-		return
+		return false
 	}
 	if err != nil {
-		p.API.LogWarn("failed to record exercise channel; archive it by hand", "channel_id", channel.Id, "error", err.Error())
+		p.API.LogWarn("failed to record exercise "+what+"; remove it by hand", "id", id, "error", err.Error())
+	}
+	return true
+}
+
+// recordExerciseChannel records a channel created by approving an
+// exercise request and marks its header.
+func (p *Plugin) recordExerciseChannel(channel *model.Channel) {
+	recorded := p.recordExerciseEffect(channel.TeamId, "channel", channel.Id, func(m *exerciseManifest) {
+		m.ChannelIDs = append(m.ChannelIDs, channel.Id)
+	}, func() error {
+		_, err := p.archiveExerciseChannel(channel.Id)
+		return err
+	})
+	if !recorded {
+		return
 	}
 	channel.Header = exerciseBanner
 	if _, appErr := p.API.UpdateChannel(channel); appErr != nil {
 		p.API.LogWarn("failed to mark exercise channel", "channel_id", channel.Id, "error", appErr.Error())
 	}
+}
+
+// recordExerciseTeam records a team created by approving an exercise
+// request, reporting false when it was removed again instead.
+func (p *Plugin) recordExerciseTeam(exerciseTeamID string, team *model.Team) bool {
+	return p.recordExerciseEffect(exerciseTeamID, "team", team.Id, func(m *exerciseManifest) {
+		m.TeamIDs = append(m.TeamIDs, team.Id)
+	}, func() error {
+		_, err := p.archiveExerciseTeam(team.Id)
+		return err
+	})
+}
+
+// recordExerciseBot records a bot created by approving an exercise
+// request, before anything is made for it, reporting false when it was
+// removed again instead.
+func (p *Plugin) recordExerciseBot(exerciseTeamID, botUserID string) bool {
+	return p.recordExerciseEffect(exerciseTeamID, "bot", botUserID, func(m *exerciseManifest) {
+		m.BotIDs = append(m.BotIDs, botUserID)
+	}, func() error {
+		_, err := p.deleteExerciseBot(botUserID)
+		return err
+	})
+}
+
+// recordExerciseWebhook records a webhook created by approving an
+// exercise request, or made for an exercise bot, reporting false when it
+// was removed again instead. actorID is the approving admin, whose
+// session removes it.
+func (p *Plugin) recordExerciseWebhook(teamID string, hook exerciseWebhook, actorID string) bool {
+	return p.recordExerciseEffect(teamID, "webhook", hook.ID, func(m *exerciseManifest) {
+		m.Webhooks = append(m.Webhooks, hook)
+	}, func() error {
+		_, err := p.deleteExerciseWebhook(hook, actorID)
+		return err
+	})
 }
 
 // exerciseLabel prefixes audit lines and card titles about exercise
@@ -450,6 +862,15 @@ func exerciseLabel(exercise bool) string {
 		return exerciseDisplayPrefix
 	}
 	return ""
+}
+
+// cardMention opens a two-step card's header. Exercise cards mention
+// nobody, so seeding doesn't notify the channel.
+func cardMention(exercise bool) string {
+	if exercise {
+		return exerciseMarker + ": "
+	}
+	return "@channel — "
 }
 
 // exercisePassword returns a random password that is never stored or
@@ -530,7 +951,54 @@ func (p *Plugin) checkExercisePreconditions(plan *exercisePlan) error {
 			return p.exerciseFailure("could not look up ~"+name, appErr)
 		}
 	}
+	for _, spec := range plan.TeamRequests {
+		_, appErr := p.API.GetTeamByName(spec.Name)
+		if appErr == nil {
+			return errors.Errorf("a team with the URL name %s already exists", spec.Name)
+		}
+		if !isNotFound(appErr) {
+			return p.exerciseFailure("could not look up the team "+spec.Name, appErr)
+		}
+	}
+	for _, spec := range plan.BotRequests {
+		_, appErr := p.API.GetUserByUsername(spec.Username)
+		if appErr == nil {
+			return errors.Errorf("the username @%s is taken", spec.Username)
+		}
+		if !isNotFound(appErr) {
+			return p.exerciseFailure("could not look up @"+spec.Username, appErr)
+		}
+	}
+	if len(plan.TeamGuestRequests) > 0 {
+		return p.checkExerciseGuestSettings()
+	}
 	return nil
+}
+
+// checkExerciseGuestSettings refuses when approving a guest invite request
+// would fail: guest accounts are off, or guests are only invited from email
+// domains that don't include the exercise domain.
+func (p *Plugin) checkExerciseGuestSettings() error {
+	config := p.API.GetConfig()
+	if config == nil || config.GuestAccountsSettings.Enable == nil || !*config.GuestAccountsSettings.Enable {
+		return errors.New("this scenario seeds guest invite requests, but guest accounts are off. Turn on **Enable Guest Access** in System Console → Authentication → Guest Access, or use a scenario without them")
+	}
+	if config.GuestAccountsSettings.RestrictCreationToDomains != nil {
+		if domains := domainsExcludingExercise(*config.GuestAccountsSettings.RestrictCreationToDomains); domains != nil {
+			return errors.Errorf("guests can only be invited from %s, so exercise guest invites (@%s) would fail. Add %s to the guest domains while you run the exercise", strings.Join(domains, ", "), exerciseEmailDomain, exerciseEmailDomain)
+		}
+	}
+	return nil
+}
+
+// domainsExcludingExercise returns the domains in a comma- or space-separated
+// list when the list is set and doesn't include the exercise domain, or nil.
+func domainsExcludingExercise(list string) []string {
+	domains := strings.Fields(strings.NewReplacer("@", " ", ",", " ").Replace(strings.ToLower(list)))
+	if len(domains) == 0 || slices.Contains(domains, exerciseEmailDomain) {
+		return nil
+	}
+	return domains
 }
 
 // checkExerciseEmailDomain refuses when the server or the team only lets
@@ -547,8 +1015,7 @@ func (p *Plugin) checkExerciseEmailDomain(teamID string) error {
 	}
 	lists = append(lists, team.AllowedDomains)
 	for _, list := range lists {
-		domains := strings.Fields(strings.NewReplacer("@", " ", ",", " ").Replace(strings.ToLower(list)))
-		if len(domains) > 0 && !strings.Contains(" "+strings.Join(domains, " ")+" ", " "+exerciseEmailDomain+" ") {
+		if domains := domainsExcludingExercise(list); domains != nil {
 			return errors.Errorf("this server or team only allows accounts with email addresses at %s, so exercise personas (@%s) can't join. Add %s to the allowed domains while you run the exercise", strings.Join(domains, ", "), exerciseEmailDomain, exerciseEmailDomain)
 		}
 	}
@@ -582,8 +1049,10 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 	if err != nil {
 		return "", errors.Wrap(err, "the exercise scenario doesn't fit this server's settings")
 	}
-	if len(plan.AdminRequests) > 0 && !config.AllowChannelAdminRequests {
-		return "", errors.New(exerciseAdminRequestsOffText)
+	for _, t := range plan.requestTypes() {
+		if len(t.specIDs) > 0 && !config.RequestEnabled(pendingKindRequestType(t.kind)) {
+			return "", errors.New(exerciseTypeOffText(t))
+		}
 	}
 	if err = p.checkExercisePreconditions(plan); err != nil {
 		return "", err
@@ -618,8 +1087,14 @@ func (p *Plugin) populateExercise(teamID, actorID string) (string, error) {
 		p.API.LogError("failed to mark exercise data ready", "team_id", teamID, "error", err.Error())
 		return "", errors.New("seeded the exercise but could not mark it finished. Run `/mattermost-request-hub exercise status` to check it, or `/mattermost-request-hub exercise teardown` to remove it")
 	}
-	return fmt.Sprintf("Seeded the **%s** exercise into this team: %d personas, %d channels, %d channel requests and %d Channel Admin requests. The approval cards are waiting for review. Run `/mattermost-request-hub exercise teardown` to remove it all.",
-		escapeMarkdown(sc.Name), len(plan.Personas), len(plan.Channels), len(plan.ChannelRequests), len(plan.AdminRequests)), nil
+	counts := []string{fmt.Sprintf("%d personas", len(plan.Personas)), fmt.Sprintf("%d channels", len(plan.Channels))}
+	for _, t := range plan.requestTypes() {
+		if t.alwaysShown() || len(t.specIDs) > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", len(t.specIDs), t.plural))
+		}
+	}
+	return fmt.Sprintf("Seeded the **%s** exercise into this team: %s and %s. The approval cards are waiting for review. Run `/mattermost-request-hub exercise teardown` to remove it all.",
+		escapeMarkdown(sc.Name), strings.Join(counts[:len(counts)-1], ", "), counts[len(counts)-1]), nil
 }
 
 // recordSeeded applies change to the manifest and refreshes its
@@ -710,44 +1185,30 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 		channels[spec.OpKey] = channel
 	}
 
+	var team *model.Team
+	if len(plan.TeamAdminRequests)+len(plan.TeamMemberRequests)+len(plan.TeamGuestRequests) > 0 {
+		var appErr *model.AppError
+		if team, appErr = p.API.GetTeam(teamID); appErr != nil {
+			return p.exerciseFailure("could not load this team", appErr)
+		}
+	}
+	seed := func(s exerciseSeed) error { return p.seedRequest(s, made) }
+
 	for _, spec := range plan.ChannelRequests {
 		req := &channelRequest{
 			ID: spec.ID, RequesterID: users[spec.Requester].Id, TeamID: teamID,
 			Name: spec.Name, DisplayName: spec.DisplayName, Purpose: spec.Purpose, ChannelType: spec.ChannelType,
 			MemberIDs: ids(spec.Members), AdminMemberIDs: ids(spec.Admins), CreatedAt: spec.CreatedAt, Exercise: true,
 		}
-		if err := p.storeRequest(req); err != nil {
-			return errors.New("could not save a channel request")
-		}
-		undo := func() { _, _ = p.removeExerciseRequest(pendingKindChannel, req.ID) }
-		entry := newPendingEntry(req)
-		if err := p.addPendingEntry(pendingKindChannel, req.RequesterID, entry); err != nil {
-			return errors.New("could not list a channel request as pending")
-		}
-		rawBefore, _ := json.Marshal(req) // the bytes storeRequest wrote
-		approvalPostID, approvalChannelID, err := p.postApprovalRequest(req, users[spec.Requester])
-		if err != nil {
-			return errors.New("could not post a channel request's approval card")
-		}
-		if approvalPostID == "" {
-			p.resolveCardsIfHandled(pendingKindChannel, req.ID)
-		}
-		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
-		req.DMRootPostID, req.DMChannelID = p.sendTicketCreatedDM(req, users[spec.Requester])
-		p.persistTicketPosts(ticketPersist{
-			KVKey: kvRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
-			RequestID: req.ID, Label: "exercise channel request",
-			Thread: ticketThread{
-				ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
-				DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-				Kind: requestTypeChannel, ScopeID: req.TeamID,
-			},
-		})
-		keys := exerciseRequestKeys(req.ID, approvalPostID, req.DMRootPostID)
-		if err := made(func(m *exerciseManifest) {
-			m.Done[spec.OpKey] = req.ID
-			m.KVKeys = append(m.KVKeys, keys...)
-		}, undo); err != nil {
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindChannel, what: "channel request", record: req,
+			scopeID: teamID,
+			store:   func() error { return p.storeRequest(req) },
+			post:    func() (string, string, error) { return p.postApprovalRequest(req, requester) },
+			dm:      func() (string, string) { return p.sendTicketCreatedDM(req, requester) },
+			posts:   ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
 			return err
 		}
 	}
@@ -758,47 +1219,220 @@ func (p *Plugin) seedExercise(plan *exercisePlan) error {
 			ID: spec.ID, RequesterID: users[spec.Requester].Id, ChannelID: channel.Id,
 			NomineeIDs: ids(spec.Nominees), CreatedAt: spec.CreatedAt, Exercise: true,
 		}
-		if err := p.storeAdminRequest(req); err != nil {
-			return errors.New("could not save a Channel Admin request")
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindAdmin, what: "Channel Admin request", record: req,
+			scopeID: channel.Id,
+			store:   func() error { return p.storeAdminRequest(req) },
+			post:    func() (string, string, error) { return p.postAdminApprovalRequest(req, requester, channel) },
+			dm:      func() (string, string) { return p.sendAdminTicketCreatedDM(req, requester, channel) },
+			posts:   ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
 		}
-		undo := func() { _, _ = p.removeExerciseRequest(pendingKindAdmin, req.ID) }
-		entry := newPendingEntry(req)
-		if err := p.addPendingEntry(pendingKindAdmin, req.RequesterID, entry); err != nil {
-			return errors.New("could not list a Channel Admin request as pending")
+	}
+
+	for _, spec := range plan.TeamRequests {
+		req := &teamCreationRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, DisplayName: spec.DisplayName, Name: spec.Name,
+			Description: spec.Description, Type: spec.Type, RequestTeamAdmin: spec.TeamAdmin,
+			CreatedAt: spec.CreatedAt, Exercise: true, ExerciseTeamID: teamID,
 		}
-		rawBefore, _ := json.Marshal(req) // the bytes storeAdminRequest wrote
-		approvalPostID, approvalChannelID, err := p.postAdminApprovalRequest(req, users[spec.Requester], channel)
-		if err != nil {
-			return errors.New("could not post a Channel Admin request's approval card")
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindTeam, what: "team creation request", record: req,
+			store: func() error { return p.storeTeamRequest(req) },
+			post:  func() (string, string, error) { return p.postTeamCreationApprovalRequest(req, requester) },
+			dm:    func() (string, string) { return p.sendTeamCreationTicketCreatedDM(req, requester) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
 		}
-		if approvalPostID == "" {
-			p.resolveCardsIfHandled(pendingKindAdmin, req.ID)
+	}
+
+	for _, spec := range plan.TeamAdminRequests {
+		req := &teamAdminRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, TeamID: teamID,
+			NomineeIDs: ids(spec.Nominees), CreatedAt: spec.CreatedAt, Exercise: true,
 		}
-		req.ApprovalPostID, req.ApprovalChannelID = approvalPostID, approvalChannelID
-		req.DMRootPostID, req.DMChannelID = p.sendAdminTicketCreatedDM(req, users[spec.Requester], channel)
-		p.persistTicketPosts(ticketPersist{
-			KVKey: kvAdminRequestPrefix + req.ID, RawBefore: rawBefore, Record: req,
-			RequestID: req.ID, Label: "exercise Channel Admin request",
-			Thread: ticketThread{
-				ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
-				DMRootPostID: req.DMRootPostID, DMChannelID: req.DMChannelID,
-				Kind: requestTypeChannelAdmin, ScopeID: req.ChannelID,
-			},
-		})
-		keys := exerciseRequestKeys(req.ID, approvalPostID, req.DMRootPostID)
-		if err := made(func(m *exerciseManifest) {
-			m.Done[spec.OpKey] = req.ID
-			m.KVKeys = append(m.KVKeys, keys...)
-		}, undo); err != nil {
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindTeamAdmin, what: "Team Admin request", record: req,
+			store: func() error { return p.storeTeamAdminRequest(req) },
+			post:  func() (string, string, error) { return p.postTeamAdminApprovalRequest(req, requester, team) },
+			dm:    func() (string, string) { return p.sendTeamAdminTicketCreatedDM(req, requester, team) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, spec := range plan.TeamMemberRequests {
+		req := &teamMemberRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, TeamID: teamID,
+			NomineeIDs: ids(spec.Nominees), Reason: spec.Reason, CreatedAt: spec.CreatedAt, Exercise: true,
+		}
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindTeamMember, what: "team member request", record: req,
+			store: func() error { return p.storeTeamMemberRequest(req) },
+			post:  func() (string, string, error) { return p.postTeamMemberApprovalRequest(req, requester, team) },
+			dm:    func() (string, string) { return p.sendTeamMemberTicketCreatedDM(req, requester, team) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, spec := range plan.TeamGuestRequests {
+		channelIDs := make([]string, 0, len(spec.ChannelOpKeys))
+		for _, key := range spec.ChannelOpKeys {
+			channelIDs = append(channelIDs, channels[key].Id)
+		}
+		req := &teamGuestRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, TeamID: teamID, Email: spec.Email,
+			ChannelIDs: channelIDs, Reason: spec.Reason, CreatedAt: spec.CreatedAt, Exercise: true,
+		}
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindTeamGuest, what: "guest invite request", record: req,
+			store: func() error { return p.storeTeamGuestRequest(req) },
+			post:  func() (string, string, error) { return p.postTeamGuestApprovalRequest(req, requester, team) },
+			dm:    func() (string, string) { return p.sendTeamGuestTicketCreatedDM(req, requester, team) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
+		}
+	}
+
+	channelID := func(opKey string) string {
+		if opKey == "" {
+			return ""
+		}
+		return channels[opKey].Id
+	}
+	for _, spec := range plan.BotRequests {
+		req := &botRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, Username: spec.Username,
+			DisplayName: spec.DisplayName, Description: spec.Description, RequestToken: spec.Token,
+			IncomingWebhookChannelID: channelID(spec.IncomingChannelOpKey),
+			OutgoingWebhookChannelID: channelID(spec.OutgoingChannelOpKey),
+			CreatedAt:                spec.CreatedAt, Exercise: true, ExerciseTeamID: teamID,
+		}
+		if spec.Owner != "" {
+			req.OwnerUserID = users[spec.Owner].Id
+		}
+		if req.OutgoingWebhookChannelID != "" {
+			req.OutgoingWebhookCallbackURL = exerciseCallbackURL
+		}
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindBot, what: "bot account request", record: req,
+			store: func() error { return p.storeBotRequest(req) },
+			post:  func() (string, string, error) { return p.postBotApprovalRequest(req, requester) },
+			dm:    func() (string, string) { return p.sendBotTicketCreatedDM(req, requester) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, spec := range plan.WebhookRequests {
+		channel := channels[spec.ChannelOpKey]
+		req := &webhookRequest{
+			ID: spec.ID, RequesterID: users[spec.Requester].Id, WebhookType: spec.WebhookType,
+			ChannelID: channel.Id, TeamID: teamID, DisplayName: spec.DisplayName, Description: spec.Description,
+			CreatedAt: spec.CreatedAt, Exercise: true,
+		}
+		if spec.WebhookType == webhookTypeOutgoing {
+			req.CallbackURL = exerciseCallbackURL
+		}
+		requester := users[spec.Requester]
+		if err := seed(exerciseSeed{
+			opKey: spec.OpKey, kind: pendingKindWebhook, what: "webhook request", record: req,
+			store: func() error { return p.storeWebhookRequest(req) },
+			post:  func() (string, string, error) { return p.postWebhookApprovalRequest(req, requester, channel) },
+			dm:    func() (string, string) { return p.sendWebhookTicketCreatedDM(req, requester, channel) },
+			posts: ticketPostFields{&req.ApprovalPostID, &req.ApprovalChannelID, &req.DMRootPostID, &req.DMChannelID},
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// exerciseSeed is one request for seedRequest: the record, and the
+// functions of its type that store it, post its card and send the
+// requester's ticket DM.
+type exerciseSeed struct {
+	opKey string
+	kind  string
+	// what names the type in errors, as in "channel request".
+	what   string
+	record storedRequest
+	// scopeID is the ticket thread's scope, for the types that have one.
+	scopeID string
+	store   func() error
+	post    func() (postID, channelID string, err error)
+	dm      func() (dmRootPostID, dmChannelID string)
+	posts   ticketPostFields
+}
+
+// ticketPostFields points at a record's card and ticket post fields.
+type ticketPostFields struct {
+	approvalPostID, approvalChannelID, dmRootPostID, dmChannelID *string
+}
+
+// seedRequest stores an exercise request, lists it as pending, posts its
+// card and ticket DM the way a submit does, and records it with made.
+func (p *Plugin) seedRequest(s exerciseSeed, made func(change func(*exerciseManifest), undo func()) error) error {
+	id, requesterID, _ := s.record.pendingFields()
+	fail := func(msg string, err error) error {
+		p.API.LogWarn("failed to seed exercise data: "+msg, "error", err.Error())
+		return errors.New(msg)
+	}
+	if err := s.store(); err != nil {
+		return fail("could not save a "+s.what, err)
+	}
+	undo := func() {
+		if _, err := p.removeExerciseRequest(s.kind, id); err != nil {
+			p.API.LogWarn("failed to remove exercise request", "request_id", id, "error", err.Error())
+		}
+	}
+	if err := p.addPendingEntry(s.kind, requesterID, newPendingEntry(s.record)); err != nil {
+		return fail("could not list a "+s.what+" as pending", err)
+	}
+	rawBefore, _ := json.Marshal(s.record) // the bytes store wrote
+	approvalPostID, approvalChannelID, err := s.post()
+	if err != nil {
+		return fail("could not post a "+s.what+"'s approval card", err)
+	}
+	if approvalPostID == "" {
+		p.resolveCardsIfHandled(s.kind, id)
+	}
+	// The ticket DM reads the card's IDs from the record.
+	*s.posts.approvalPostID, *s.posts.approvalChannelID = approvalPostID, approvalChannelID
+	dmRootPostID, dmChannelID := s.dm()
+	*s.posts.dmRootPostID, *s.posts.dmChannelID = dmRootPostID, dmChannelID
+	p.persistTicketPosts(ticketPersist{
+		KVKey: requestKVPrefix(s.kind) + id, RawBefore: rawBefore, Record: s.record,
+		RequestID: id, Label: "exercise " + s.what,
+		Thread: ticketThread{
+			ApprovalPostID: approvalPostID, ApprovalChannelID: approvalChannelID,
+			DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+			Kind: pendingKindRequestType(s.kind), ScopeID: s.scopeID,
+		},
+	})
+	keys := exerciseRequestKeys(id, approvalPostID, dmRootPostID)
+	return made(func(m *exerciseManifest) {
+		m.Done[s.opKey] = id
+		m.KVKeys = append(m.KVKeys, keys...)
+	}, undo)
+}
+
 // ensureExercisePersona returns the persona's active account, creating it
 // or reactivating the one an earlier teardown deactivated, and makes sure
-// it is on the team.
+// it is on the team unless it is off_team.
 func (p *Plugin) ensureExercisePersona(persona exercisePersona, teamID string) (*model.User, error) {
 	user, err := p.findExercisePersona(persona, teamID)
 	if err != nil {
@@ -832,6 +1466,9 @@ func (p *Plugin) ensureExercisePersona(persona exercisePersona, teamID string) (
 			return nil, p.exerciseFailure("could not reactivate @"+persona.Username, appErr)
 		}
 	}
+	if persona.OffTeam {
+		return user, nil
+	}
 	if _, appErr := p.API.CreateTeamMember(teamID, user.Id); appErr != nil {
 		return nil, p.exerciseFailure(fmt.Sprintf("could not add @%s to the team", persona.Username), appErr)
 	}
@@ -841,13 +1478,16 @@ func (p *Plugin) ensureExercisePersona(persona exercisePersona, teamID string) (
 // exerciseTeardownCounts tallies what teardown removed.
 type exerciseTeardownCounts struct {
 	removed, archived, deactivated, failed int
+	teams, bots, webhooks                  int
 }
 
 // teardownExercise removes everything the team's manifest names: pending
-// exercise requests and their cards, exercise channels, and personas. Real
-// requests and accounts are never changed. The manifest is kept when
-// anything fails, so teardown can be run again.
-func (p *Plugin) teardownExercise(teamID string) (string, error) {
+// exercise requests and their cards, the webhooks, bots and teams their
+// approvals created, exercise channels, and personas. Real requests and
+// accounts are never changed. actorID is the System Admin running it, whose
+// session deletes webhooks. The manifest is kept when anything fails, so
+// teardown can be run again.
+func (p *Plugin) teardownExercise(teamID, actorID string) (string, error) {
 	m, _, err := p.loadExerciseManifest(teamID)
 	if errors.Is(err, errNoExerciseManifest) {
 		return "No exercise data is recorded for this team, so there is nothing to tear down.", nil
@@ -878,7 +1518,7 @@ func (p *Plugin) teardownExercise(teamID string) (string, error) {
 			return "", loadErr
 		}
 		counts.failed = 0
-		p.teardownPass(teamID, latest, &counts)
+		p.teardownPass(teamID, actorID, latest, &counts)
 		if counts.failed > 0 {
 			return "", errors.Errorf("%d exercise items could not be removed; see the server logs, then run `/mattermost-request-hub exercise teardown` again", counts.failed)
 		}
@@ -888,16 +1528,31 @@ func (p *Plugin) teardownExercise(teamID string) (string, error) {
 			return "", errors.New("removed the exercise data but could not clear its record. Run `/mattermost-request-hub exercise teardown` again")
 		}
 		if deleted {
-			return fmt.Sprintf("Removed the exercise data from this team: %d pending requests closed, %d channels archived and %d personas deactivated.",
-				counts.removed, counts.archived, counts.deactivated), nil
+			return "Removed the exercise data from this team: " + counts.summary() + ".", nil
 		}
 	}
 	return "", errors.New("the exercise record kept changing while it was removed. Run `/mattermost-request-hub exercise teardown` again")
 }
 
-// teardownPass removes the requests, channels and personas the manifest
-// names, adding to counts.
-func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerciseTeardownCounts) {
+// summary lists what teardown removed. Teams, bots and webhooks are only
+// listed when there were any.
+func (c exerciseTeardownCounts) summary() string {
+	parts := []string{fmt.Sprintf("%d pending requests closed", c.removed)}
+	for _, extra := range []struct {
+		n    int
+		what string
+	}{{c.teams, "teams archived"}, {c.bots, "bots deleted"}, {c.webhooks, "webhooks deleted"}} {
+		if extra.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", extra.n, extra.what))
+		}
+	}
+	parts = append(parts, fmt.Sprintf("%d channels archived", c.archived))
+	return strings.Join(parts, ", ") + fmt.Sprintf(" and %d personas deactivated", c.deactivated)
+}
+
+// teardownPass removes the requests, webhooks, bots, teams, channels and
+// personas the manifest names, adding to counts.
+func (p *Plugin) teardownPass(teamID, actorID string, m *exerciseManifest, counts *exerciseTeardownCounts) {
 	plan := m.Plan
 	removeRequest := func(kind, id string) {
 		ok, err := p.removeExerciseRequest(kind, id)
@@ -909,17 +1564,53 @@ func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerci
 			counts.removed++
 		}
 	}
-	for _, spec := range plan.ChannelRequests {
-		removeRequest(pendingKindChannel, spec.ID)
-	}
-	for _, spec := range plan.AdminRequests {
-		removeRequest(pendingKindAdmin, spec.ID)
+	for _, t := range plan.requestTypes() {
+		for _, id := range t.specIDs {
+			removeRequest(t.kind, id)
+		}
 	}
 	for _, key := range m.KVKeys {
 		if appErr := p.API.KVDelete(key); appErr != nil {
 			p.API.LogWarn("failed to delete exercise record", "key", key, "error", appErr.Error())
 			counts.failed++
 		}
+	}
+	// remove runs one removal step and counts its outcome.
+	remove := func(what, id string, count *int, step func() (bool, error)) {
+		ok, err := step()
+		switch {
+		case err != nil:
+			p.API.LogWarn("failed to remove exercise "+what, "id", id, "error", err.Error())
+			counts.failed++
+		case ok:
+			*count++
+		}
+	}
+
+	// Webhooks go before bots: deleting a bot leaves its webhooks behind.
+	for _, hook := range m.Webhooks {
+		remove("webhook", hook.ID, &counts.webhooks, func() (bool, error) { return p.deleteExerciseWebhook(hook, actorID) })
+	}
+
+	// A crash right after an approval leaves its bot or team unrecorded.
+	// The planned name finds it, but only one tied to a persona counts.
+	botIDs := append([]string{}, m.BotIDs...)
+	for _, spec := range plan.BotRequests {
+		if id, ok := p.findUnrecordedExerciseBot(spec.Username, teamID, counts); ok {
+			botIDs = append(botIDs, id)
+		}
+	}
+	for _, id := range dedupeNonEmpty(botIDs) {
+		remove("bot", id, &counts.bots, func() (bool, error) { return p.deleteExerciseBot(id) })
+	}
+	teamIDs := append([]string{}, m.TeamIDs...)
+	for _, spec := range plan.TeamRequests {
+		if id, ok := p.findUnrecordedExerciseTeam(spec, plan, counts); ok {
+			teamIDs = append(teamIDs, id)
+		}
+	}
+	for _, id := range dedupeNonEmpty(teamIDs) {
+		remove("team", id, &counts.teams, func() (bool, error) { return p.archiveExerciseTeam(id) })
 	}
 
 	// A crash right after creating a channel leaves it unrecorded. Its
@@ -978,11 +1669,15 @@ func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerci
 			continue
 		}
 		// A persona's pending lists only ever name exercise requests.
-		for _, kind := range []string{pendingKindChannel, pendingKindAdmin} {
+		for _, kind := range allPendingKinds {
 			if appErr := p.API.KVDelete(pendingListKey(kind, user.Id)); appErr != nil {
 				p.API.LogWarn("failed to delete exercise persona's pending list", "user_id", user.Id, "error", appErr.Error())
 				counts.failed++
 			}
+		}
+		if err := p.resetExercisePersonaTeam(persona, user.Id, teamID); err != nil {
+			p.API.LogWarn("failed to reset exercise persona's team membership", "user_id", user.Id, "error", err.Error())
+			counts.failed++
 		}
 		if user.DeleteAt != 0 {
 			continue
@@ -994,6 +1689,106 @@ func (p *Plugin) teardownPass(teamID string, m *exerciseManifest, counts *exerci
 		}
 		counts.deactivated++
 	}
+}
+
+// resetExercisePersonaTeam undoes what approvals changed about a persona's
+// team membership: an off-team persona leaves the team, and any other
+// persona loses Team Admin.
+func (p *Plugin) resetExercisePersonaTeam(persona exercisePersona, userID, teamID string) error {
+	member, appErr := p.API.GetTeamMember(teamID, userID)
+	if isNotFound(appErr) {
+		return nil
+	}
+	if appErr != nil {
+		return errors.Wrap(appErr, "failed to load the team membership")
+	}
+	if member.DeleteAt != 0 {
+		return nil
+	}
+	if persona.OffTeam {
+		if appErr = p.API.DeleteTeamMember(teamID, userID, p.botUserID); appErr != nil {
+			return errors.Wrap(appErr, "failed to remove the persona from the team")
+		}
+		return nil
+	}
+	if member.SchemeAdmin {
+		if _, appErr = p.API.UpdateTeamMemberRoles(teamID, userID, model.TeamUserRoleId); appErr != nil {
+			return errors.Wrap(appErr, "failed to remove Team Admin")
+		}
+	}
+	return nil
+}
+
+// findUnrecordedExerciseBot returns the bot with a planned exercise bot
+// username when a persona of teamID owns it.
+func (p *Plugin) findUnrecordedExerciseBot(username, teamID string, counts *exerciseTeardownCounts) (string, bool) {
+	user, appErr := p.API.GetUserByUsername(username)
+	if isNotFound(appErr) {
+		return "", false
+	}
+	if appErr != nil {
+		p.API.LogWarn("failed to look up exercise bot", "username", username, "error", appErr.Error())
+		counts.failed++
+		return "", false
+	}
+	if !user.IsBot {
+		return "", false
+	}
+	bot, appErr := p.API.GetBot(user.Id, true)
+	if appErr != nil {
+		p.API.LogWarn("failed to load exercise bot", "user_id", user.Id, "error", appErr.Error())
+		counts.failed++
+		return "", false
+	}
+	isPersona, err := p.isExercisePersonaID(bot.OwnerId, teamID)
+	if err != nil {
+		counts.failed++
+		return "", false
+	}
+	return user.Id, isPersona
+}
+
+// findUnrecordedExerciseTeam returns the team with a planned exercise team
+// URL name when it is marked EXERCISE and its requesting persona is a
+// member: the plugin creates teams, so there is no persona creator to check.
+func (p *Plugin) findUnrecordedExerciseTeam(spec exerciseTeamRequest, plan *exercisePlan, counts *exerciseTeardownCounts) (string, bool) {
+	team, appErr := p.API.GetTeamByName(spec.Name)
+	if isNotFound(appErr) {
+		return "", false
+	}
+	if appErr != nil {
+		p.API.LogWarn("failed to look up exercise team", "name", spec.Name, "error", appErr.Error())
+		counts.failed++
+		return "", false
+	}
+	if !strings.HasPrefix(team.DisplayName, exerciseDisplayPrefix) {
+		return "", false
+	}
+	for _, persona := range plan.Personas {
+		if persona.Role != spec.Requester {
+			continue
+		}
+		user, err := p.findExercisePersona(persona, plan.TeamID)
+		if err != nil && !isPersonaTaken(err) {
+			p.API.LogWarn("failed to look up exercise persona", "username", persona.Username, "error", err.Error())
+			counts.failed++
+			return "", false
+		}
+		if user == nil {
+			return "", false
+		}
+		member, appErr := p.API.GetTeamMember(team.Id, user.Id)
+		if isNotFound(appErr) {
+			return "", false
+		}
+		if appErr != nil {
+			p.API.LogWarn("failed to look up exercise team member", "team_id", team.Id, "error", appErr.Error())
+			counts.failed++
+			return "", false
+		}
+		return team.Id, member.DeleteAt == 0
+	}
+	return "", false
 }
 
 // removeExerciseRequest claims and deletes a pending exercise request,
@@ -1027,25 +1822,36 @@ func (p *Plugin) removeExerciseRequest(kind, requestID string) (bool, error) {
 		return false, errors.Wrap(appErr, "failed to remove the request")
 	}
 	if !claimed {
+		// A decision took it, or a first approval rewrote it and it is
+		// still pending, which must keep the manifest for another pass.
+		if data, appErr := p.API.KVGet(key); appErr != nil || data != nil {
+			return false, errors.New("the request changed while it was being removed")
+		}
 		return false, nil
 	}
 	p.releasePending(kind, rec.RequesterID, requestID)
-	// Close the persona's ticket and every approval card the way an
-	// expiry would: no decision was made.
-	p.finish(newDecisionCards(requestID, "", rec.ApprovalPostID), "", exerciseRemovedText, ticketClose{
-		RequesterID: rec.RequesterID, DMRootPostID: rec.DMRootPostID, DMChannelID: rec.DMChannelID,
-		Expired:     true,
-		CardTitle:   exerciseDisplayPrefix + "Request Removed",
-		CardText:    "Teardown removed this exercise request.",
-		ThreadReply: exerciseRemovedText,
-		StatusLine:  exerciseRemovedText,
-	})
+	p.closeRemovedExerciseRequest(newDecisionCards(requestID, "", rec.ApprovalPostID), rec.RequesterID, rec.DMRootPostID, rec.DMChannelID)
 	for _, key := range exerciseRequestKeys(requestID, rec.ApprovalPostID, rec.DMRootPostID) {
 		if appErr := p.API.KVDelete(key); appErr != nil {
 			p.API.LogWarn("failed to delete exercise record", "key", key, "error", appErr.Error())
 		}
 	}
 	return true, nil
+}
+
+// closeRemovedExerciseRequest closes the persona's ticket and every
+// approval card of a request teardown removed, the way an expiry would.
+// An approval that lands after teardown, and so removes what it made
+// again, closes its request this way too.
+func (p *Plugin) closeRemovedExerciseRequest(cards decisionCards, requesterID, dmRootPostID, dmChannelID string) decisionResult {
+	return p.finish(cards, "", exerciseRemovedText, ticketClose{
+		RequesterID: requesterID, DMRootPostID: dmRootPostID, DMChannelID: dmChannelID,
+		Expired:     true,
+		CardTitle:   exerciseDisplayPrefix + "Request Removed",
+		CardText:    "Teardown removed this exercise request.",
+		ThreadReply: exerciseRemovedText,
+		StatusLine:  exerciseRemovedText,
+	})
 }
 
 // exerciseRequestKeys names the records a request leaves besides itself:
@@ -1092,6 +1898,67 @@ func (p *Plugin) archiveExerciseChannel(channelID string) (bool, error) {
 	return true, nil
 }
 
+// archiveExerciseTeam renames a team so its name can be used again, then
+// archives it. It reports false when the team is already gone.
+func (p *Plugin) archiveExerciseTeam(teamID string) (bool, error) {
+	team, appErr := p.API.GetTeam(teamID)
+	if isNotFound(appErr) {
+		return false, nil
+	}
+	if appErr != nil {
+		return false, errors.Wrap(appErr, "failed to load the team")
+	}
+	if team.DeleteAt != 0 {
+		return false, nil
+	}
+	tail := "-" + team.Id
+	if !strings.HasSuffix(team.Name, tail) {
+		base := team.Name
+		if len(base)+len(tail) > model.TeamNameMaxLength {
+			base = strings.TrimRight(base[:model.TeamNameMaxLength-len(tail)], "-")
+		}
+		team.Name = base + tail
+		if _, appErr = p.API.UpdateTeam(team); appErr != nil {
+			return false, errors.Wrap(appErr, "failed to rename the team")
+		}
+	}
+	if appErr = p.API.DeleteTeam(teamID); appErr != nil {
+		return false, errors.Wrap(appErr, "failed to archive the team")
+	}
+	return true, nil
+}
+
+// deleteExerciseBot permanently deletes a bot, with its tokens, so its
+// username can be used again. It reports false when the bot is already
+// gone.
+func (p *Plugin) deleteExerciseBot(botUserID string) (bool, error) {
+	_, appErr := p.API.GetBot(botUserID, true)
+	if isNotFound(appErr) {
+		return false, nil
+	}
+	if appErr != nil {
+		return false, errors.Wrap(appErr, "failed to load the bot")
+	}
+	if appErr = p.API.PermanentDeleteBot(botUserID); appErr != nil {
+		return false, errors.Wrap(appErr, "failed to delete the bot")
+	}
+	return true, nil
+}
+
+// deleteExerciseWebhook deletes a webhook with actorID's session. It
+// reports false when the webhook is already gone.
+func (p *Plugin) deleteExerciseWebhook(hook exerciseWebhook, actorID string) (bool, error) {
+	err := p.deleteWebhook(hook.Type, hook.ID, actorID)
+	var appErr *model.AppError
+	if errors.As(err, &appErr) && appErr.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // exerciseStatus compares what the team's manifest recorded with what is
 // still live.
 func (p *Plugin) exerciseStatus(teamID string) (string, error) {
@@ -1127,20 +1994,36 @@ func (p *Plugin) exerciseStatus(teamID string) (string, error) {
 		}
 	}
 	pending := map[string]int{}
-	countPending := func(kind, id string) {
-		ok, existsErr := p.pendingRequestExists(kind, id)
-		switch {
-		case existsErr != nil:
-			unchecked++
-		case ok:
-			pending[kind]++
+	for _, t := range plan.requestTypes() {
+		for _, id := range t.specIDs {
+			ok, existsErr := p.pendingRequestExists(t.kind, id)
+			switch {
+			case existsErr != nil:
+				unchecked++
+			case ok:
+				pending[t.kind]++
+			}
 		}
 	}
-	for _, spec := range plan.ChannelRequests {
-		countPending(pendingKindChannel, spec.ID)
+	liveTeams := 0
+	for _, id := range m.TeamIDs {
+		team, appErr := p.API.GetTeam(id)
+		switch {
+		case appErr != nil && !isNotFound(appErr):
+			unchecked++
+		case appErr == nil && team.DeleteAt == 0:
+			liveTeams++
+		}
 	}
-	for _, spec := range plan.AdminRequests {
-		countPending(pendingKindAdmin, spec.ID)
+	liveBots := 0
+	for _, id := range m.BotIDs {
+		_, appErr := p.API.GetBot(id, false)
+		switch {
+		case appErr != nil && !isNotFound(appErr):
+			unchecked++
+		case appErr == nil:
+			liveBots++
+		}
 	}
 
 	var b strings.Builder
@@ -1148,8 +2031,23 @@ func (p *Plugin) exerciseStatus(teamID string) (string, error) {
 	b.WriteString("| | Recorded | Live |\n|---|---|---|\n")
 	fmt.Fprintf(&b, "| Personas (active) | %d | %d |\n", len(plan.Personas), activePersonas)
 	fmt.Fprintf(&b, "| Channels (not archived) | %d | %d |\n", len(m.ChannelIDs), liveChannels)
-	fmt.Fprintf(&b, "| Channel requests (pending) | %d | %d |\n", len(plan.ChannelRequests), pending[pendingKindChannel])
-	fmt.Fprintf(&b, "| Channel Admin requests (pending) | %d | %d |", len(plan.AdminRequests), pending[pendingKindAdmin])
+	var rows []string
+	for _, t := range plan.requestTypes() {
+		if t.alwaysShown() || len(t.specIDs) > 0 {
+			rows = append(rows, fmt.Sprintf("| %s (pending) | %d | %d |", strings.ToUpper(t.plural[:1])+t.plural[1:], len(t.specIDs), pending[t.kind]))
+		}
+	}
+	if len(m.TeamIDs) > 0 {
+		rows = append(rows, fmt.Sprintf("| Teams (not archived) | %d | %d |", len(m.TeamIDs), liveTeams))
+	}
+	if len(m.BotIDs) > 0 {
+		rows = append(rows, fmt.Sprintf("| Bots | %d | %d |", len(m.BotIDs), liveBots))
+	}
+	if len(m.Webhooks) > 0 {
+		// The plugin API can't look a webhook up, so only teardown checks.
+		rows = append(rows, fmt.Sprintf("| Webhooks | %d | not checked |", len(m.Webhooks)))
+	}
+	b.WriteString(strings.Join(rows, "\n"))
 	if unchecked > 0 {
 		p.API.LogWarn("exercise status could not check some items", "team_id", teamID, "count", unchecked)
 		fmt.Fprintf(&b, "\n\n%d items could not be checked, so the live counts may be low. See the server logs.", unchecked)

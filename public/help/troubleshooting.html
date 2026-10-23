@@ -239,10 +239,10 @@
         </p>
         <p>
             <strong>"exercise mode seeds channel requests, which are turned off"</strong> or <strong>"this scenario
-            seeds Channel Admin requests, which are turned off"</strong>: populate files the same requests a user
-            would, so it needs <em>Allow channel requests</em> (and <em>Allow channel admin requests</em> for a
-            scenario with Channel Admin requests) on. Nothing was created. <code>status</code> and
-            <code>teardown</code> don't need either setting.
+            seeds ... requests, which are turned off"</strong>: populate files the same requests a user would, so it
+            needs <em>Allow channel requests</em> on, and the setting for every other type the scenario seeds. The
+            built-in scenario seeds all eight types. Nothing was created. <code>status</code> and
+            <code>teardown</code> don't need any of these settings.
         </p>
         <p>
             <strong>"The username @exercise-... is taken by an account that isn't exercise data"</strong>: a real
@@ -256,6 +256,19 @@
             accounts from the allowed domains join a team. While you run the exercise, add
             <code>exercise.invalid</code> to <em>Restrict account creation to specified email domains</em> in the
             System Console, or to the team's allowed domains, whichever the reply names.
+        </p>
+        <p>
+            <strong>"A team with the URL name exercise-... already exists"</strong> or <strong>"the username
+            @ex-... is taken"</strong>: a team or account already has a name the scenario's team or bot request
+            needs. Populate creates nothing in that case. Rename it, or change the scenario's suffix. A team or bot
+            left from an earlier exercise is removed by its teardown.
+        </p>
+        <p>
+            <strong>"This scenario seeds guest invite requests, but guest accounts are off"</strong> or
+            <strong>"guests can only be invited from ..."</strong>: approving a guest invite request would fail, so
+            populate refuses first. Turn on <em>Enable Guest Access</em> in System Console → Authentication → Guest
+            Access, and add <code>exercise.invalid</code> to the guest domain list if there is one, or use a
+            scenario without guest invites.
         </p>
         <p>
             <strong>"A channel named ~... already exists in this team"</strong>: a channel, archived or not, already

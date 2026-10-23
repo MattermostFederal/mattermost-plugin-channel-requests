@@ -43,10 +43,17 @@ func TestBuildExercisePlan_BuiltInScenario(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "silver-harbor", plan.Scenario)
-	require.Len(t, plan.Personas, 6)
+	require.Len(t, plan.Personas, 7)
 	require.Len(t, plan.Channels, 1)
 	require.Len(t, plan.ChannelRequests, 3)
 	require.Len(t, plan.AdminRequests, 1)
+	require.Len(t, plan.TeamRequests, 1)
+	require.Len(t, plan.TeamAdminRequests, 1)
+	require.Len(t, plan.TeamMemberRequests, 1)
+	require.Len(t, plan.TeamGuestRequests, 1)
+	require.Len(t, plan.BotRequests, 1)
+	require.Len(t, plan.WebhookRequests, 1)
+	require.True(t, plan.Personas[6].OffTeam)
 
 	for _, persona := range plan.Personas {
 		require.Equal(t, "exercise-"+persona.Role+personaSuffix, persona.Username)
@@ -66,6 +73,28 @@ func TestBuildExercisePlan_BuiltInScenario(t *testing.T) {
 	require.Equal(t, []string{"id-1", "id-2", "id-3", "id-4"},
 		[]string{plan.ChannelRequests[0].ID, plan.ChannelRequests[1].ID, plan.ChannelRequests[2].ID, plan.AdminRequests[0].ID})
 	require.Equal(t, plan.Channels[0].OpKey, plan.AdminRequests[0].ChannelOpKey)
+
+	// Every type a scenario can seed, marked and named after the team.
+	team := plan.TeamRequests[0]
+	require.Equal(t, "exercise-planning-cell-teamexer", team.Name)
+	require.Equal(t, "EXERCISE Silver Harbor Planning Cell", team.DisplayName)
+	require.Equal(t, model.TeamInvite, team.Type)
+	require.True(t, team.TeamAdmin)
+	require.Equal(t, []string{"liaison"}, plan.TeamMemberRequests[0].Nominees)
+	require.Equal(t, "exercise-guest-fuel-vendor-teamexer@exercise.invalid", plan.TeamGuestRequests[0].Email)
+	require.Equal(t, []string{plan.Channels[0].OpKey}, plan.TeamGuestRequests[0].ChannelOpKeys)
+	bot := plan.BotRequests[0]
+	require.Equal(t, "ex-status-teamex", bot.Username)
+	require.Equal(t, plan.Channels[0].OpKey, bot.IncomingChannelOpKey)
+	require.Empty(t, bot.OutgoingChannelOpKey)
+	require.True(t, bot.Token)
+	require.Equal(t, webhookTypeIncoming, plan.WebhookRequests[0].WebhookType)
+	require.Equal(t, "EXERCISE Tanker Status Feed", plan.WebhookRequests[0].DisplayName)
+	var ids []string
+	for _, rt := range plan.requestTypes() {
+		ids = append(ids, rt.specIDs...)
+	}
+	require.Equal(t, []string{"id-1", "id-2", "id-3", "id-4", "id-5", "id-6", "id-7", "id-8", "id-9", "id-10"}, ids)
 
 	again, err := buildExercisePlan(builtInScenario(t), exerciseTeamID, prefixes, now, counterIDs())
 	require.NoError(t, err)
@@ -151,6 +180,131 @@ func TestBuildExercisePlan_Refusals(t *testing.T) {
 	}
 }
 
+// allKindsScenario has one valid operation of every kind after a public
+// and a private channel, with "out" off the team.
+func allKindsScenario() *exerciseScenario {
+	return &exerciseScenario{
+		ID: "test", Name: "Test",
+		Personas: []exercisePersonaSpec{{Role: "lead"}, {Role: "aide"}, {Role: "out", OffTeam: true}},
+		Operations: []exerciseOperationSpec{
+			{OperationID: "ch", Kind: exerciseKindChannel, Suffix: "ops", DisplayName: "Ops", Requester: "lead", Members: []string{"aide"}},
+			{OperationID: "priv", Kind: exerciseKindChannel, Suffix: "quiet", DisplayName: "Quiet", Requester: "lead", Private: true},
+			{OperationID: "team", Kind: exerciseKindTeamRequest, Suffix: "cell", DisplayName: "Cell", Requester: "out"},
+			{OperationID: "tadm", Kind: exerciseKindTeamAdmin, Requester: "lead", Nominees: []string{"aide"}},
+			{OperationID: "tmem", Kind: exerciseKindTeamMember, Requester: "out", Nominees: []string{"out"}, Reason: "Needs access"},
+			{OperationID: "guest", Kind: exerciseKindTeamGuest, Requester: "lead", Guest: "Vendor", Channels: []string{"ch", "priv"}},
+			{OperationID: "bot", Kind: exerciseKindBotRequest, Suffix: "feed", DisplayName: "Feed", Requester: "lead", Owner: "out", IncomingChannel: "priv", OutgoingChannel: "ch"},
+			{OperationID: "hook", Kind: exerciseKindWebhookRequest, WebhookType: webhookTypeOutgoing, Channel: "ch", DisplayName: "Hook", Requester: "aide"},
+		},
+	}
+}
+
+func TestBuildExercisePlan_AllKinds(t *testing.T) {
+	plan, err := buildExercisePlan(allKindsScenario(), exerciseTeamID, []channelPrefix{{Prefix: "team-"}}, 1, counterIDs())
+	require.NoError(t, err)
+	require.True(t, plan.Personas[2].OffTeam)
+	require.Equal(t, model.TeamOpen, plan.TeamRequests[0].Type)
+	require.Equal(t, "[EXERCISE] ", plan.TeamRequests[0].Description)
+	require.Equal(t, "exercise-guest-vendor-teamexer@exercise.invalid", plan.TeamGuestRequests[0].Email)
+	require.Equal(t, []string{"test/0/ch", "test/0/priv"}, plan.TeamGuestRequests[0].ChannelOpKeys)
+	require.Equal(t, "out", plan.BotRequests[0].Owner)
+	require.Equal(t, "test/0/priv", plan.BotRequests[0].IncomingChannelOpKey)
+	require.Equal(t, "test/0/ch", plan.BotRequests[0].OutgoingChannelOpKey)
+	require.Equal(t, "Needs access", plan.TeamMemberRequests[0].Reason)
+	require.Equal(t, "test/0/ch", plan.WebhookRequests[0].ChannelOpKey)
+}
+
+func TestBuildExercisePlan_AllKindsRefusals(t *testing.T) {
+	op := func(sc *exerciseScenario, id string) *exerciseOperationSpec {
+		for i := range sc.Operations {
+			if sc.Operations[i].OperationID == id {
+				return &sc.Operations[i]
+			}
+		}
+		panic(id)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*exerciseScenario)
+		want   string
+	}{
+		{"off-team channel requester", func(sc *exerciseScenario) { op(sc, "ch").Requester = "out" }, `needs persona "out" on the team`},
+		{"off-team channel member", func(sc *exerciseScenario) { op(sc, "ch").Members = []string{"out"} }, `needs persona "out" on the team`},
+		{"off-team Team Admin nominee", func(sc *exerciseScenario) { op(sc, "tadm").Nominees = []string{"out"} }, `needs persona "out" on the team`},
+		{"off-team Team Admin requester", func(sc *exerciseScenario) { op(sc, "tadm").Requester = "out" }, `needs persona "out" on the team`},
+		{"Team Admin without nominees", func(sc *exerciseScenario) { op(sc, "tadm").Nominees = nil }, "no nominees"},
+		{"team member without nominees", func(sc *exerciseScenario) { op(sc, "tmem").Nominees = nil }, "no nominees"},
+		{"unknown team member nominee", func(sc *exerciseScenario) { op(sc, "tmem").Nominees = []string{"ghost"} }, "unknown persona"},
+		{"long team member reason", func(sc *exerciseScenario) { op(sc, "tmem").Reason = strings.Repeat("x", maxReasonLen+1) }, `operation "tmem"`},
+		{"bad team URL name", func(sc *exerciseScenario) { op(sc, "team").Suffix = strings.Repeat("x", 60) }, "invalid team URL name"},
+		{"team suffix with no letters", func(sc *exerciseScenario) { op(sc, "team").Suffix = "!!" }, "invalid team URL name"},
+		{"long team name", func(sc *exerciseScenario) { op(sc, "team").DisplayName = strings.Repeat("x", 70) }, `operation "team"`},
+		{"long team description", func(sc *exerciseScenario) { op(sc, "team").Purpose = strings.Repeat("x", maxTeamDescriptionBytes) }, `operation "team"`},
+		{"duplicate team URL name", func(sc *exerciseScenario) {
+			sc.Operations = append(sc.Operations, exerciseOperationSpec{OperationID: "team2", Kind: exerciseKindTeamRequest, Suffix: "cell", DisplayName: "Cell", Requester: "lead"})
+		}, "reuses the team URL name"},
+		{"guest without label", func(sc *exerciseScenario) { op(sc, "guest").Guest = "" }, "needs a guest label"},
+		{"guest label with no letters", func(sc *exerciseScenario) { op(sc, "guest").Guest = "!!" }, "needs a guest label"},
+		{"guest without channels", func(sc *exerciseScenario) { op(sc, "guest").Channels = nil }, "needs 1 to 100 channels"},
+		{"guest with too many channels", func(sc *exerciseScenario) {
+			for i := range maxMembersPerList + 1 {
+				op(sc, "guest").Channels = append(op(sc, "guest").Channels, fmt.Sprintf("c%d", i))
+			}
+		}, "needs 1 to 100 channels"},
+		{"guest channel not a channel op", func(sc *exerciseScenario) { op(sc, "guest").Channels = []string{"team"} }, "earlier channel operation"},
+		{"guest requester not in channel", func(sc *exerciseScenario) { op(sc, "guest").Requester = "aide" }, `needs persona "aide" in channel operation "priv"`},
+		{"long guest reason", func(sc *exerciseScenario) { op(sc, "guest").Reason = strings.Repeat("x", maxReasonLen+1) }, `operation "guest"`},
+		{"duplicate guest", func(sc *exerciseScenario) {
+			sc.Operations = append(sc.Operations, exerciseOperationSpec{OperationID: "guest2", Kind: exerciseKindTeamGuest, Requester: "lead", Guest: "vendor", Channels: []string{"ch"}})
+		}, "reuses the guest"},
+		{"long bot username", func(sc *exerciseScenario) { op(sc, "bot").Suffix = "much-too-long" }, "invalid bot username"},
+		{"bot without suffix", func(sc *exerciseScenario) { op(sc, "bot").Suffix = "" }, "invalid bot username"},
+		{"bad bot username", func(sc *exerciseScenario) { op(sc, "bot").Suffix = "has space" }, "invalid bot username"},
+		{"duplicate bot username", func(sc *exerciseScenario) {
+			sc.Operations = append(sc.Operations, exerciseOperationSpec{OperationID: "bot2", Kind: exerciseKindBotRequest, Suffix: "feed", DisplayName: "Feed", Requester: "lead"})
+		}, "reuses the bot username"},
+		{"unknown bot owner", func(sc *exerciseScenario) { op(sc, "bot").Owner = "ghost" }, "unknown persona"},
+		{"long bot display name", func(sc *exerciseScenario) { op(sc, "bot").DisplayName = strings.Repeat("x", maxDisplayNameLen) }, `operation "bot"`},
+		{"bot incoming channel unknown", func(sc *exerciseScenario) { op(sc, "bot").IncomingChannel = "nope" }, "earlier channel operation"},
+		{"bot outgoing channel unknown", func(sc *exerciseScenario) { op(sc, "bot").OutgoingChannel = "nope" }, "earlier channel operation"},
+		{"bot outgoing channel private", func(sc *exerciseScenario) { op(sc, "bot").OutgoingChannel = "priv" }, "public channel for its outgoing webhook"},
+		{"webhook type", func(sc *exerciseScenario) { op(sc, "hook").WebhookType = "both" }, "needs a webhook_type"},
+		{"webhook requester not in channel", func(sc *exerciseScenario) { op(sc, "hook").Channel = "priv" }, `needs persona "aide" in channel operation "priv"`},
+		{"outgoing webhook on private channel", func(sc *exerciseScenario) {
+			op(sc, "hook").Channel = "priv"
+			op(sc, "hook").Requester = "lead"
+		}, "public channel for an outgoing webhook"},
+		{"long webhook name", func(sc *exerciseScenario) { op(sc, "hook").DisplayName = strings.Repeat("x", maxWebhookNameBytes) }, `operation "hook"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := allKindsScenario()
+			tt.mutate(sc)
+			_, err := buildExercisePlan(sc, exerciseTeamID, []channelPrefix{{Prefix: "team-"}}, 1, counterIDs())
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestBuildExercisePlan_DropsRepeatedNomineesAndChannels(t *testing.T) {
+	sc := allKindsScenario()
+	for i := range sc.Operations {
+		switch sc.Operations[i].OperationID {
+		case "tadm":
+			sc.Operations[i].Nominees = append(sc.Operations[i].Nominees, sc.Operations[i].Nominees...)
+		case "guest":
+			sc.Operations[i].Channels = append(sc.Operations[i].Channels, sc.Operations[i].Channels...)
+		}
+	}
+	plan, err := buildExercisePlan(sc, exerciseTeamID, []channelPrefix{{Prefix: "team-"}}, 1, counterIDs())
+	require.NoError(t, err)
+	want, err := buildExercisePlan(allKindsScenario(), exerciseTeamID, []channelPrefix{{Prefix: "team-"}}, 1, counterIDs())
+	require.NoError(t, err)
+	require.Equal(t, want.TeamAdminRequests[0].Nominees, plan.TeamAdminRequests[0].Nominees)
+	require.Equal(t, want.TeamGuestRequests[0].ChannelOpKeys, plan.TeamGuestRequests[0].ChannelOpKeys)
+}
+
 func TestLoadExerciseScenario(t *testing.T) {
 	sc, err := loadExerciseScenario("  ")
 	require.NoError(t, err)
@@ -230,12 +384,32 @@ func newExerciseFake(t *testing.T) *exerciseFake {
 	return f
 }
 
-// setConfig installs the approval config with exercise mode on, changed
-// by change.
+// channelScenarioJSON is the built-in scenario cut down to its channel
+// and Channel Admin operations and on-team personas, which most exercise
+// tests drive.
+var channelScenarioJSON = func() string {
+	sc, err := loadExerciseScenario("")
+	if err != nil {
+		panic(err)
+	}
+	sc.Personas = slices.DeleteFunc(sc.Personas, func(p exercisePersonaSpec) bool { return p.OffTeam })
+	sc.Operations = slices.DeleteFunc(sc.Operations, func(op exerciseOperationSpec) bool {
+		return op.Kind != exerciseKindChannel && op.Kind != exerciseKindChannelRequest && op.Kind != exerciseKindAdminRequest
+	})
+	data, err := json.Marshal(sc)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}()
+
+// setConfig installs the approval config with exercise mode on and the
+// channel scenario, changed by change.
 func (f *exerciseFake) setConfig(change func(*configuration)) {
 	config := approvalConfig()
 	config.AllowChannelAdminRequests = true
 	config.EnableExercise = true
+	config.ExerciseScenarioJSON = channelScenarioJSON
 	change(config)
 	f.p.setConfiguration(config)
 }
@@ -1100,7 +1274,7 @@ func TestRecordExerciseChannel(t *testing.T) {
 		f := newExerciseFake(t)
 		f.fail["GetChannel"] = true
 		f.p.recordExerciseChannel(&model.Channel{Id: "c1", TeamId: exerciseTeamID})
-		f.api.AssertCalled(t, "LogWarn", "failed to archive exercise channel after teardown; archive it by hand", "channel_id", "c1", "error", mock.Anything)
+		f.api.AssertCalled(t, "LogWarn", "failed to remove exercise channel after teardown; remove it by hand", "id", "c1", "error", mock.Anything)
 	})
 
 	t.Run("the record and the banner fail", func(t *testing.T) {
@@ -1109,7 +1283,7 @@ func TestRecordExerciseChannel(t *testing.T) {
 		f.override("KVCompareAndSet", exerciseManifestKey(exerciseTeamID), mock.Anything, mock.Anything).Return(false, testAppErr("down"))
 		f.fail["UpdateChannel"] = true
 		f.p.recordExerciseChannel(&model.Channel{Id: "c1", TeamId: exerciseTeamID})
-		f.api.AssertCalled(t, "LogWarn", "failed to record exercise channel; archive it by hand", "channel_id", "c1", "error", mock.Anything)
+		f.api.AssertCalled(t, "LogWarn", "failed to record exercise channel; remove it by hand", "id", "c1", "error", mock.Anything)
 		f.api.AssertCalled(t, "LogWarn", "failed to mark exercise channel", "channel_id", "c1", "error", mock.Anything)
 	})
 }
@@ -1185,8 +1359,19 @@ func TestExercise_TeardownRequestFailures(t *testing.T) {
 	t.Run("an approver wins the claim", func(t *testing.T) {
 		f := newExerciseFake(t)
 		f.populate(t)
-		f.override("KVCompareAndDelete", keyPrefix(kvRequestPrefix), mock.Anything).Return(false, nil)
+		f.override("KVCompareAndDelete", keyPrefix(kvRequestPrefix), mock.Anything).Return(func(key string, _ []byte) (bool, *model.AppError) {
+			delete(f.kv, key)
+			return false, nil
+		})
 		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "1 pending requests closed")
+	})
+
+	t.Run("a first approval rewrites the request", func(t *testing.T) {
+		f := newExerciseFake(t)
+		f.populate(t)
+		f.override("KVCompareAndDelete", keyPrefix(kvRequestPrefix), mock.Anything).Return(false, nil)
+		require.Contains(t, f.run("admin1", "/mattermost-request-hub exercise teardown"), "could not be removed")
+		require.NotNil(t, f.manifest(t))
 	})
 
 	t.Run("marking it torn down fails", func(t *testing.T) {

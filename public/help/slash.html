@@ -251,16 +251,17 @@
             Only System Admins can run it, and only while <em>Enable exercise mode</em> is on in System Console
             → Plugins → Mattermost Request Hub. Run it from a channel in the team you want to seed. Each team
             has its own exercise data. <code>populate</code> also needs <em>Allow channel requests</em> on and at
-            least one channel prefix, and <em>Allow channel admin requests</em> on when the scenario has Channel
-            Admin requests. <code>status</code> and <code>teardown</code> work whatever those settings are, so
-            exercise data can always be removed.
+            least one channel prefix, and the setting for every other request type the scenario seeds. The
+            built-in scenario seeds all eight types, and its guest invite also needs guest access on.
+            <code>status</code> and <code>teardown</code> work whatever those settings are, so exercise data can
+            always be removed.
         </p>
         <table class="field-table">
             <thead><tr><th>Subcommand</th><th>What it does</th></tr></thead>
             <tbody>
                 <tr><td><code>populate</code></td><td>Creates the scenario's personas, its channels and its pending requests. Each request gets its approval card, in the approval channel the team's real requests use (or as direct messages to System Admins when there is none), and its persona gets the usual request thread. Runs once per team until teardown.</td></tr>
-                <tr><td><code>status</code></td><td>Compares what populate recorded with what is still live: active personas, channels not archived, and requests still pending.</td></tr>
-                <tr><td><code>teardown</code></td><td>Closes the exercise requests still pending, marking their approval cards and the personas' request threads, archives every exercise channel (including any created by approving an exercise request), deactivates the personas, and removes what the plugin stored about the exercise requests.</td></tr>
+                <tr><td><code>status</code></td><td>Compares what populate recorded with what is still live: active personas, channels not archived, requests still pending, and the teams and bots approvals created. Webhooks are counted but only teardown checks them.</td></tr>
+                <tr><td><code>teardown</code></td><td>Closes the exercise requests still pending, marking their approval cards and the personas' request threads. Deletes the webhooks and bots that approving exercise requests created, archives the teams and every exercise channel (including any created by an approval), takes Team Admin back from personas and removes personas that were added to the team by a request, deactivates the personas, and removes what the plugin stored about the exercise requests.</td></tr>
             </tbody>
         </table>
         <p>Everything exercise mode creates is marked:</p>
@@ -269,24 +270,34 @@
             <li>Channel names shown in the sidebar start with <em>EXERCISE</em>, purposes start with <em>[EXERCISE]</em>, and each exercise channel's header is an EXERCISE banner.</li>
             <li>Approval card titles start with <em>EXERCISE</em>, and the message above the card starts with <em>EXERCISE:</em> (after the team label, when the card is routed for another team) and mentions nobody, so populate doesn't notify the approvers.</li>
             <li>Audit cards and the personas' request threads about exercise requests start with <em>EXERCISE</em>.</li>
+            <li>Teams have a display name that starts with <em>EXERCISE</em> and a URL name that starts with <code>exercise-</code>. Bot usernames start with <code>ex-</code> and their display names with <em>EXERCISE</em>. A webhook request's webhook has a name that starts with <em>EXERCISE</em>, a bot's webhooks are named after the bot, and outgoing webhooks call <code>https://exercise.invalid/hook</code>, which never answers.</li>
+            <li>Guest invites go to <code>exercise-guest-&lt;guest&gt;-&lt;team&gt;@exercise.invalid</code>, a domain that never receives mail.</li>
         </ul>
         <p>
             Seeded requests are made by personas and name only personas, so approving one gives no real user
             access to anything. Approve and deny work exactly as for a real request, on the card or with
-            <code>approve</code> and <code>deny</code>. Seeded requests don't count toward any real user's pending
-            limit. Channel names use the first configured prefix and must pass its suffix rule.
+            <code>approve</code> and <code>deny</code>, and approving does the real thing: it creates the channel,
+            team, bot or webhook, changes the persona's team membership, or sends the guest invite. A bot's token
+            and an incoming webhook's URL go to the requesting persona's request thread, which nobody can sign in
+            to read. Bot and webhook requests still need both approval steps, so in the default user attribute
+            mode they can only be approved once the attribute is set up. Seeded requests don't count toward any
+            real user's pending limit. Channel names use the first configured prefix and must pass its suffix
+            rule.
         </p>
         <p>
             Teardown only touches what exercise mode created: the requests, channels and persona accounts it
-            recorded. Real requests, channels and accounts are left alone, even ones that use an exercise name.
-            Teardown waits while a populate is still running in the team.
+            recorded, and the teams, bots and webhooks approving its requests created. Real requests, channels,
+            teams, bots and accounts are left alone, even ones that use an exercise name. Teardown waits while a
+            populate is still running in the team.
         </p>
         <div class="alert alert-info">
             <div class="alert-title">Nothing is deleted outright</div>
             <p>
-                Mattermost doesn't let plugins delete users or channels. Teardown archives exercise channels,
-                renaming each first so the name can be used again, and deactivates the personas. The next
-                <code>populate</code> reactivates the same personas.
+                Mattermost doesn't let plugins delete users, channels or teams. Teardown archives exercise channels
+                and teams, renaming each first so the name can be used again, and deactivates the personas. The next
+                <code>populate</code> reactivates the same personas. Bots are the exception: teardown deletes them
+                for good, with their tokens, so their usernames are free again. A guest invite can't be withdrawn;
+                it reaches nobody and expires on its own.
             </p>
         </div>
 
@@ -301,7 +312,8 @@
   "name": "Sample",
   "personas": [
     {"role": "lead", "first_name": "Ana", "last_name": "Lee", "position": "Shift lead"},
-    {"role": "crew", "first_name": "Bo", "last_name": "Ng", "position": "Crew member"}
+    {"role": "crew", "first_name": "Bo", "last_name": "Ng", "position": "Crew member"},
+    {"role": "visitor", "first_name": "Cy", "last_name": "Ray", "position": "Visitor", "off_team": true}
   ],
   "operations": [
     {"act": 1, "operation_id": "ops-channel", "kind": "channel", "suffix": "ops",
@@ -310,18 +322,43 @@
      "display_name": "Plans", "purpose": "Planning", "private": true, "requester": "crew",
      "members": ["lead"], "age_days": 45},
     {"act": 1, "operation_id": "ops-admin", "kind": "admin_request", "channel": "ops-channel",
-     "requester": "lead", "nominees": ["crew"]}
+     "requester": "lead", "nominees": ["crew"]},
+    {"act": 1, "operation_id": "cell-team", "kind": "team_request", "suffix": "cell",
+     "display_name": "Cell", "purpose": "A team for the cell", "requester": "lead", "team_admin": true},
+    {"act": 1, "operation_id": "crew-team-admin", "kind": "team_admin_request",
+     "requester": "lead", "nominees": ["crew"]},
+    {"act": 1, "operation_id": "visitor-join", "kind": "team_member_request",
+     "requester": "crew", "nominees": ["visitor"], "reason": "Joining the shift"},
+    {"act": 1, "operation_id": "vendor-guest", "kind": "team_guest_request", "guest": "vendor",
+     "channels": ["ops-channel"], "requester": "lead", "reason": "Vendor access"},
+    {"act": 1, "operation_id": "status-bot", "kind": "bot_request", "suffix": "status",
+     "display_name": "Status", "purpose": "Posts status", "requester": "lead", "owner": "crew",
+     "token": true, "incoming_channel": "ops-channel"},
+    {"act": 1, "operation_id": "feed-hook", "kind": "webhook_request", "webhook_type": "incoming",
+     "channel": "ops-channel", "display_name": "Feed", "purpose": "Status feed", "requester": "lead"}
   ]
 }</code></pre>
         <table class="field-table">
             <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
             <tbody>
                 <tr><td><code>id</code>, <code>name</code></td><td>Required. The name appears in the populate reply.</td></tr>
-                <tr><td><code>personas</code></td><td>The people in the scenario, at most 50. <code>role</code> is a short lowercase key that becomes part of the username (<code>exercise-&lt;role&gt;-&lt;team&gt;</code>).</td></tr>
+                <tr><td><code>personas</code></td><td>The people in the scenario, at most 50. <code>role</code> is a short lowercase key that becomes part of the username (<code>exercise-&lt;role&gt;-&lt;team&gt;</code>). <code>off_team</code> keeps a persona out of the team, so a <code>team_member_request</code> can add them. An off-team persona can only be a team member nominee, the requester of a team member or team creation request, or a bot owner.</td></tr>
                 <tr><td><code>act</code>, <code>operation_id</code></td><td>Identify each operation, at most 200. Operation IDs must be unique.</td></tr>
-                <tr><td><code>kind</code></td><td><code>channel</code> creates an exercise channel at once. <code>channel_request</code> files a pending channel request. <code>admin_request</code> files a pending Channel Admin request on an earlier <code>channel</code> operation, named in <code>channel</code>.</td></tr>
+                <tr><td><code>kind</code></td><td><code>channel</code> creates an exercise channel at once. The others file a pending request:
+                    <code>channel_request</code> a channel request;
+                    <code>admin_request</code> a Channel Admin request on an earlier <code>channel</code> operation, named in <code>channel</code>;
+                    <code>team_request</code> a team creation request;
+                    <code>team_admin_request</code> and <code>team_member_request</code> a Team Admin or team member request for this team;
+                    <code>team_guest_request</code> a guest invite to this team;
+                    <code>bot_request</code> a bot account request;
+                    <code>webhook_request</code> a webhook request on an earlier <code>channel</code> operation, named in <code>channel</code>.</td></tr>
                 <tr><td><code>requester</code>, <code>members</code>, <code>admins</code>, <code>nominees</code></td><td>Persona roles, at most 100 in each list. For a <code>channel</code>, <code>requester</code> creates it.</td></tr>
                 <tr><td><code>suffix</code>, <code>display_name</code>, <code>purpose</code>, <code>private</code></td><td>As in a real request. The suffix follows the first configured prefix.</td></tr>
+                <tr><td><code>reason</code></td><td>For <code>team_member_request</code> and <code>team_guest_request</code>, as in a real request.</td></tr>
+                <tr><td><code>team_admin</code></td><td>For <code>team_request</code>: the requester also asks to be Team Admin of the new team. <code>suffix</code> becomes the team URL name <code>exercise-&lt;suffix&gt;-&lt;team&gt;</code>, and <code>private</code> makes it invite only.</td></tr>
+                <tr><td><code>guest</code>, <code>channels</code></td><td>For <code>team_guest_request</code>: a short label for the invite address, and the earlier <code>channel</code> operations the guest joins. The requester must be in each one.</td></tr>
+                <tr><td><code>owner</code>, <code>token</code>, <code>incoming_channel</code>, <code>outgoing_channel</code></td><td>For <code>bot_request</code>: the persona that owns the bot (the requester when left out), whether to ask for a token, and earlier <code>channel</code> operations for an incoming or outgoing webhook. The outgoing one must be public. <code>suffix</code> becomes the username <code>ex-&lt;suffix&gt;-&lt;team&gt;</code>, which must be 3 to 22 characters.</td></tr>
+                <tr><td><code>webhook_type</code></td><td>For <code>webhook_request</code>: <code>incoming</code> or <code>outgoing</code>. An outgoing webhook needs a public channel.</td></tr>
                 <tr><td><code>age_days</code></td><td>Optional, from <code>0</code> to <code>3650</code>. Backdates a request, for example past the expiry so its card shows as expired when approved.</td></tr>
             </tbody>
         </table>
@@ -332,10 +369,10 @@
             <tbody>
                 <tr><td><em>Exercise mode is off...</em></td><td>A System Admin turns on <em>Enable exercise mode</em>.</td></tr>
                 <tr><td><em>Only System Admins can run `/mattermost-request-hub exercise`.</em></td><td>Ask a System Admin.</td></tr>
-                <tr><td><em>exercise mode seeds channel requests, which are turned off...</em>, <em>this scenario seeds Channel Admin requests, which are turned off...</em></td><td>Turn on the setting the reply names, or use a scenario without Channel Admin requests.</td></tr>
+                <tr><td><em>exercise mode seeds channel requests, which are turned off...</em>, <em>this scenario seeds Channel Admin requests, which are turned off...</em>, and the same reply for the other types</td><td>Turn on the setting the reply names, or use a scenario without that type.</td></tr>
                 <tr><td><em>Channel requests aren't configured yet...</em></td><td>Add at least one channel prefix. See <a href="troubleshooting.html#not-configured">Not configured</a>.</td></tr>
                 <tr><td><em>exercise data already exists for this team, or a populate is running...</em></td><td>Run <code>status</code> to see it, or <code>teardown</code> to remove it first.</td></tr>
-                <tr><td><em>the username @... is taken by an account that isn't exercise data</em>, <em>a channel named ~... already exists in this team</em>, <em>this server or team only allows accounts with email addresses at...</em></td><td>See <a href="troubleshooting.html#exercise">Exercise mode</a>.</td></tr>
+                <tr><td><em>the username @... is taken by an account that isn't exercise data</em>, <em>a channel named ~... already exists in this team</em>, <em>this server or team only allows accounts with email addresses at...</em>, <em>a team with the URL name ... already exists</em>, <em>the username @... is taken</em>, <em>...guest accounts are off...</em>, <em>guests can only be invited from...</em></td><td>See <a href="troubleshooting.html#exercise">Exercise mode</a>.</td></tr>
                 <tr><td><em>a populate is still running in this team...</em></td><td>Wait for it to finish, then run <code>teardown</code> again.</td></tr>
                 <tr><td><em>the exercise scenario doesn't fit this server's settings...</em>, <em>...is not valid JSON</em></td><td>Fix the scenario or the prefix list; the reply says what failed. Nothing was created.</td></tr>
                 <tr><td><em>could not finish seeding...</em></td><td>Run <code>teardown</code>, then <code>populate</code> again.</td></tr>
