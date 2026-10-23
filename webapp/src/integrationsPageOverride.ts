@@ -34,7 +34,11 @@ function isSystemAdmin(store: Store): boolean {
 }
 
 function resolveSameOriginPath(href: string): string | null {
-    if (!href || href.startsWith('#') || (/^javascript:/i).test(href)) {
+    if (!href || href.startsWith('#')) {
+        return null;
+    }
+    // eslint-disable-next-line no-script-url -- reject javascript: hrefs before URL parse
+    if (href.toLowerCase().startsWith('javascript:')) {
         return null;
     }
     try {
@@ -85,8 +89,10 @@ function nativeTilePresent(kind: IntegrationKind): boolean {
         return (/Outgoing Webhooks/i).test(body);
     case 'bot':
         return (/Bot Accounts/i).test(body);
-    default:
-        return false;
+    default: {
+        const exhaustiveCheck: never = kind;
+        return exhaustiveCheck;
+    }
     }
 }
 
