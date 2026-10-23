@@ -215,9 +215,11 @@ export const RequestHubModal = () => {
             action: openIncomingWebhookModal,
             enabled: enabled.webhook,
 
-            // Any team the user is on — not tied to the approval/primary team.
-            // Forms still need an O/P channel; they validate that on submit.
+            // Any team the user is on, not tied to the approval/primary team.
+            // A webhook belongs to a public or private channel, so the tile is
+            // hidden in DMs and group messages like the channel-header item.
             requiresTeam: true,
+            requiresTeamChannel: true,
         },
         {
             icon: '📤',
@@ -226,6 +228,7 @@ export const RequestHubModal = () => {
             action: openOutgoingWebhookModal,
             enabled: enabled.webhook,
             requiresTeam: true,
+            requiresTeamChannel: true,
         },
     ];
 
