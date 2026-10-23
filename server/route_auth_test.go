@@ -68,9 +68,19 @@ func TestActionHandlers_SystemAdminMayApproveOwnRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &plugintest.API{}
 			stubLogs(api)
+			stubPendingLists(api)
+			stubActiveTeamMember(api, "team1", "admin1")
 			p := newTestPlugin(api)
+			p.setConfiguration(approvableConfig())
 			stubSystemAdmin(api)
 			raw := pendingRecord(t, tc, "admin1")
+			if tc.name == "channel" {
+				// The name must still match a configured prefix at approval.
+				var fields map[string]any
+				require.NoError(t, json.Unmarshal(raw, &fields))
+				fields["name"] = "team-x"
+				raw = mustMarshal(t, fields)
+			}
 			api.On("KVGet", tc.kvPrefix+"r1").Return(raw, nil)
 			api.On("GetTeam", mock.Anything).Return(&model.Team{Id: "team1", Name: "ops"}, nil).Maybe()
 			api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town", TeamId: "team1"}, nil).Maybe()
@@ -163,7 +173,10 @@ func TestTwoStepActions_UserInNeitherPoolRefused(t *testing.T) {
 func TestHandleAction_ClickContextOnlySelectsTheRequest(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
+	stubActiveTeamMember(api, "team1", "u_req")
 	p := newTestPlugin(api)
+	p.setConfiguration(approvableConfig())
 
 	req := &channelRequest{ID: "req1", ApprovalPostID: "post1", RequesterID: "u_req", TeamID: "team1", Name: "team-x", DisplayName: "X", ChannelType: "O"}
 	raw, err := json.Marshal(req)

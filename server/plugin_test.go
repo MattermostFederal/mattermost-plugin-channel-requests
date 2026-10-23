@@ -12,6 +12,7 @@ import (
 func TestOnActivate_EnsuresBotAndRegistersCommand(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -39,6 +40,7 @@ func TestOnActivate_EnsuresBotAndRegistersCommand(t *testing.T) {
 func TestOnActivate_BotFailureStopsActivation(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -50,4 +52,18 @@ func TestOnActivate_BotFailureStopsActivation(t *testing.T) {
 	require.ErrorContains(t, err, "failed to ensure bot user")
 	require.Empty(t, p.botUserID)
 	api.AssertNotCalled(t, "RegisterCommand", mock.Anything)
+}
+
+func TestOnActivate_StoredRequestUpdateFailureIsLogged(t *testing.T) {
+	api := &plugintest.API{}
+	stubLogs(api)
+	p := &Plugin{}
+	p.SetAPI(api)
+
+	api.On("KVGet", kvPendingMigrated).Return(nil, testAppErr("kv down"))
+	stubActivation(t, api, p, &configuration{}, nil)
+
+	require.NoError(t, p.OnActivate())
+	p.stopTwoStepChannelReconciler()
+	api.AssertCalled(t, "LogError", "channel-requests: failed to update stored requests", "error", mock.Anything)
 }

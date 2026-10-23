@@ -793,6 +793,38 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		ScopeID:           req.TeamID,
 	})
 
+	config := p.getConfiguration()
+	// Best-effort for the welcome post and audit; approve checks requesterErr.
+	requester, requesterErr := p.API.GetUser(req.RequesterID)
+
+	if requestExpired(req.CreatedAt, config.ExpiryDays(), model.GetMillis()) {
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindChannel,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        config.ExpiryDays(),
+			cardTitle:   "Channel Request Expired",
+			cardText:    fmt.Sprintf("Your request for channel **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
+			audit: fmt.Sprintf("@%s closed channel request \"%s\" from %s, which was not reviewed within %d days",
+				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), config.ExpiryDays()),
+		})
+		return
+	}
+
+	// Re-check what submitRequest checked, since the request may have been
+	// pending a while. A failed check leaves it pending so it can be denied.
+	if approve {
+		if msg := p.approvalBlocker(config, req, requester, requesterErr); msg != "" {
+			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: msg})
+			return
+		}
+	}
+
 	// Atomically claim the request before acting on it. Two admins
 	// clicking Approve (or one Approve + one Deny) at nearly the same
 	// time both load a non-nil req; without an atomic claim both would
@@ -813,8 +845,6 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
-	requester, _ := p.API.GetUser(req.RequesterID) // best-effort for welcome post + audit
-
 	var outcome string
 	if approve {
 		channel, createErr := p.createChannelForRequest(req)
@@ -827,6 +857,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			// requester resubmit rather than implying a retry will work.
 			if restoreErr := p.storeRequest(req); restoreErr != nil {
 				p.API.LogError("failed to restore request after create failure", "error", restoreErr.Error())
+				p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 				p.deleteApprovalCards(req.ID)
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel (%s), and the pending request could not be saved — ask the requester to submit it again.", createErr.Error())})
 				return
@@ -834,6 +865,8 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the channel: %s. The request is still pending. If this keeps failing, the channel name may already be taken — deny it and ask the requester to resubmit with a different name.", createErr.Error())})
 			return
 		}
+		// The KV key was already removed by the atomic claim above.
+		p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 		p.addChannelToSidebarCategory(channel.Id, channel.TeamId, req)
 		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Channel ~%s created.", actingUser.Username, requesterUsername(requester, req.RequesterID), channel.Name)
 		if requester != nil {
@@ -852,6 +885,7 @@ func (p *Plugin) handleAction(w http.ResponseWriter, r *http.Request, approve bo
 		return
 	}
 
+	p.releasePending(pendingKindChannel, req.RequesterID, req.ID)
 	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Channel request **%s** (`%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.DisplayName), req.Name)
 	p.logAudit(auditDenied, fmt.Sprintf("@%s denied channel request \"%s\" from %s",
 		actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID)), request.PostId)
@@ -925,14 +959,6 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 	}
 	nominees := p.mentionList(req.NomineeIDs)
 
-	// On approval we need a live channel to promote into; bail before claiming
-	// the request so a deleted channel leaves the pending request intact.
-	// GetChannel returns archived channels too, so check DeleteAt.
-	if approve && (channelErr != nil || channel.DeleteAt != 0) {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
-		return
-	}
-
 	p.refreshTicketThread(ticketThread{
 		ApprovalPostID:    req.ApprovalPostID,
 		ApprovalChannelID: req.ApprovalChannelID,
@@ -941,6 +967,33 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		Kind:              requestTypeChannelAdmin,
 		ScopeID:           req.ChannelID,
 	})
+
+	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvAdminRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindAdmin,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Channel Admin Request Expired",
+			cardText:    fmt.Sprintf("Your request to make %s Channel Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, channelRef),
+			audit: fmt.Sprintf("@%s closed the Channel Admin request for %s in %s from %s, which was not reviewed within %d days",
+				actingUser.Username, nominees, channelRef, requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
+	// On approval we need a live channel to promote into; bail before claiming
+	// the request so a deleted channel leaves the pending request intact.
+	// GetChannel returns archived channels too, so check DeleteAt.
+	if approve && (channelErr != nil || channel.DeleteAt != 0) {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the channel; it may have been deleted."})
+		return
+	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvAdminRequestPrefix+req.ID, rawReq)
 	if claimErr != nil {
@@ -953,6 +1006,9 @@ func (p *Plugin) handleAdminAction(w http.ResponseWriter, r *http.Request, appro
 		p.respondClaimLost(w, loadErr != nil || still != nil)
 		return
 	}
+
+	// The KV key was already removed by the atomic claim above.
+	p.releasePending(pendingKindAdmin, req.RequesterID, req.ID)
 
 	if approve {
 		// Report only who was actually promoted; nominees who have since
@@ -1149,10 +1205,7 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 	}
 
 	team, teamErr := p.API.GetTeam(req.TeamID)
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
-	}
+	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
 
 	p.refreshTicketThread(ticketThread{
 		ApprovalPostID:    req.ApprovalPostID,
@@ -1161,6 +1214,32 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		DMChannelID:       req.DMChannelID,
 		Kind:              requestTypeTeamAdmin,
 	})
+
+	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		requester, _ := p.API.GetUser(req.RequesterID)
+		nominees := p.mentionList(req.NomineeIDs)
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvTeamAdminRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindTeamAdmin,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Team Admin Request Expired",
+			cardText:    fmt.Sprintf("Your request to make %s Team Admin in %s expired before it was reviewed. Submit it again if you still need it.", nominees, teamRef),
+			audit: fmt.Sprintf("@%s closed the Team Admin request for %s in %s from %s, which was not reviewed within %d days",
+				actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
+	if approve && teamErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
+		return
+	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamAdminRequestPrefix+req.ID, rawReq)
 	if claimErr != nil {
@@ -1173,13 +1252,11 @@ func (p *Plugin) handleTeamAdminAction(w http.ResponseWriter, r *http.Request, a
 		p.respondClaimLost(w, loadErr != nil || still != nil)
 		return
 	}
+	// The KV key was already removed by the atomic claim above.
+	p.releasePending(pendingKindTeamAdmin, req.RequesterID, req.ID)
 
 	requester, _ := p.API.GetUser(req.RequesterID)
 	nominees := p.mentionList(req.NomineeIDs)
-	teamRef := req.TeamID
-	if teamErr == nil {
-		teamRef = "**" + escapeMarkdown(team.DisplayName) + "**"
-	}
 
 	if approve {
 		p.promoteTeamAdmins(req)
@@ -1286,10 +1363,7 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 	}
 
 	team, teamErr := p.API.GetTeam(req.TeamID)
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
-	}
+	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
 
 	p.refreshTicketThread(ticketThread{
 		ApprovalPostID:    req.ApprovalPostID,
@@ -1298,6 +1372,32 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		DMChannelID:       req.DMChannelID,
 		Kind:              requestTypeTeamMember,
 	})
+
+	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		requester, _ := p.API.GetUser(req.RequesterID)
+		nominees := p.mentionList(req.NomineeIDs)
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvTeamMemberRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindTeamMember,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Team Member Request Expired",
+			cardText:    fmt.Sprintf("Your request to add %s to %s expired before it was reviewed. Submit it again if you still need it.", nominees, teamRef),
+			audit: fmt.Sprintf("@%s closed the request to add %s to %s from %s, which was not reviewed within %d days",
+				actingUser.Username, nominees, teamRef, requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
+	if approve && teamErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
+		return
+	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamMemberRequestPrefix+req.ID, rawReq)
 	if claimErr != nil {
@@ -1310,13 +1410,11 @@ func (p *Plugin) handleTeamMemberAction(w http.ResponseWriter, r *http.Request, 
 		p.respondClaimLost(w, loadErr != nil || still != nil)
 		return
 	}
+	// The KV key was already removed by the atomic claim above.
+	p.releasePending(pendingKindTeamMember, req.RequesterID, req.ID)
 
 	requester, _ := p.API.GetUser(req.RequesterID)
 	nominees := p.mentionList(req.NomineeIDs)
-	teamRef := req.TeamID
-	if teamErr == nil {
-		teamRef = "**" + escapeMarkdown(team.DisplayName) + "**"
-	}
 
 	var outcome string
 	if approve {
@@ -1444,10 +1542,7 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 	}
 
 	team, teamErr := p.API.GetTeam(req.TeamID)
-	if approve && teamErr != nil {
-		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
-		return
-	}
+	teamRef := teamDisplayRef(team, teamErr, req.TeamID)
 
 	p.refreshTicketThread(ticketThread{
 		ApprovalPostID:    req.ApprovalPostID,
@@ -1456,6 +1551,31 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		DMChannelID:       req.DMChannelID,
 		Kind:              requestTypeTeamGuest,
 	})
+
+	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		requester, _ := p.API.GetUser(req.RequesterID)
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvTeamGuestRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindTeamGuest,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Guest Invite Request Expired",
+			cardText:    fmt.Sprintf("Your request to invite **%s** to %s as a guest expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.Email), teamRef),
+			audit: fmt.Sprintf("@%s closed the guest invite request for %s from %s, which was not reviewed within %d days",
+				actingUser.Username, teamRef, requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
+	if approve && teamErr != nil {
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not load the team; it may have been deleted."})
+		return
+	}
 
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamGuestRequestPrefix+req.ID, rawReq)
 	if claimErr != nil {
@@ -1470,21 +1590,19 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 	}
 
 	requester, _ := p.API.GetUser(req.RequesterID)
-	teamRef := req.TeamID
-	if teamErr == nil {
-		teamRef = "**" + escapeMarkdown(team.DisplayName) + "**"
-	}
 
 	var outcome string
 	if approve {
 		if fulfillErr := p.fulfillTeamGuestRequest(req, actingUser.Id); fulfillErr != nil {
 			if restoreErr := p.API.KVSet(kvTeamGuestRequestPrefix+req.ID, rawReq); restoreErr != nil {
 				p.API.LogError("failed to restore team guest request", "error", restoreErr.Error())
+				p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
 				p.deleteApprovalCards(req.ID)
 			}
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fulfillErr.Error()})
 			return
 		}
+		p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
 		outcome = fmt.Sprintf("✅ Approved by @%s for %s. Guest invitation emailed to %s for %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.Email), teamRef)
 		p.logAudit(auditApproved, fmt.Sprintf("@%s guest invite for %s email \"%s\" (requested by %s)",
 			actingUser.Username, teamRef, escapeMarkdown(req.Email), requesterUsername(requester, req.RequesterID)), request.PostId)
@@ -1498,6 +1616,7 @@ func (p *Plugin) handleTeamGuestAction(w http.ResponseWriter, r *http.Request, a
 		})})
 		return
 	}
+	p.releasePending(pendingKindTeamGuest, req.RequesterID, req.ID)
 	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Guest invite for %s.", actingUser.Username, requesterUsername(requester, req.RequesterID), teamRef)
 	p.logAudit(auditDenied, fmt.Sprintf("@%s denied guest invite for %s",
 		actingUser.Username, teamRef), request.PostId)
@@ -1555,6 +1674,26 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 		Kind:              requestTypeTeam,
 	})
 
+	if days := p.getConfiguration().ExpiryDays(); requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		requester, _ := p.API.GetUser(req.RequesterID)
+		p.expireRequest(w, expiredRequest{
+			kvKey:       kvTeamRequestPrefix + req.ID,
+			raw:         rawReq,
+			kind:        pendingKindTeam,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Team Creation Request Expired",
+			cardText:    fmt.Sprintf("Your request to create team **%s** expired before it was reviewed. Submit it again if you still need it.", escapeMarkdown(req.DisplayName)),
+			audit: fmt.Sprintf("@%s closed the team creation request for %s from %s, which was not reviewed within %d days",
+				actingUser.Username, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
 	claimed, claimErr := p.API.KVCompareAndDelete(kvTeamRequestPrefix+req.ID, rawReq)
 	if claimErr != nil {
 		p.API.LogError("failed to claim team request", "error", claimErr.Error())
@@ -1576,6 +1715,7 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			p.API.LogError("failed to create team on approval", "error", createErr.Error())
 			if restoreErr := p.storeTeamRequest(req); restoreErr != nil {
 				p.API.LogError("failed to restore team request after create failure", "error", restoreErr.Error())
+				p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
 				p.deleteApprovalCards(req.ID)
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
 				return
@@ -1583,6 +1723,7 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the team: %s. The request is still pending.", createErr.Error())})
 			return
 		}
+		p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
 		adminNote := ""
 		if req.RequestTeamAdmin {
 			adminNote = " Requester promoted to Team Admin."
@@ -1600,6 +1741,7 @@ func (p *Plugin) handleTeamAction(w http.ResponseWriter, r *http.Request, approv
 		})})
 		return
 	}
+	p.releasePending(pendingKindTeam, req.RequesterID, req.ID)
 	outcome = fmt.Sprintf("❌ Denied by @%s for %s. Team **%s** (`/%s`).", actingUser.Username, requesterUsername(requester, req.RequesterID), escapeMarkdown(req.DisplayName), req.Name)
 	p.logAudit(auditDenied, fmt.Sprintf("@%s denied a team creation request for %s",
 		actingUser.Username, escapeMarkdown(req.DisplayName)), request.PostId)
@@ -1709,6 +1851,26 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 
 	requester, _ := p.API.GetUser(req.RequesterID)
 
+	// Expiry counts from submission, even when one step is already approved.
+	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		p.expireRequest(w, expiredRequest{
+			kvKey:       key,
+			raw:         rawReq,
+			kind:        pendingKindBot,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Bot Account Request Expired",
+			cardText:    fmt.Sprintf("Your request for bot **@%s** expired before it was reviewed. Submit it again if you still need it.", req.Username),
+			audit: fmt.Sprintf("@%s closed the bot request for @%s from %s, which was not reviewed within %d days",
+				actingUser.Username, req.Username, requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
 	if !approve {
 		if !canSec && !canSys {
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to deny this request."})
@@ -1724,6 +1886,7 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			p.respondClaimLost(w, loadErr != nil || still != nil)
 			return
 		}
+		p.releasePending(pendingKindBot, req.RequesterID, req.ID)
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. Bot **@%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.Username)
 		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a bot request for @%s",
 			actingUser.Username, req.Username), request.PostId)
@@ -1772,6 +1935,7 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			p.API.LogError("failed to create bot on approval", "error", createErr.Error())
 			if restoreErr := p.API.KVSet(key, rawReq); restoreErr != nil {
 				p.API.LogError("failed to restore bot request after create failure", "error", restoreErr.Error())
+				p.releasePending(pendingKindBot, req.RequesterID, req.ID)
 				p.deleteApprovalCards(req.ID)
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the bot (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
 				return
@@ -1791,6 +1955,7 @@ func (p *Plugin) handleBotAction(w http.ResponseWriter, r *http.Request, approve
 			})
 			return
 		}
+		p.releasePending(pendingKindBot, req.RequesterID, req.ID)
 
 		authToken := ""
 		siteURL := p.siteURL()
@@ -2078,6 +2243,26 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 	requester, _ := p.API.GetUser(req.RequesterID)
 	channel, _ := p.API.GetChannel(req.ChannelID)
 
+	// Expiry counts from submission, even when one step is already approved.
+	if days := p.getConfiguration().ExpiryDays(); (canSec || canSys) && requestExpired(req.CreatedAt, days, model.GetMillis()) {
+		p.expireRequest(w, expiredRequest{
+			kvKey:       key,
+			raw:         rawReq,
+			kind:        pendingKindWebhook,
+			requestID:   req.ID,
+			requesterID: req.RequesterID,
+			postID:      request.PostId,
+			dmRootID:    req.DMRootPostID,
+			dmChannelID: req.DMChannelID,
+			days:        days,
+			cardTitle:   "Webhook Request Expired",
+			cardText:    fmt.Sprintf("Your request for a %s webhook **%s** expired before it was reviewed. Submit it again if you still need it.", req.WebhookType, escapeMarkdown(req.DisplayName)),
+			audit: fmt.Sprintf("@%s closed the %s webhook request for %s from %s, which was not reviewed within %d days",
+				actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName), requesterUsername(requester, req.RequesterID), days),
+		})
+		return
+	}
+
 	if !approve {
 		if !canSec && !canSys {
 			writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "You don't have permission to deny this request."})
@@ -2093,6 +2278,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			p.respondClaimLost(w, loadErr != nil || still != nil)
 			return
 		}
+		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
 		outcome := fmt.Sprintf("❌ Denied by @%s for %s. %s webhook **%s**.", actingUser.Username, requesterUsername(requester, req.RequesterID), req.WebhookType, escapeMarkdown(req.DisplayName))
 		p.logAudit(auditDenied, fmt.Sprintf("@%s denied a %s webhook request for %s",
 			actingUser.Username, req.WebhookType, escapeMarkdown(req.DisplayName)), request.PostId)
@@ -2145,6 +2331,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			p.API.LogError("failed to create webhook on approval", "error", createErr.Error())
 			if restoreErr := p.API.KVSet(key, rawReq); restoreErr != nil {
 				p.API.LogError("failed to restore webhook request after create failure", "error", restoreErr.Error())
+				p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
 				p.deleteApprovalCards(req.ID)
 				writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: fmt.Sprintf("Could not create the webhook (%s), and the pending request could not be saved — ask the requester to resubmit.", createErr.Error())})
 				return
@@ -2168,6 +2355,7 @@ func (p *Plugin) handleWebhookAction(w http.ResponseWriter, r *http.Request, app
 			})
 			return
 		}
+		p.releasePending(pendingKindWebhook, req.RequesterID, req.ID)
 
 		// Best-effort: reopen the requester DM if submit-time open failed.
 		if req.DMChannelID == "" {
@@ -2435,6 +2623,96 @@ func (p *Plugin) respondTwoStepApproveBlocked(w http.ResponseWriter, userID, pos
 	}
 	writeJSON(w, resp)
 }
+
+// expiredRequest describes a pending request whose approval card was
+// clicked after it expired.
+type expiredRequest struct {
+	kvKey       string
+	raw         []byte
+	kind        string // pendingKind*
+	requestID   string
+	requesterID string
+	postID      string // approval card
+	dmRootID    string // requester's ticket DM root
+	dmChannelID string
+	days        int
+	cardTitle   string // requester's ticket card
+	cardText    string
+	audit       string // audit-channel line
+}
+
+// expireRequest closes an expired request: it claims the record like an
+// approve or deny would, closes the requester's ticket as expired, and
+// marks the approval card expired.
+func (p *Plugin) expireRequest(w http.ResponseWriter, e expiredRequest) {
+	claimed, claimErr := p.API.KVCompareAndDelete(e.kvKey, e.raw)
+	if claimErr != nil {
+		p.API.LogError("failed to claim expired request", "error", claimErr.Error())
+		writeJSON(w, model.PostActionIntegrationResponse{EphemeralText: "Could not process that request."})
+		return
+	}
+	if !claimed {
+		still, loadErr := p.API.KVGet(e.kvKey)
+		p.respondClaimLost(w, loadErr != nil || still != nil)
+		return
+	}
+	p.releasePending(e.kind, e.requesterID, e.requestID)
+	p.logAudit(auditExpired, e.audit, e.postID)
+	writeJSON(w, model.PostActionIntegrationResponse{
+		EphemeralText: expiredText,
+		Update: p.closeTicket(ticketClose{
+			RequestID:   e.requestID,
+			RequesterID: e.requesterID, DMRootPostID: e.dmRootID, DMChannelID: e.dmChannelID,
+			ApprovalPostID: e.postID, Expired: true,
+			CardTitle:   e.cardTitle,
+			CardText:    e.cardText,
+			ThreadReply: fmt.Sprintf("⌛ **Expired**: not reviewed within %d days.", e.days),
+			StatusLine:  fmt.Sprintf("⌛ Expired: not reviewed within %d days.", e.days),
+		}),
+	})
+}
+
+// approvalBlocker returns why a channel request can't be approved as it
+// stands, or "" when it can. A lookup that fails for any reason other than
+// "not found" asks the approver to try again rather than deny.
+func (p *Plugin) approvalBlocker(config *configuration, req *channelRequest, requester *model.User, requesterErr *model.AppError) string {
+	if requesterErr != nil && requesterErr.StatusCode != http.StatusNotFound {
+		p.API.LogWarn("failed to load requester for approval", "user_id", req.RequesterID, "error", requesterErr.Error())
+		return approvalRetryText
+	}
+	if requester == nil || requester.DeleteAt != 0 {
+		return "The requester's account is no longer active. Deny this request instead."
+	}
+	if !requester.IsSystemAdmin() {
+		member, appErr := p.API.GetTeamMember(req.TeamID, req.RequesterID)
+		if appErr != nil && appErr.StatusCode != http.StatusNotFound {
+			p.API.LogWarn("failed to check requester's team membership for approval", "user_id", req.RequesterID, "team_id", req.TeamID, "error", appErr.Error())
+			return approvalRetryText
+		}
+		if appErr != nil || member == nil || member.DeleteAt != 0 {
+			return "The requester is no longer a member of the team. Deny this request instead."
+		}
+	}
+	if !config.allowsChannelName(req.Name) {
+		return "The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again."
+	}
+	return ""
+}
+
+// approvalRetryText is the private reply when approval can't be checked.
+const approvalRetryText = "Could not check the requester right now. Try again in a moment."
+
+// teamDisplayRef is the team's display name in bold, or its ID when the
+// team couldn't be loaded.
+func teamDisplayRef(team *model.Team, teamErr *model.AppError, teamID string) string {
+	if teamErr != nil || team == nil {
+		return teamID
+	}
+	return "**" + escapeMarkdown(team.DisplayName) + "**"
+}
+
+// expiredText is the private reply to a click on an expired request.
+const expiredText = "This request has expired."
 
 // alreadyHandledText is the private reply to a click on a request that no
 // longer exists (approved, denied, or claimed by a concurrent click).

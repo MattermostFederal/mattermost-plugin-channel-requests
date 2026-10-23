@@ -13,6 +13,7 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 - Request Hub (App Bar) plus More actions, slash commands, and native menu overrides
 - Slash command arguments for every request type (for example `channel <prefix> <Channel name> [options]` or `channel-admin @user ...`) that skip the form, plus `prefixes` to list the channel prefixes
 - Per-type enable toggles in System Console
+- Per-user limit on pending requests of each type, a duplicate check, and an expiry after which a request can no longer be approved
 - Approval routing: channel requests (root or per-team), team-scope tickets in `mattermost-team-requests`, bots/webhooks in dedicated channels
 - Soft-squash approval cards and DM ticket threads with message relay
 - Bot/webhook two-step approval via User Attributes, User Groups, or System Admins only

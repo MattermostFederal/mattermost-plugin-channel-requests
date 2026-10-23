@@ -158,6 +158,20 @@
                 "type": "bool",
                 "default": false,
                 "help_text": "When true, the Mattermost Agents plugin can list prefixes and file requests of every type on a user's behalf, under the same rules and per-type settings as the request forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; per-tool access is managed in Agents' System Console."
+            },
+            {
+                "key": "MaxPendingRequestsPerUser",
+                "display_name": "Pending requests per user",
+                "type": "text",
+                "default": "5",
+                "help_text": "How many requests of each type one user can have waiting for review, up to 1000. Each type is counted separately. 0 means no limit."
+            },
+            {
+                "key": "RequestExpiryDays",
+                "display_name": "Request expiry (days)",
+                "type": "text",
+                "default": "30",
+                "help_text": "Pending requests older than this can no longer be approved, and stop counting toward the per-user limit. At most 3650. 0 means requests never expire. Applies to existing requests too."
             }
         ]
     }

@@ -400,6 +400,7 @@ func TestOnActivate_CommandRegistrationFailureStops(t *testing.T) {
 	dir, icon := bundleWithIcon(t)
 	api := &plugintest.API{}
 	stubLogLevels(api)
+	stubPendingMigrated(api)
 	defer api.AssertExpectations(t)
 	p := &Plugin{}
 	p.SetAPI(api)
@@ -418,6 +419,7 @@ func TestOnActivate_BackgroundSetupSeedsChannelsAndSweepsTeams(t *testing.T) {
 	dir, icon := bundleWithIcon(t)
 	api := &plugintest.API{}
 	stubLogLevels(api)
+	stubPendingMigrated(api)
 	p := &Plugin{}
 	p.SetAPI(api)
 	p.setConfiguration(&configuration{

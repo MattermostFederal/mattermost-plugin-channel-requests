@@ -84,6 +84,15 @@ then another when both approvers have acted.
 
 ---
 
+**Limits.** A System Admin sets how many webhook requests you can have waiting for review
+at once (each request type is counted separately). At the limit you'll see *you
+have N pending requests waiting for review; you can submit more once some are
+approved, denied or expire*. Asking again for a webhook of the same type with the same name in the same
+channel shows *you already have a pending incoming webhook request with this name
+in this channel* (or *outgoing*). Requests that aren't reviewed within the configured number of days of being
+submitted expire, even if one approval step is done, and you'll get a direct
+message saying so.
+
 ## Messaging while a request is pending
 
 Webhook tickets use the same **two-way thread relay**. Open the **Thread** RHS

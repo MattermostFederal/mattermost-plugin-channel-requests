@@ -239,6 +239,7 @@ func TestExecuteCommand_ChannelCreateUnknownUsers(t *testing.T) {
 func TestExecuteCommand_ChannelCreateSubmitsForApproval(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(approvalConfig())
@@ -251,7 +252,7 @@ func TestExecuteCommand_ChannelCreateSubmitsForApproval(t *testing.T) {
 		api.On("GetUser", id).Return(&model.User{Id: id, Username: name}, nil).Maybe()
 	}
 	var stored channelRequest
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
 	}).Return(nil).Once()
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -275,6 +276,7 @@ func TestExecuteCommand_ChannelCreateSubmitsForApproval(t *testing.T) {
 	require.Equal(t, []string{alice, bob}, stored.MemberIDs)
 	require.Equal(t, []string{carol}, stored.AdminMemberIDs)
 	require.Equal(t, "Launch", stored.CategoryName)
+	require.NotZero(t, stored.CreatedAt)
 	api.AssertNotCalled(t, "CreateChannel", mock.Anything)
 }
 
@@ -346,6 +348,7 @@ func TestExecuteCommand_ChannelAdminRejectedBySubmit(t *testing.T) {
 func TestExecuteCommand_ChannelAdminQueuesForCurrentChannel(t *testing.T) {
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
 	p.setConfiguration(&configuration{AllowChannelAdminRequests: true, ApprovalTeam: "appteam"})

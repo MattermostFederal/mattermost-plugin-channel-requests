@@ -67,6 +67,15 @@ user is currently assigned.
 Click **Submit request**. You'll see a confirmation, and you'll get a direct
 message when an approver responds.
 
+**Limits.** A System Admin sets how many requests you can have waiting for
+review at once (each request type is counted separately). At the
+limit you'll see *you have N pending requests waiting for review; you can submit
+more once some are approved, denied or expire*. You can't have the same request
+pending twice: asking again for a name you're already waiting on shows *you
+already have a pending request for ~name in this team*. Requests that aren't
+reviewed within the configured number of days expire, and you'll get a direct
+message saying so.
+
 Requests need at least one domain prefix. Until a System Admin defines one, the
 form and the slash command show: *Channel requests aren't configured yet. Ask a
 System Admin to define at least one channel prefix in System Console → Plugins →
@@ -183,6 +192,19 @@ requester; agents can't approve or deny.
   and posts a welcome message that @-mentions everyone added.
 - **Deny** — the request is closed and the requester is notified by DM.
 
+Approve checks the request again first. If the requester's account is no longer
+active, they've left the team, or the channel name no longer matches the
+configured prefixes, you'll get a private message saying so (for example *The
+requester is no longer a member of the team. Deny this request instead.*). The
+request stays pending and the card keeps its buttons, so deny it. If the
+requester can't be checked at that moment, you'll see *Could not check the
+requester right now. Try again in a moment.* instead.
+
+A request that wasn't reviewed within **Request expiry (days)** can't be
+approved: clicking either button replies *This request has expired.*, marks the
+card *⌛ Expired: not reviewed within N days.* and closes the requester's ticket
+as expired.
+
 <img src="images/channel-request/mattermost-creation-welcome.png" alt="Welcome message in the new channel" width="720">
 
 Requests from **System Admins** are queued for approval too, including ones an
@@ -204,6 +226,8 @@ Configure the plugin in **System Console → Plugins → Mattermost Request Hub*
 | **Team Admins can approve requests** | When on, Team Admins of the approval team can approve/deny channel-creation requests, not just System Admins. |
 | **Per-team approval channels** | Default on. Creates `mattermost-channel-requests` in teams with a Team Admin or System Admin; those teams' channel requests go there (not the primary approval team). Ticket channels (including team-creation) live under sidebar category **Mattermost: Request Hub**. |
 | **Offer tools to Agents** | Off by default. When on, the Mattermost Agents plugin can list prefixes and file requests of every type on a user's behalf, under the same rules and per-type toggles as the forms. Every request goes to the approvers, including System Admins' requests. Agents can never approve or deny. Takes effect on save; choose which tools agents may use in the Agents plugin's own settings. Needs Mattermost 11.3 or later. |
+| **Pending requests per user** | How many requests of each type one user can have waiting for review (each type is counted separately), up to `1000`. Default `5`; `0` means no limit. |
+| **Request expiry (days)** | Pending requests of any type older than this can no longer be approved, and stop counting toward the per-user limit. At most `3650`. Default `30`; `0` means requests never expire. A change applies to requests already pending too. |
 
 > To fully funnel non-admins through the request flow, remove the built-in
 > **Create Public/Private Channel** permission from the System User role (System

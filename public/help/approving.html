@@ -81,6 +81,33 @@
             Nobody can approve either step of their own bot or webhook request, System Admins included.
         </p>
 
+        <h2>Channel requests that can't be approved as they stand</h2>
+        <p>
+            Before creating the channel, Approve checks the request again. If one of these applies, you'll see a
+            private message, the request stays pending and the card keeps its buttons, so you can deny it:
+        </p>
+        <ul>
+            <li><em>The requester's account is no longer active. Deny this request instead.</em></li>
+            <li><em>The requester is no longer a member of the team. Deny this request instead.</em></li>
+            <li><em>The channel name no longer matches the configured prefixes. Deny this request and ask the requester to submit it again.</em></li>
+        </ul>
+        <p>
+            If the requester can't be checked at that moment, you'll see <em>Could not check the requester right
+            now. Try again in a moment.</em> instead.
+        </p>
+
+        <h2 id="expired">Expired requests</h2>
+        <p>
+            A request of any type that wasn't reviewed within <em>Request expiry (days)</em> (default 30) can't be
+            approved. Clicking either button on it replies <em>This request has expired.</em>, marks the card
+            <em>⌛ Expired: not reviewed within N days.</em>, closes the requester's ticket as expired and posts an
+            <em>Expired</em> card to the audit channel. The requester can submit it again.
+        </p>
+        <p>
+            Bot and webhook requests count from when they were submitted, even after one approval step is done.
+            Only someone who can approve one of their steps can close them as expired.
+        </p>
+
         <h2>Bot &amp; webhook two-step approval</h2>
         <p>Each bot/webhook card needs <strong>two distinct approvers</strong> on the same card:</p>
         <ul class="entry-list">

@@ -36,8 +36,11 @@ func actionHandlerCases() []actionHandlerCase {
 			record: func(postID string) any {
 				return &channelRequest{ID: "r1", RequesterID: "u_req", TeamID: "team1", ApprovalPostID: postID}
 			},
-			handler:         func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleAction },
-			stubBeforeClaim: none,
+			handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleAction },
+			// The requester is loaded for the expiry and approve-time checks.
+			stubBeforeClaim: func(api *plugintest.API) {
+				api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
+			},
 		},
 		{
 			name:     "channel admin",
@@ -710,6 +713,7 @@ func TestPostApprovalAttachment_RecordFailureDeletesCards(t *testing.T) {
 func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 	t.Run("team", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -730,6 +734,7 @@ func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 	})
 	t.Run("team guest", func(t *testing.T) {
 		api := &plugintest.API{}
+		stubPendingLists(api)
 		stubLogs(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)

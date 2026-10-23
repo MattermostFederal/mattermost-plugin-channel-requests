@@ -65,6 +65,10 @@ func (p *Plugin) OnActivate() error {
 		p.API.LogWarn("bot profile image asset not found; place a PNG at assets/mattermost-icon.png to activate it")
 	}
 
+	if err := p.migratePendingRequests(); err != nil {
+		p.API.LogError("channel-requests: failed to update stored requests", "error", err.Error())
+	}
+
 	if err := p.API.RegisterCommand(getCommand()); err != nil {
 		return errors.Wrap(err, "failed to register slash command")
 	}

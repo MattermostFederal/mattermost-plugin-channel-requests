@@ -98,13 +98,14 @@ func TestRequestChannelTool_UsesContextUserNotArgs(t *testing.T) {
 	stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newMCPTestPlugin(t, api, &configuration{prefixes: []channelPrefix{{Prefix: "team-"}}, ApprovalTeam: "appteam"})
 
 	// A System Admin's request queues for approval like anyone else's.
 	api.On("GetUser", "admin1").Return(sysadmin("admin1"), nil)
 	var stored channelRequest
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
 	}).Return(nil)
 	api.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -182,6 +183,7 @@ func TestRequestChannelAdminTool_QueuesForSysadmin(t *testing.T) {
 	stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newMCPTestPlugin(t, api, &configuration{ApprovalTeam: "appteam"})
 
@@ -298,12 +300,13 @@ func TestRequestChannelTool_QueuesForRegularMember(t *testing.T) {
 	stubMCP(t)
 	api := &plugintest.API{}
 	stubLogs(api)
+	stubPendingLists(api)
 	defer api.AssertExpectations(t)
 	p := newMCPTestPlugin(t, api, approvalConfig())
 
 	mockMemberRequester(api)
 	var stored channelRequest
-	api.On("KVSet", pendingKey, mock.Anything).Run(func(args mock.Arguments) {
+	api.On("KVSet", isRequestRecordKey, mock.Anything).Run(func(args mock.Arguments) {
 		require.NoError(t, json.Unmarshal(args.Get(1).([]byte), &stored))
 	}).Return(nil)
 	api.On("GetTeam", "team1").Return(&model.Team{Id: "team1", Name: "eng", DisplayName: "Engineering"}, nil)
@@ -434,6 +437,7 @@ func TestMCPRequestTools_QueueForSystemAdmin(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stubMCP(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newMCPTestPlugin(t, api, &configuration{})
 			stubSystemAdminQueue(api)
@@ -463,6 +467,7 @@ func TestMCPRequestTools_QueueForRegularUser(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stubMCP(t)
 			api := &plugintest.API{}
+			stubPendingLists(api)
 			stubLogs(api)
 			p := newMCPTestPlugin(t, api, &configuration{})
 			api.On("GetUser", requester.Id).Return(requester, nil)
