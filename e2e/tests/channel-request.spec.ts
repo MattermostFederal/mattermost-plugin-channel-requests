@@ -111,12 +111,6 @@ test('REST request that is denied creates no channel', async () => {
 });
 
 test('Team Admin can approve a request for their team', async () => {
-    // Known bug: when the approval team is also the request's team, OnActivate
-    // creates ~mattermost-channel-requests through ensureRootApprovalChannel,
-    // which adds only System Admins. ensureTeamApprovalChannel then finds the
-    // channel by name and returns early, so the team's Team Admins are never
-    // added and get 403 on Approve. Remove this line once that's fixed.
-    test.fail();
     const name = `smoke-ta-${Date.now()}`;
     await hub.pluginFetch('alice', '/api/v1/create', {team_id: hub.teamId, display_name: name, prefix: 'proj-', name: '', channel_type: 'O', members: [], admin_members: []});
 
