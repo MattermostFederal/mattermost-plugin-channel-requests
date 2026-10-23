@@ -127,6 +127,10 @@ func (p *Plugin) submitAdminRequest(requesterID, channelID string, nomineeIDs []
 		p.API.LogError("failed to post Channel Admin request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindAdmin, req.ID)
+	}
 
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
@@ -345,6 +349,7 @@ func (p *Plugin) adminApprovalAttachment(req *adminRequest, requester *model.Use
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    fmt.Sprintf("**Proposed Channel Admins:** %s", p.mentionList(req.NomineeIDs)),
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.adminApprovalActions(req.ID, siteURL),
 	}
 }

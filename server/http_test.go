@@ -498,6 +498,7 @@ func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
 	api.On("CreateChannel", mock.Anything).Return(nil, testAppErr("boom"))
 	// The restore write also fails -> the request is genuinely lost.
 	api.On("KVSet", kvRequestPrefix+"req1", mock.Anything).Return(testAppErr("kv down"))
+	api.On("GetPost", "post1").Return(nil, testAppErr("no post")) // resolvedPost falls back
 
 	r := httptest.NewRequest(http.MethodPost, routeApprove, strings.NewReader(actionBody(t, "req1")))
 	r.Header.Set(headerUserID, "admin1")
@@ -508,6 +509,9 @@ func TestHandleAction_CreateAndRestoreBothFailWarnsResubmit(t *testing.T) {
 	var resp model.PostActionIntegrationResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(t, resp.EphemeralText, "could not be saved")
+	// The request is gone, so the card no longer offers it.
+	require.NotNil(t, resp.Update)
+	require.Contains(t, resp.Update.Message, "Ask the requester to submit it again")
 	api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"req1")
 }
 
@@ -1442,6 +1446,7 @@ func TestHandleDialogSubmit(t *testing.T) {
 		api := &plugintest.API{}
 		stubLogs(api)
 		stubPendingLists(api)
+		stubSubmittedRequestExists(api, kvRequestPrefix)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
 		p.setConfiguration(&configuration{AllowChannelRequests: true, prefixes: []channelPrefix{{Prefix: "team-"}}})

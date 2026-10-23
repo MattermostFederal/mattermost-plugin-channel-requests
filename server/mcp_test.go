@@ -387,5 +387,8 @@ func TestMCP_ListsOnlyTheRequestTools(t *testing.T) {
 		mcpToolPrefix + "request_team_guest",
 		mcpToolPrefix + "request_bot",
 		mcpToolPrefix + "request_webhook",
+		mcpToolPrefix + "list_my_requests",
+		mcpToolPrefix + "list_requests_to_approve",
+		mcpToolPrefix + "get_request_status",
 	}, names)
 }

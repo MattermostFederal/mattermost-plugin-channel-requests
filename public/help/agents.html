@@ -67,6 +67,9 @@
                 <tr><td><code>request_team_guest</code></td><td>Asks for a guest invite to channels of a team, like the <a href="team-guest.html">form</a> or <a href="slash.html#team-guest"><code>/mattermost-request-hub team-guest &lt;email&gt; ...</code></a>.</td></tr>
                 <tr><td><code>request_bot</code></td><td>Requests a bot account, like <a href="slash.html#bot"><code>/mattermost-request-hub bot &lt;username&gt; &lt;Display name&gt; ...</code></a>. Like the slash command, it covers the account only; ask for an access token or webhooks for the bot in the <a href="bot.html">form</a>.</td></tr>
                 <tr><td><code>request_webhook</code></td><td>Requests an incoming or outgoing webhook for a channel, like the <a href="webhook.html">forms</a> or <a href="slash.html#webhook-incoming"><code>/mattermost-request-hub webhook-incoming ...</code></a>.</td></tr>
+                <tr><td><code>list_my_requests</code></td><td>Lists your pending requests of every type, like <a href="slash.html#list"><code>/mattermost-request-hub list</code></a>.</td></tr>
+                <tr><td><code>list_requests_to_approve</code></td><td>Lists the pending requests you can approve now, like <a href="slash.html#list-approvals"><code>/mattermost-request-hub list approvals</code></a>. It only reads; you still approve or deny yourself.</td></tr>
+                <tr><td><code>get_request_status</code></td><td>Looks up one pending request of any type by ID. It finds your own requests, and requests you can approve; anything else reads as not found.</td></tr>
             </tbody>
         </table>
 
@@ -78,7 +81,9 @@
         <div class="alert alert-info">
             <div class="alert-title">Agents can't approve</div>
             <p>
-                No agent can approve or deny a request. Those buttons stay with the people in the approval channel.
+                No agent can approve or deny a request. That stays with the approvers, on the approval card or with
+                <a href="slash.html#approve"><code>/mattermost-request-hub approve</code></a> and
+                <a href="slash.html#deny"><code>deny</code></a>.
             </p>
         </div>
 

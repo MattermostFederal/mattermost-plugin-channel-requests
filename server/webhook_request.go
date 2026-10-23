@@ -157,6 +157,10 @@ func (p *Plugin) submitWebhookRequest(requesterID, webhookType, channelID, displ
 		p.API.LogError("failed to post webhook request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindWebhook, req.ID)
+	}
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
 
@@ -404,6 +408,7 @@ func (p *Plugin) webhookApprovalAttachment(req *webhookRequest, requester *model
 		Title:   "Webhook request",
 		Color:   "#FF6B35",
 		Fields:  fields,
+		Footer:  requestIDFooter(req.ID),
 		Text:    strings.Join(details, "\n"),
 		Actions: p.webhookApprovalActions(req.ID, siteURL),
 	}

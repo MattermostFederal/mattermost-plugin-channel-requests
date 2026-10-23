@@ -26,9 +26,9 @@ func actionCasesNamed(names ...string) []actionHandlerCase {
 	return out
 }
 
-// pendingRecord marshals tc's pending request on card "post1" with the
+// pendingRecordJSON marshals tc's pending request on card "post1" with the
 // given requester.
-func pendingRecord(t *testing.T, tc actionHandlerCase, requesterID string) []byte {
+func pendingRecordJSON(t *testing.T, tc actionHandlerCase, requesterID string) []byte {
 	t.Helper()
 	raw, err := json.Marshal(tc.record("post1"))
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestActionHandlers_SystemAdminMayApproveOwnRequest(t *testing.T) {
 			p := newTestPlugin(api)
 			p.setConfiguration(approvableConfig())
 			stubSystemAdmin(api)
-			raw := pendingRecord(t, tc, "admin1")
+			raw := pendingRecordJSON(t, tc, "admin1")
 			if tc.name == "channel" {
 				// The name must still match a configured prefix at approval.
 				var fields map[string]any
@@ -153,7 +153,7 @@ func TestTwoStepActions_UserInNeitherPoolRefused(t *testing.T) {
 				stubBlockedCard(api)
 				api.On("GetUser", "u_x").Return(&model.User{Id: "u_x", Username: "x", Roles: "system_user"}, nil)
 				api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "req"}, nil)
-				api.On("KVGet", tc.kvPrefix+"r1").Return(pendingRecord(t, tc, "u_req"), nil)
+				api.On("KVGet", tc.kvPrefix+"r1").Return(pendingRecordJSON(t, tc, "u_req"), nil)
 
 				resp := clickAction(t, p, tc.handler, "u_x", actionBody(t, "r1"), approve)
 

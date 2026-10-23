@@ -54,6 +54,10 @@
                 <tr><td><a href="#channel"><code>/mattermost-request-hub channel</code></a></td><td>Opens the Request a Channel form, or with arguments requests a channel without it. <code>/mattermost-request-hub</code> on its own opens the form too.</td></tr>
                 <tr><td><a href="#channel-admin"><code>/mattermost-request-hub channel-admin</code></a></td><td>Opens the Request Channel Admin form, or with <code>@user</code> names asks for those channel members to be made Channel Admins of the channel you run it in.</td></tr>
                 <tr><td><a href="#prefixes"><code>/mattermost-request-hub prefixes</code></a></td><td>Lists the channel prefixes you can use, with each one's description and suffix rule.</td></tr>
+                <tr><td><a href="#list"><code>/mattermost-request-hub list</code></a></td><td>Lists your pending requests of every type, with their IDs and when they expire.</td></tr>
+                <tr><td><a href="#list-approvals"><code>/mattermost-request-hub list approvals</code></a></td><td>For approvers: lists the pending requests you can approve, with their IDs.</td></tr>
+                <tr><td><a href="#approve"><code>/mattermost-request-hub approve &lt;request ID&gt;</code></a></td><td>For approvers: approves a request of any type, as its Approve button would.</td></tr>
+                <tr><td><a href="#deny"><code>/mattermost-request-hub deny &lt;request ID&gt;</code></a></td><td>For approvers: denies a request of any type, as its Deny button would.</td></tr>
                 <tr><td><a href="#team"><code>/mattermost-request-hub team</code></a></td><td>Opens the Request a Team form, or with arguments requests a new team without it.</td></tr>
                 <tr><td><a href="#team-admin"><code>/mattermost-request-hub team-admin</code></a></td><td>Opens the Request Team Admin form, or with <code>@user</code> names asks for those team members to be made Team Admins of the current team.</td></tr>
                 <tr><td><a href="#team-member"><code>/mattermost-request-hub team-member</code></a></td><td>Opens the Request Team Members form, or with <code>@user</code> names asks for those users or bots to be added to the current team.</td></tr>
@@ -164,6 +168,78 @@
             Lists every prefix your admin configured, with its description and, where there is one, its suffix
             rule. Use these exactly with <code>/mattermost-request-hub channel</code>.
         </p>
+
+        <h2 id="list"><code>/mattermost-request-hub list</code></h2>
+        <p>
+            Lists the requests you made that are still waiting for review, of every type, oldest first. Each line shows what you asked for, the day you submitted it (in UTC), the day it expires if
+            your admin set an expiry, and its request ID. A request that expired before anyone reviewed it is
+            shown as <em>expired (an approver can close it)</em>. A request submitted before the plugin started
+            recording submission times shows <em>submitted before the upgrade</em> and doesn't expire. If
+            nothing is waiting, the reply is <em>You have no pending requests.</em>
+        </p>
+        <p>
+            At most 50 requests are shown, followed by <em>...and N more</em> when there are others. A type a
+            System Admin turned off isn't listed; with every type turned off the reply is <em>Every request type
+            is currently disabled by an administrator.</em> Approved and denied requests aren't listed: the
+            outcome arrives in your request's direct message thread. Bot and webhook requests also say which
+            approval they're waiting for, security or system.
+        </p>
+
+        <h3 id="list-approvals"><code>/mattermost-request-hub list approvals</code></h3>
+        <p>
+            Lists the pending requests you can approve now, oldest first, in the same format, so you can copy an
+            ID into <code>approve</code> or <code>deny</code>. Your own requests aren't included, nor are types a
+            System Admin turned off. A bot or webhook request is included only when you can fill the step it's
+            waiting for: not when you already approved the other step, and not when only the system step is
+            left and you are a security approver. If there are none, the reply is <em>There are no pending
+            requests you can approve.</em> Finding them reads every pending request, so it can take a moment on a
+            busy server.
+        </p>
+
+        <h2 id="approve"><code>/mattermost-request-hub approve</code></h2>
+<pre><code>/mattermost-request-hub approve &lt;request ID&gt;</code></pre>
+        <p>
+            Approves a request of any type without clicking its card. The request ID is at the bottom of every
+            approval card, after <em>Request ID:</em>, in the requester's own copy of the request, and in
+            <a href="#list-approvals"><code>list approvals</code></a>. The command makes the same checks as the Approve button, in the same order, and the reply
+            is only visible to you. When it succeeds, the approval card is closed with the outcome, the same as
+            after a click, and the requester's request thread is updated. When the request went to System Admins
+            by direct message (no approval channel), every copy is closed. See
+            <a href="approving.html">Approving</a> for who can approve.
+        </p>
+        <p>
+            On a bot or webhook request, <code>approve</code> fills your step, as a click would; you don't say
+            which. After the first step the reply is <em>Approved the security step. The request now needs the
+            other approval, from a different person.</em> and every copy of the card shows the approval. The
+            second step, from a different person, creates the bot or webhook.
+        </p>
+        <p>
+            Like the card buttons, <code>approve</code> and <code>deny</code> still work on a request whose type a
+            System Admin turned off after it was submitted, so pending requests can be closed.
+        </p>
+
+        <h2 id="deny"><code>/mattermost-request-hub deny</code></h2>
+<pre><code>/mattermost-request-hub deny &lt;request ID&gt;</code></pre>
+        <p>Denies a request of any type, as its Deny button would. It works the same way as <code>approve</code>.</p>
+
+        <h3 id="decision-errors">When <code>approve</code> or <code>deny</code> refuses</h3>
+        <table class="field-table">
+            <thead><tr><th>Reply</th><th>What to do</th></tr></thead>
+            <tbody>
+                <tr><td><em>Give the request ID from the approval card...</em></td><td>Give exactly one ID, copied from the card.</td></tr>
+                <tr><td><em>This request has already been handled.</em></td><td>Someone approved or denied it already, or the ID is wrong.</td></tr>
+                <tr><td><em>This request was just updated. Please run the command again.</em></td><td>Someone acted on it at the same moment. Run the command again.</td></tr>
+                <tr><td><em>You don't have permission to approve or deny this channel request...</em>, <em>...this Channel Admin request...</em>, <em>Only System Admins can approve or deny ... requests.</em>, <em>You don't have permission to deny this request.</em>, <em>⚠️ You don't have permission to approve this request.</em></td><td>Only approvers can act on a request. See <a href="approving.html#who-sees-what">Who sees and approves what</a>.</td></tr>
+                <tr><td><em>You can't approve your own request. Another approver has to review it.</em>, <em>⚠️ You created this request...</em></td><td>Ask another approver. You can still deny your own request.</td></tr>
+                <tr><td><em>⚠️ Security review must happen first...</em>, <em>⚠️ Security already approved...</em>, <em>⚠️ You've already approved your step...</em></td><td>A bot or webhook request needs a security approver, then a different system approver. Ask the approver whose step is next.</td></tr>
+                <tr><td><em>This request has expired.</em></td><td>The request is closed and the requester is told. See <a href="troubleshooting.html#expired">Expired</a>.</td></tr>
+                <tr><td><em>The requester's account is no longer active...</em>, <em>...no longer a member...</em></td><td>See <a href="troubleshooting.html#requester-left">Requester left</a>.</td></tr>
+                <tr><td><em>The channel name no longer matches the configured prefixes...</em></td><td>The prefixes changed after the request was made. Deny it and ask for a new request.</td></tr>
+                <tr><td><em>A channel in this request no longer exists...</em>, <em>~name has been archived...</em>, <em>The team no longer exists...</em></td><td>The request can't be carried out any more. Deny it. See <a href="approving.html#rechecks">Requests that can't be approved as they stand</a>.</td></tr>
+                <tr><td><em>Could not check the requester right now. Try again in a moment.</em></td><td>Run the command again shortly. See <a href="troubleshooting.html#try-again">"Try again" messages</a>.</td></tr>
+                <tr><td><em>Could not create the channel: ...</em>, <em>Could not create the team: ...</em>, <em>Couldn't create the bot: ...</em>, <em>Couldn't create the webhook: ...</em></td><td>The request stays pending. Run the command again, or if the name is already taken, deny it and ask for a new name.</td></tr>
+            </tbody>
+        </table>
 
         <h2 id="other-forms">The other request types</h2>
         <p>

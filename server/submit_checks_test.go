@@ -68,12 +68,14 @@ func newQueuePlugin(t *testing.T) (*Plugin, *plugintest.API) {
 	api := &plugintest.API{}
 	stubLogs(api)
 	stubPendingLists(api)
+	stubNewerSubmittedRequestsExist(api)
 	p := newTestPlugin(api)
 	return p, api
 }
 
 func TestSystemAdminChannelRequestQueues(t *testing.T) {
 	p, api := newQueuePlugin(t)
+	stubSubmittedRequestExists(api, kvRequestPrefix)
 	cfg := *p.getConfiguration()
 	cfg.prefixes = []channelPrefix{{Prefix: "team-"}}
 	p.setConfiguration(&cfg)
@@ -89,6 +91,7 @@ func TestSystemAdminChannelRequestQueues(t *testing.T) {
 
 func TestSystemAdminChannelAdminRequestQueues(t *testing.T) {
 	p, api := newQueuePlugin(t)
+	stubSubmittedRequestExists(api, kvAdminRequestPrefix)
 	stubSystemAdminQueue(api)
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "ops", TeamId: "team1", Type: model.ChannelTypeOpen}, nil)
 	api.On("GetChannelMember", "ch1", testNomineeID).Return(&model.ChannelMember{}, nil)

@@ -46,8 +46,8 @@ func mustMarshal(t *testing.T, record any) []byte {
 	return raw
 }
 
-// approvalCard is the bot's approval card "post1" in the approval channel.
-func approvalCard() *model.Post {
+// requestCardPost is the bot's approval card "post1" in the approval channel.
+func requestCardPost() *model.Post {
 	post := &model.Post{Id: "post1", ChannelId: "appr-ch", UserId: "bot-user-id", Message: "needs review"}
 	model.ParseMessageAttachment(post, []*model.MessageAttachment{{
 		Title:   "Request",
@@ -62,7 +62,7 @@ func approvalCard() *model.Post {
 func stubTicketClose(api *plugintest.API) {
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil).Maybe()
 	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "created"}, nil).Maybe()
-	api.On("GetPost", "post1").Return(approvalCard(), nil).Maybe()
+	api.On("GetPost", "post1").Return(requestCardPost(), nil).Maybe()
 }
 
 func TestNewerActionHandlers_UnusableClickReplies(t *testing.T) {
@@ -425,7 +425,7 @@ func TestRepaintedApprovalPost_PostLoadFailureKeepsMessageOnly(t *testing.T) {
 func TestRepaintedApprovalPost_ReplacesAttachment(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 
 	post := p.repaintedApprovalPost("post1", "header", &model.MessageAttachment{Title: "repainted"})
 
@@ -443,7 +443,7 @@ func TestTwoStepApproveBlock_BlankUsernameIsSomeone(t *testing.T) {
 func TestRespondTwoStepApproveBlocked_RepaintsCardAndSendsChannelEphemeral(t *testing.T) {
 	api := &plugintest.API{}
 	p := newTestPlugin(api)
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 	api.On("SendEphemeralPost", "u1", mock.MatchedBy(func(post *model.Post) bool {
 		return post.ChannelId == "appr-ch" && post.Message == "blocked" && post.RootId == "" && post.UserId == ""
 	})).Return(&model.Post{}).Once()

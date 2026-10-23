@@ -418,7 +418,7 @@ func TestTwoStepApproveRechecksComeAfterPermission(t *testing.T) {
 			api.On("GetUser", "u_req").Return(&model.User{Id: "u_req", Username: "reqer", DeleteAt: 1}, nil)
 			api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town", DeleteAt: 1}, nil).Maybe()
 			api.On("KVGet", tc.kvPrefix+"r1").Return(mustMarshal(t, tc.record), nil)
-			api.On("GetPost", "post1").Return(approvalCard(), nil).Maybe()
+			api.On("GetPost", "post1").Return(requestCardPost(), nil).Maybe()
 			api.On("SendEphemeralPost", "u1", mock.Anything).Return(&model.Post{}).Maybe()
 
 			resp := clickAction(t, p, tc.handler, "u1", actionBody(t, "r1"), true)

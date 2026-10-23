@@ -164,7 +164,7 @@ func TestTwoStepActionHandlers_RequesterApproveIsShownOnCard(t *testing.T) {
 			stubSystemAdmin(api)
 			tc.stub(api)
 			api.On("KVGet", tc.kvPrefix+"r1").Return(mustMarshal(t, tc.record), nil)
-			api.On("GetPost", "post1").Return(approvalCard(), nil)
+			api.On("GetPost", "post1").Return(requestCardPost(), nil)
 			api.On("SendEphemeralPost", "admin1", mock.MatchedBy(func(post *model.Post) bool {
 				return post.ChannelId == "appr-ch"
 			})).Return(&model.Post{}).Once()
@@ -246,7 +246,7 @@ func TestTwoStepActionHandlers_SecondClickBySameApproverIsEphemeralOnly(t *testi
 			api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil).Maybe()
 			api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 			api.On("KVGet", tc.kvPrefix+"r1").Return(mustMarshal(t, tc.record), nil)
-			api.On("GetPost", "post1").Return(approvalCard(), nil)
+			api.On("GetPost", "post1").Return(requestCardPost(), nil)
 			api.On("SendEphemeralPost", "admin1", mock.Anything).Return(&model.Post{}).Once()
 
 			resp := runAsAdmin(t, p, tc.handler, true)
@@ -321,7 +321,8 @@ func TestTwoStepActionHandlers_PartialApprovalRecordsStepAndRepaintsCard(t *test
 			// Progress card for the requester, then the repainted approval card.
 			api.On("GetDirectChannel", "u_req", "bot-user-id").Return(&model.Channel{Id: "dm1"}, nil)
 			api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "progress"}, nil)
-			api.On("GetPost", "post1").Return(approvalCard(), nil)
+			api.On("GetPost", "post1").Return(requestCardPost(), nil)
+			api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
 
 			resp := runAsAdmin(t, p, tc.handler, true)
 
@@ -377,7 +378,8 @@ func TestHandleBotAction_CreateFailureRestoresAndRepaintsCard(t *testing.T) {
 	api.On("KVCompareAndDelete", kvBotRequestPrefix+"r1", raw).Return(true, nil).Once()
 	api.On("CreateBot", mock.Anything).Return(nil, testAppErr("name taken"))
 	api.On("KVSet", kvBotRequestPrefix+"r1", raw).Return(nil).Once()
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
+	api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
 
 	resp := runAsAdmin(t, p, botActionHandler, true)
 
@@ -402,7 +404,7 @@ func finalBot(t *testing.T, api *plugintest.API, req *botRequest) {
 	api.On("CreateBot", mock.MatchedBy(func(bot *model.Bot) bool {
 		return bot.Username == "svcbot" && bot.OwnerId == "u_req"
 	})).Return(&model.Bot{UserId: "new-bot-id", Username: "svcbot"}, nil).Once()
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 	api.On("GetPost", "dm-root").Return(nil, testAppErr("no root")).Maybe()
 }
 
@@ -627,7 +629,7 @@ func TestHandleWebhookAction_ApproveCreatesWebhookAfterReopeningDM(t *testing.T)
 			dmCard = extractFirstAttachment(post)
 		}
 	}).Return(&model.Post{Id: "created"}, nil)
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 
 	resp := runAsAdmin(t, p, webhookActionHandler, true)
 
@@ -653,8 +655,9 @@ func TestHandleWebhookAction_CreateFailureRestoresAndRepaintsCard(t *testing.T) 
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("KVSet", kvWebhookRequestPrefix+"r1", raw).Return(nil).Once()
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 
+	api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil).Maybe()
 	resp := runAsAdmin(t, p, webhookActionHandler, true)
 
 	require.Contains(t, resp.EphemeralText, "Couldn't create the webhook: hooks are off.")
@@ -685,7 +688,7 @@ func TestHandleWebhookAction_UndeliverableURLRemovalFailureAsksAdmin(t *testing.
 	api.On("GetChannel", "ch1").Return(&model.Channel{Id: "ch1", Name: "town"}, nil)
 	api.On("GetChannelMember", "ch1", "u_req").Return(&model.ChannelMember{}, nil).Maybe()
 	api.On("GetDirectChannel", "u_req", "bot-user-id").Return(nil, testAppErr("no dm"))
-	api.On("GetPost", "post1").Return(approvalCard(), nil)
+	api.On("GetPost", "post1").Return(requestCardPost(), nil)
 	api.On("CreatePost", mock.Anything).Return(&model.Post{Id: "archive"}, nil)
 
 	resp := runAsAdmin(t, p, webhookActionHandler, true)

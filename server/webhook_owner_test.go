@@ -518,7 +518,6 @@ func TestHandleBotAction_UndeliverableTokenClearsCards(t *testing.T) {
 			capture := &hookCapture{}
 			ts := capture.server(t)
 			api := &plugintest.API{}
-			stubPendingLists(api)
 			stubLogLevels(api)
 			defer api.AssertExpectations(t)
 			p := newTestPlugin(api)
@@ -536,6 +535,7 @@ func TestHandleBotAction_UndeliverableTokenClearsCards(t *testing.T) {
 			api.On("KVDelete", kvApprovalCardsPrefix+"r1").Return(nil).Once()
 			api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
 
+			stubPendingLists(api)
 			resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleBotAction }}, true)
 
 			require.NotNil(t, resp.Update)
@@ -546,7 +546,6 @@ func TestHandleBotAction_UndeliverableTokenClearsCards(t *testing.T) {
 
 func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 	api := &plugintest.API{}
-	stubPendingLists(api)
 	stubLogLevels(api)
 	defer api.AssertExpectations(t)
 	p := newTestPlugin(api)
@@ -571,6 +570,7 @@ func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 	api.On("KVDelete", kvApprovalCardsPrefix+"r1").Return(nil).Once()
 	api.On("GetPost", "post1").Return(nil, testAppErr("no post"))
 
+	stubPendingLists(api)
 	resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleWebhookAction }}, true)
 
 	require.NotNil(t, resp.Update)
@@ -580,7 +580,6 @@ func TestHandleWebhookAction_UndeliverableURLClearsCards(t *testing.T) {
 func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 	t.Run("bot", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubPendingLists(api)
 		stubLogLevels(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -597,14 +596,19 @@ func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 		// The pending request can't be written back.
 		api.On("KVSet", kvBotRequestPrefix+"r1", raw).Return(testAppErr("kv down"))
 		api.On("KVDelete", kvApprovalCardsPrefix+"r1").Return(nil).Once()
+		// The request is gone, so the clicked card is closed as lost.
+		api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
+		api.On("GetPost", "post1").Return(nil, testAppErr("gone"))
 
+		stubPendingLists(api)
 		resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleBotAction }}, true)
 
 		require.Contains(t, resp.EphemeralText, "could not be saved")
+		require.NotNil(t, resp.Update)
+		require.Contains(t, resp.Update.Message, "could not be kept")
 	})
 	t.Run("webhook", func(t *testing.T) {
 		api := &plugintest.API{}
-		stubPendingLists(api)
 		stubLogLevels(api)
 		defer api.AssertExpectations(t)
 		p := newTestPlugin(api)
@@ -626,9 +630,15 @@ func TestTwoStepActionHandlers_LostRequestClearsCards(t *testing.T) {
 		api.On("KVCompareAndDelete", kvWebhookRequestPrefix+"r1", raw).Return(true, nil)
 		api.On("KVSet", kvWebhookRequestPrefix+"r1", raw).Return(testAppErr("kv down"))
 		api.On("KVDelete", kvApprovalCardsPrefix+"r1").Return(nil).Once()
+		// The request is gone, so the clicked card is closed as lost.
+		api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
+		api.On("GetPost", "post1").Return(nil, testAppErr("gone"))
 
+		stubPendingLists(api)
 		resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleWebhookAction }}, true)
 
 		require.Contains(t, resp.EphemeralText, "could not be saved")
+		require.NotNil(t, resp.Update)
+		require.Contains(t, resp.Update.Message, "could not be kept")
 	})
 }

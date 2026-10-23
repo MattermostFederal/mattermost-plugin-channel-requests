@@ -99,7 +99,8 @@ waiting for review; you can submit more once some are approved, denied or
 expire*. Asking again for the same people in the same channel while that request
 is pending shows *you already have a pending Channel Admin request for these
 people in this channel*. Requests that aren't reviewed within the configured
-number of days expire, and you'll get a direct message saying so.
+number of days expire, and you'll get a direct message saying so. To see what
+you're still waiting on, run `/mattermost-request-hub list`.
 
 ---
 
@@ -154,6 +155,12 @@ A request that wasn't reviewed within **Request expiry (days)** can't be
 approved: clicking either button replies *This request has expired.*, marks the
 card *⌛ Expired: not reviewed within N days.* and closes the requester's ticket
 as expired.
+
+Approvers can also act without the card: the card ends with *Request ID:* and
+the ID, and `/mattermost-request-hub approve <request ID>` or
+`deny <request ID>` makes the same checks as the buttons. The card and the
+requester's ticket are then closed as after a click, and when the request went
+to System Admins by direct message, every copy is closed.
 
 Requests from **System Admins** are queued for approval too. A System Admin can
 approve their own request.

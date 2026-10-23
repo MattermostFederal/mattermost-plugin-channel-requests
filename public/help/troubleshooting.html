@@ -87,7 +87,8 @@
         <p>
             <strong>Fix:</strong> set <em>Approval team</em> in the plugin settings to the name of an existing
             team. The plugin creates its approval channels there. Any one System Admin can act on a DMed request;
-            after that, the buttons on the other copies reply <em>This request has already been handled.</em>
+            after that, the other copies are closed with the outcome. A copy sent before the plugin was upgraded
+            to this version keeps its buttons, which reply <em>This request has already been handled.</em>
         </p>
         <p>
             If no System Admin can receive the message either, the requester sees <em>could not send your
@@ -97,7 +98,7 @@
         <h2 id="expired">"This request has expired"</h2>
         <p>
             <strong>Cause:</strong> the request wasn't reviewed within <em>Request expiry (days)</em>. Bot and
-            webhook requests count from submission, even after one approval step. Approve and Deny both reply <em>This request has expired.</em>, the card is marked
+            webhook requests count from submission, even after one approval step. Approve and Deny, on the card or with the slash command, both reply <em>This request has expired.</em>, the card is marked
             <em>⌛ Expired: not reviewed within N days.</em>, and the requester's ticket is closed as expired.
         </p>
         <p>
@@ -166,6 +167,11 @@
                 didn't record for that request. Use the buttons on the request's own card.</li>
         </ul>
         <p>
+            <code>/mattermost-request-hub approve</code> gives the same replies for every request type. From the
+            command, the bot and webhook replies start with ⚠️ and give the reason in full, and no card is
+            changed.
+        </p>
+        <p>
             <strong>Fix:</strong> ask an approver who can act on it.
         </p>
 
@@ -175,7 +181,7 @@
             request right now. Try again in a moment.</em>, <em>Couldn't check this card. Try again in a
             moment.</em>, <em>could not load your account; try again</em> and <em>could not save your request; try
             again</em> mean a lookup or save failed for a moment. <em>This request was just updated. Please click
-            Approve or Deny again.</em> and <em>This request was just updated by someone else. Please try
+            Approve or Deny again.</em>, <em>This request was just updated. Please run the command again.</em> and <em>This request was just updated by someone else. Please try
             again.</em> mean another approver acted at the same moment; the request may already be handled.
         </p>
         <p>
@@ -212,8 +218,11 @@
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_admin</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_member</code>,
                 <code>com_mattermostfederal_mattermost-plugin-request-hub__request_team_guest</code>,
-                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_bot</code> and
-                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_webhook</code>.
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_bot</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__request_webhook</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_my_requests</code>,
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__list_requests_to_approve</code> and
+                <code>com_mattermostfederal_mattermost-plugin-request-hub__get_request_status</code>.
             </li>
         </ul>
         <p>

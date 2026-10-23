@@ -730,9 +730,15 @@ func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 		api.On("CreateTeam", mock.Anything).Return(nil, testAppErr("name taken"))
 		api.On("KVSet", kvTeamRequestPrefix+"r1", mock.Anything).Return(testAppErr("kv down"))
 
+		// The request is gone, so the clicked card is closed as lost.
+		api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
+		api.On("GetPost", "post1").Return(nil, testAppErr("gone"))
+
 		resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleTeamAction }}, true)
 
 		require.Contains(t, resp.EphemeralText, "could not be saved")
+		require.NotNil(t, resp.Update)
+		require.Contains(t, resp.Update.Message, "could not be kept")
 		api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"r1")
 	})
 	t.Run("team guest", func(t *testing.T) {
@@ -754,9 +760,15 @@ func TestActionHandlers_LostRequestClearsCards(t *testing.T) {
 		api.On("GetTeam", "team1").Return(nil, testAppErr("gone")).Once()
 		api.On("KVSet", kvTeamGuestRequestPrefix+"r1", raw).Return(testAppErr("kv down"))
 
+		// The request is gone, so the clicked card is closed as lost.
+		api.On("KVGet", kvApprovalCardsPrefix+"r1").Return(nil, nil)
+		api.On("GetPost", "post1").Return(nil, testAppErr("gone"))
+
 		resp := runAction(t, p, actionHandlerCase{handler: func(p *Plugin) func(http.ResponseWriter, *http.Request, bool) { return p.handleTeamGuestAction }}, true)
 
 		require.Contains(t, resp.EphemeralText, "failed to load team")
+		require.NotNil(t, resp.Update)
+		require.Contains(t, resp.Update.Message, "could not be kept")
 		api.AssertCalled(t, "KVDelete", kvApprovalCardsPrefix+"r1")
 	})
 }

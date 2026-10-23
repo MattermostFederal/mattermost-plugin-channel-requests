@@ -457,6 +457,10 @@ func (p *Plugin) submitRequest(in requestInput) (string, error) {
 		p.API.LogError("failed to post channel request for approval", "error", err.Error())
 		return "", errors.New("could not send your request to the approvers; try again or contact a System Admin")
 	}
+	if approvalPostID == "" {
+		// The card went to System Admins as direct-message copies.
+		p.resolveCardsIfHandled(pendingKindChannel, req.ID)
+	}
 
 	req.ApprovalPostID = approvalPostID
 	req.ApprovalChannelID = approvalChannelID
@@ -844,8 +848,15 @@ func (p *Plugin) approvalAttachment(req *channelRequest, requester *model.User) 
 		Color:   "#0058CC",
 		Fields:  fields,
 		Text:    strings.Join(details, "\n"),
+		Footer:  requestIDFooter(req.ID),
 		Actions: p.approvalActions(req.ID, siteURL),
 	}
+}
+
+// requestIDFooter names the request on its approval card, so an approver
+// can act on it with the approve or deny subcommand.
+func requestIDFooter(requestID string) string {
+	return "Request ID: " + requestID
 }
 
 // teamDisplayName returns the team's display name for approval cards.
