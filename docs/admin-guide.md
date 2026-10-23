@@ -1,4 +1,4 @@
-# Admin Guide — Mattermost Request Hub Plugin
+# Admin Guide: Mattermost Request Hub Plugin
 
 This guide covers plugin configuration, the approval workflow, and how each request type is handled. For end-user guides, see the linked request-type docs at the bottom.
 
@@ -53,7 +53,7 @@ Create and assign attributes in **System Console → User Management → Attribu
 
 | Setting | Purpose |
 |---------|---------|
-| **Channel domain prefixes** | **Required** for channel requests. At least one prefix must be configured — an empty list rejects every channel-creation request. Requesters pick a prefix from a dropdown; the final URL is `<prefix><suffix>`. |
+| **Channel domain prefixes** | **Required** for channel requests. At least one prefix must be configured. An empty list rejects every channel-creation request. Requesters pick a prefix from a dropdown; the final URL is `<prefix><suffix>`. |
 
 ### Optional settings
 
@@ -174,7 +174,7 @@ When a request is submitted, the bot sends the requester a DM with a thread for 
 - A reply in the **approval thread** is relayed to the requester's **DM thread** as `Message from @reviewer: …`.
 - A reply in the requester's **DM thread** is relayed to the **approval thread** as `Reply from @requester: …`.
 
-This lets reviewers ask clarifying questions (for example, *Why do you need this new team?*) and get responses without leaving the approval channel, and without the requester needing access to the approval channel. Conversation happens in Mattermost's **Thread** right-hand sidebar (Reply on the card) — not as new top-level posts. Threads remain linked after approve/deny for follow-up. Root-level DMs to the bot (outside a ticket thread) get a nudge to reply inside the specific request.
+This lets reviewers ask clarifying questions (for example, *Why do you need this new team?*) and get responses without leaving the approval channel, and without the requester needing access to the approval channel. Conversation happens in Mattermost's **Thread** right-hand sidebar (Reply on the card), not as new top-level posts. Threads remain linked after approve/deny for follow-up. Root-level DMs to the bot (outside a ticket thread) get a nudge to reply inside the specific request.
 
 ![Approver asks in the Thread RHS](images/shared/mattermost-thread-approver-ask.png)
 
@@ -208,7 +208,7 @@ If a token is suspected compromised, revoke it in **System Console → User Mana
 
 ## Webhook approvals in detail
 
-Webhook requests use the same two-step engine as bots. The final approver's session is used for a single create call — never stored.
+Webhook requests use the same two-step engine as bots. The final approver's session is used for a single create call and is never stored.
 
 **Webhook requests from System Admins get both steps too.** Nobody can approve either step of their own request, so a System Admin's request needs a security approver and a different system approver (or one other System Admin in System Admins only mode). If creation fails after both steps, the card stays pending for retry. If an incoming webhook URL cannot be DM'd to the requester, the hook is deleted.
 
@@ -221,9 +221,9 @@ If you set channel domain prefixes, requesters must pick a prefix from a dropdow
 [Screenshot: The domain-prefix editor with several rows filled in]
 
 Each row has:
-- **Prefix** — the fixed URL segment (e.g. `ops-`, `prod-`)
-- **Description** — shown in the dropdown to help requesters choose
-- **Max suffix length** — caps how many characters the requester can append (2–48; presets default to 48)
+- **Prefix**: the fixed URL segment (e.g. `ops-`, `prod-`)
+- **Description**: shown in the dropdown to help requesters choose
+- **Max suffix length**: caps how many characters the requester can append (2–48; presets default to 48)
 
 Use **Load preset** to populate from a starter pack. The **Live preview** at the bottom shows what a given prefix and suffix combination produces.
 
@@ -253,7 +253,7 @@ for current members. A category from an earlier version named
 **Mattermost: Request Hub**.
 
 > Upgrades that already saved `PerTeamApprovalChannels = false` keep that
-> value — turn the setting back **on** in System Console if channel requests
+> value. Turn the setting back **on** in System Console if channel requests
 > are still landing only in the primary team.
 
 ---
@@ -308,9 +308,9 @@ Every request is queued for approval, including requests from System Admins.
 
 ## Related guides
 
-- [Channel Requests — User Guide](CHANNEL_CREATION_GUIDE.md)
-- [Channel Admin Requests — User Guide](CHANNEL_ADMIN_GUIDE.md)
-- [Team Requests — User Guide](TEAM_REQUEST_GUIDE.md)
-- [Team Membership & Guests — User Guide](TEAM_MEMBERSHIP_GUIDE.md)
-- [Bot Account Requests — User Guide](BOT_REQUEST_GUIDE.md)
-- [Webhook Requests — User Guide](WEBHOOK_REQUEST_GUIDE.md)
+- [Channel Requests: User Guide](CHANNEL_CREATION_GUIDE.md)
+- [Channel Admin Requests: User Guide](CHANNEL_ADMIN_GUIDE.md)
+- [Team Requests: User Guide](TEAM_REQUEST_GUIDE.md)
+- [Team Membership & Guests: User Guide](TEAM_MEMBERSHIP_GUIDE.md)
+- [Bot Account Requests: User Guide](BOT_REQUEST_GUIDE.md)
+- [Webhook Requests: User Guide](WEBHOOK_REQUEST_GUIDE.md)

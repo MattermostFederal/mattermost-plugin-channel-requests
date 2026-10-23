@@ -21,16 +21,16 @@ Governance plugin for Mattermost: non-admins **request** channels, Channel Admin
 
 ## Documentation
 
-- [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md) — requesting and approving **new channels**
-- [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md) — requesting **admin rights on an existing channel**
-- [Team Requests](docs/TEAM_REQUEST_GUIDE.md) — create team / Team Admin
-- [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md) — add members / guest invite email
+- [Channel Requests](docs/CHANNEL_CREATION_GUIDE.md): requesting and approving **new channels**
+- [Channel Admin](docs/CHANNEL_ADMIN_GUIDE.md): requesting **admin rights on an existing channel**
+- [Team Requests](docs/TEAM_REQUEST_GUIDE.md): create team / Team Admin
+- [Team Membership & Guests](docs/TEAM_MEMBERSHIP_GUIDE.md): add members / guest invite email
 - [Bot Accounts](docs/BOT_REQUEST_GUIDE.md)
 - [Webhooks](docs/WEBHOOK_REQUEST_GUIDE.md)
 - [Admin Guide](docs/admin-guide.md)
-- [Releasing](docs/RELEASING.md) — how to cut a release
+- [Releasing](docs/RELEASING.md): how to cut a release
 
-In Mattermost, **`/mattermost-request-hub docs`** replies with a link to the bundled HTML guide.
+In Mattermost, **`/mattermost-request-hub docs`** replies with a link to the bundled HTML guide, served by the plugin at `/plugins/com.mattermostfederal.mattermost-plugin-request-hub/public/help/docs.html`, with a slash command reference and a troubleshooting page. The System Console settings page links to it.
 
 Requires Mattermost 11.3 or later.
 
@@ -43,10 +43,10 @@ make deploy  # optional: deploy to a running Mattermost server
 
 ## Common commands
 
-- `make dist` — build the plugin bundle
-- `make check-style` — lint Go and webapp code
-- `make test` — run tests
-- `make deploy` — deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
+- `make dist`: build the plugin bundle
+- `make check-style`: lint Go and webapp code
+- `make test`: run tests
+- `make deploy`: deploy to the Mattermost server specified by `MM_SERVICESETTINGS_SITEURL` and `MM_ADMIN_TOKEN`
 
 ## Configuration
 
@@ -77,9 +77,9 @@ One-time setup:
 
 This plugin ships with a CycloneDX SBOM and grype-based vulnerability audit:
 
-- `make sbom` — generate CycloneDX SBOMs for the Go server and npm webapp into `dist/sbom/`
-- `make sbom-scan` — run grype against the SBOMs and fail on high or critical CVEs
-- `make sbom-audit` — `sbom` then `sbom-scan` in one step
+- `make sbom`: generate CycloneDX SBOMs for the Go server and npm webapp into `dist/sbom/`
+- `make sbom-scan`: run grype against the SBOMs and fail on high or critical CVEs
+- `make sbom-audit`: `sbom` then `sbom-scan` in one step
 
 Suppress known-false-positive findings by adding entries to `.grype.yaml` with a short reason. Typical reasons include: dev-only transitive dependency (not in the shipped bundle) or runtime dependency that Mattermost externalizes (e.g. react, redux).
 

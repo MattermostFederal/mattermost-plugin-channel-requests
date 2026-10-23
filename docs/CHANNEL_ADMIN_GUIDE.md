@@ -1,7 +1,7 @@
-# Channel Admin Requests — User Guide
+# Channel Admin Requests: User Guide
 
 Mattermost Request Hub also lets a member **request that someone be made a
-Channel Admin** on a channel that already exists — without giving every member
+Channel Admin** on a channel that already exists, without giving every member
 the ability to manage the channel directly. The request goes to an approver;
 on approval the nominee is granted the Channel Admin role. Nominees must already
 be members of the channel: this flow never adds anyone to a channel.
@@ -13,21 +13,24 @@ be members of the channel: this flow never adds anyone to a channel.
 > [Admin Guide](admin-guide.md).
 >
 > In Mattermost, open the full in-app guide anytime with
-> **`/mattermost-request-hub docs`**.
+> **`/mattermost-request-hub docs`**. It is served by the plugin at
+> `/plugins/com.mattermostfederal.mattermost-plugin-request-hub/public/help/docs.html`,
+> with a full slash command reference (`slash.html`) and a troubleshooting page
+> (`troubleshooting.html`).
 
 This guide covers:
 
-- [Requesting a Channel Admin](#requesting-a-channel-admin) — any non-admin member
-- [Messaging while a request is pending](#messaging-while-a-request-is-pending) — two-way threads
-- [Approving requests](#approving-requests) — approvers
-- [Admin setup](#admin-setup) — system admins
+- [Requesting a Channel Admin](#requesting-a-channel-admin): any non-admin member
+- [Messaging while a request is pending](#messaging-while-a-request-is-pending): two-way threads
+- [Approving requests](#approving-requests): approvers
+- [Admin setup](#admin-setup): system admins
 
 ---
 
 ## Requesting a Channel Admin
 
 Same form from every entry point. The option is **only shown to members who
-aren't already an admin** of the channel — if you're already a Channel Admin
+aren't already an admin** of the channel. If you're already a Channel Admin
 (or a System Admin), you can manage the channel directly and won't see the menu
 items (the slash command still works if the feature is enabled).
 
@@ -103,7 +106,7 @@ number of days expire, and you'll get a direct message saying so.
 ## Messaging while a request is pending
 
 Channel Admin requests use the same **two-way Thread relay** as channel creation.
-Open the **Thread** RHS from the card (**Reply**) — don't post a new top-level
+Open the **Thread** RHS from the card (**Reply**). Don't post a new top-level
 message.
 
 - **Approver:** ask in the approval Thread (e.g. *Why does this person need Channel Admin?*)
@@ -134,7 +137,7 @@ teams, including the approval team, can't act on it.
 - **Approve**: each nominee is promoted to Channel Admin, and the approval
   message, DM and audit line list who was promoted. A bot message in the channel
   announces who can now manage it.
-- **Deny** — the request is closed and the requester is notified by DM.
+- **Deny**: the request is closed and the requester is notified by DM.
 
 Approve checks the request again first. If the requester's account is no longer
 active, they've left the channel (System Admins excepted), or a nominee has been
@@ -167,7 +170,7 @@ requests, in **System Console → Plugins → Mattermost Request Hub**:
 | **Approval team** | The team that owns plugin-managed approval channels. Recommended: without it, a Channel Admin request that has no per-team approval channel is sent by direct message to every System Admin instead. |
 | **Allow channel admin requests** | Enables Channel Admin entry points. |
 | **Team Admins can approve requests** | Applies to channel-creation requests only. Channel Admin requests are always reviewed by System Admins and the Team Admins of the *requested channel's* team, whatever this is set to. |
-| **Per-team approval channels** | Default on. Same per-team routing as channel creation — requests go to that team's `mattermost-channel-requests` when it has a Team Admin or System Admin. |
+| **Per-team approval channels** | Default on. Same per-team routing as channel creation: requests go to that team's `mattermost-channel-requests` when it has a Team Admin or System Admin. |
 | **Pending requests per user** | How many Channel Admin requests one user can have waiting for review (each request type is counted separately), up to `1000`. Default `5`; `0` means no limit. |
 | **Request expiry (days)** | Pending requests older than this can no longer be approved. At most `3650`. Default `30`; `0` means requests never expire. |
 

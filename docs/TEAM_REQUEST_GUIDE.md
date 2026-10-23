@@ -1,4 +1,4 @@
-# Team Requests — User Guide
+# Team Requests: User Guide
 
 Mattermost Request Hub lets members **request a new team** (and, separately,
 **request Team Admin** on a team they already belong to) instead of creating or
@@ -14,11 +14,11 @@ is created (or the nominees are promoted) and the requester is notified by DM.
 
 This guide covers:
 
-- [Requesting a new team](#requesting-a-new-team) — any member
-- [Requesting Team Admin](#requesting-team-admin) — members who are not already Team Admin
-- [Messaging while a request is pending](#messaging-while-a-request-is-pending) — two-way threads
-- [Approving requests](#approving-requests) — System Admins
-- [Admin setup](#admin-setup) — system admins
+- [Requesting a new team](#requesting-a-new-team): any member
+- [Requesting Team Admin](#requesting-team-admin): members who are not already Team Admin
+- [Messaging while a request is pending](#messaging-while-a-request-is-pending): two-way threads
+- [Approving requests](#approving-requests): System Admins
+- [Admin setup](#admin-setup): system admins
 
 ---
 
@@ -109,7 +109,7 @@ Every request opens a **linked pair of threads**: one in the approval channel
 (for reviewers) and one in a DM from the bot (for you). Replies are relayed both
 ways.
 
-Use Mattermost's **Thread** panel (right-hand sidebar) — not a new top-level
+Use Mattermost's **Thread** panel (right-hand sidebar), not a new top-level
 message. Open the thread from the request card ("Reply" / reply count).
 
 - **Approver:** ask in the approval Thread (e.g. *Why do you need this new team?*)
@@ -140,9 +140,9 @@ System Admins see **Approve** and **Deny**.
 
 <img src="images/team-request/mattermost-team-approval-card.png" alt="Team creation approval card" width="720">
 
-- **Approve** — creates the team, adds the requester, and (if they checked the
+- **Approve**: creates the team, adds the requester, and (if they checked the
   box) promotes them to Team Admin. The requester is notified by DM.
-- **Deny** — closes the request and notifies the requester by DM.
+- **Deny**: closes the request and notifies the requester by DM.
 
 Approve first checks that the requester's account is still active. If it isn't,
 you'll get a private message (*The requester's account is no longer active. Deny
@@ -161,7 +161,7 @@ creation requests), not the root channel-request queue. System Admins Approve or
   A request from the Request Hub or More actions nominates the requester; the slash
   command and its form can nominate other members of the team. Nominees must already
   be on the team.
-- **Deny** — closes the request and notifies the requester by DM.
+- **Deny**: closes the request and notifies the requester by DM.
 
 Approve first checks that the team still exists and isn't archived, that the
 requester is still active and on the team (System Admins excepted), and that

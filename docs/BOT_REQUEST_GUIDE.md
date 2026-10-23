@@ -1,4 +1,4 @@
-# Bot Account Requests — User Guide
+# Bot Account Requests: User Guide
 
 Mattermost Request Hub lets members **request a bot account** (optionally
 with an access token and incoming/outgoing webhooks in the same ticket) instead
@@ -17,10 +17,10 @@ system). On final approval the bot is created and secrets are delivered by DM
 
 This guide covers:
 
-- [Requesting a bot](#requesting-a-bot) — any member
-- [Messaging while a request is pending](#messaging-while-a-request-is-pending) — two-way threads
-- [Approving requests](#approving-requests) — security + system approvers
-- [Admin setup](#admin-setup) — system admins
+- [Requesting a bot](#requesting-a-bot): any member
+- [Messaging while a request is pending](#messaging-while-a-request-is-pending): two-way threads
+- [Approving requests](#approving-requests): security + system approvers
+- [Admin setup](#admin-setup): system admins
 
 ---
 
@@ -111,7 +111,7 @@ message saying so.
 ## Messaging while a request is pending
 
 Bot tickets use the same **two-way thread relay** as other request types.
-Open the **Thread** RHS from the card (Reply / reply count) — not a new root post.
+Open the **Thread** RHS from the card (Reply / reply count), not a new root post.
 
 - **Approver:** ask in the approval Thread (e.g. *What systems will this bot call?*)
 - **Requester:** see `Message from @admin:` in your DM Thread with the bot
@@ -148,11 +148,12 @@ are complete, the plugin:
 Before either step, Approve checks that the requester and any chosen owner are
 still active (the owner can't be a bot), and that any webhook channels still
 exist and aren't archived, the requester is still in them (System Admins
-excepted), and an outgoing webhook's channel is still public. If not, you'll get a private message saying so (for
-example *The bot owner is no longer an active user. Deny this request
-instead.*) and the request and its steps stay as they were, so deny it.
+excepted), and an outgoing webhook's channel is still public. If not, you'll
+get a private message saying so (for example *The bot owner is no longer an
+active user. Deny this request instead.*) and the request and its steps stay as
+they were, so deny it.
 
-Any eligible approver may **Deny** at any time — that closes the ticket and
+Any eligible approver may **Deny** at any time. That closes the ticket and
 notifies the requester.
 
 ### DM to the requester
@@ -162,7 +163,7 @@ notifies the requester.
 The DM includes:
 
 - Bot account confirmation
-- Access token (if requested) — **message auto-deletes in 72 hours**
+- Access token (if requested): **message auto-deletes in 72 hours**
 - Incoming webhook URL (if requested)
 - Outgoing webhook confirmation (if requested)
 
